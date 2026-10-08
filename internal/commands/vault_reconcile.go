@@ -66,6 +66,16 @@ var (
 	// refused. The vault still holds its data, so it is stopped and left as
 	// it is, and only 'ocfp vault teardown' may replace it.
 	ErrInceptionKeysRefused = errors.New("ocfp will not replace an inception vault whose saved key the engine refused")
+
+	// ErrInceptionKeysMissing reports vault data without both keys to reopen
+	// it. A key can still be restored from a backup or the vault logs, so the
+	// data is left in place, and only 'ocfp vault teardown' may replace it.
+	ErrInceptionKeysMissing = errors.New("ocfp will not replace an inception vault whose keys are missing")
+
+	// ErrInceptionDataElsewhere reports key files left without data while a
+	// store beside the data directory, kept or moved aside by a migration to
+	// raft, may be the vault those keys open.
+	ErrInceptionDataElsewhere = errors.New("the inception vault's data directory is gone, but a store beside it may hold its data")
 )
 
 // inceptionSteps are the actions reconcileInceptionVault takes. Production
@@ -129,9 +139,10 @@ type inceptionRun struct {
 // holding both kinds of storage, and a cluster port in use all return an
 // error with the disk exactly as it was, and so does an open vault whose
 // keys cannot be saved, which is left running. A healthy vault is left
-// running. A vault with its data and both keys is restarted in place. Only
-// missing keys, or keys the engine itself refused, lead to an archive, and
-// the archive renames the old vault aside rather than deleting anything.
+// running. A vault with its data and both keys is restarted in place. Data
+// without both keys, and keys the engine refused, stop the run with the data
+// and keys left in place. Only key files left with no data anywhere lead to
+// an archive, and the archive renames them aside rather than deleting them.
 func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	paths := run.paths
 
@@ -194,8 +205,8 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 //
 // A sealed or never-initialized engine holds nothing in memory that its
 // data and key files do not, so stopping it loses nothing. Its missing keys
-// are recovered when they can be, and without both it goes down the archive
-// path and is never migrated.
+// are recovered when they can be, and without both the run refuses once it
+// has stopped, and the vault is never migrated.
 func (run *inceptionRun) recoverRunningKeys(ctx context.Context, found preflightFindings) error {
 	if found.open {
 		return run.requireSavedKeys(ctx)
@@ -821,8 +832,8 @@ func requireRestartableData(paths map[string]string, data vaultDataState, journa
 
 // requireStartKeys refuses a restart unless root.key and unseal.keys are
 // separate files that both hold something. vault start never recovers or
-// replaces a missing key, because that is the path where reconcile may
-// archive the vault.
+// replaces a missing key, and leaves that to 'ocfp vault inception', which
+// recovers it from the vault logs or refuses the vault.
 func requireStartKeys(paths map[string]string) error {
 	if paths["rootKeyFile"] == paths["unsealKeysFile"] {
 		return fmt.Errorf("%w: the root token and the unseal key share %s, which cannot hold both",
@@ -1021,13 +1032,112 @@ func (run *inceptionRun) startFromDisk(ctx context.Context) error {
 		return run.restart(ctx)
 	case data == vaultDataFile && keys:
 		return run.migrateAndRestart(ctx)
-	case data == vaultDataAbsent && !anyKey:
-		return run.fresh(ctx)
 	case data == vaultDataAbsent:
-		return run.archiveAndStartFresh(ctx, "key files were left with no vault data")
+		return run.startWithoutData(ctx, anyKey)
 	default:
-		return run.archiveAndStartFresh(ctx, "the vault data has no usable root token and unseal key to reopen it")
+		return run.refuseDataWithoutKeys(data)
 	}
+}
+
+// startWithoutData starts a new vault for a bloc whose data directory holds
+// no store, archiving any key files left behind first. The archive is the
+// one path from reconcile to an archive. Nothing starts when a store that a
+// migration to raft kept or moved aside still sits beside the data
+// directory, because that store may be the vault, opened by the keys left
+// behind or by keys restored from a backup, so the run refuses with
+// ErrInceptionDataElsewhere and changes nothing.
+func (run *inceptionRun) startWithoutData(ctx context.Context, anyKey bool) error {
+	paths := run.paths
+
+	stores := migrationStoresBeside(paths["vaultDir"])
+	switch {
+	case len(stores) == 0 && !anyKey:
+		return run.fresh(ctx)
+	case len(stores) == 0:
+		return run.archiveAndStartFresh(ctx, "key files were left with no vault data")
+	}
+
+	run.log.Errorw("The inception vault's data directory is gone, but stores beside it may hold its data; "+
+		"nothing was changed", "data", paths["vaultDir"], "stores", stores)
+
+	keys := fmt.Sprintf("%s and %s are still in place", paths["rootKeyFile"], paths["unsealKeysFile"])
+	if !anyKey {
+		keys = fmt.Sprintf("neither %s nor %s holds a key", paths["rootKeyFile"], paths["unsealKeysFile"])
+	}
+
+	return fmt.Errorf("%w: %s does not exist and %s, but %s may hold the vault, so no new vault was started "+
+		"beside it; inspect them by hand, and to bring a store back, rename it to %s, make sure both key files "+
+		"hold its keys, and run 'ocfp vault inception'; %s",
+		ErrInceptionDataElsewhere, paths["vaultDir"], keys, strings.Join(stores, " and "), paths["vaultDir"],
+		replaceVaultAdvice)
+}
+
+// refuseDataWithoutKeys refuses a stopped vault whose data has no usable
+// root token and unseal key. The data may still be opened once a key is
+// restored, so it is left in place with whichever key file it has.
+func (run *inceptionRun) refuseDataWithoutKeys(data vaultDataState) error {
+	paths := run.paths
+
+	run.log.Errorw("The inception vault has data but not both keys to reopen it; nothing was changed",
+		"data", paths["vaultDir"], "root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
+
+	return fmt.Errorf("%w: %s holds %s storage, but %s and %s do not both hold a key of their own; "+
+		"restore the missing key from a backup or from the vault logs, %s, and run 'ocfp vault inception' again; %s",
+		ErrInceptionKeysMissing, paths["vaultDir"], data, paths["rootKeyFile"], paths["unsealKeysFile"],
+		vaultLogHint(paths), replaceVaultAdvice)
+}
+
+// replaceVaultAdvice is how an operator replaces an inception vault with a
+// new, empty one on purpose, which reconcile never does on its own.
+const replaceVaultAdvice = "to replace it with a new, empty vault, run 'ocfp vault teardown' and then " +
+	"'ocfp vault inception', and teardown moves the old vault aside rather than deleting it"
+
+// migrationStoresBeside lists the directories beside the data directory that
+// a migration to raft kept or moved aside, and that still hold file or raft
+// storage: data.file-backup-*, data.raft-failed-*, data.raft-partial-*, and
+// data.raft-migrating. A directory that cannot be read counts as holding a
+// store, the way classifyVaultData counts it.
+func migrationStoresBeside(dataDir string) []string {
+	parent, base := filepath.Dir(dataDir), filepath.Base(dataDir)
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return []string{parent}
+	}
+
+	var stores []string
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || !isMigrationStoreName(base, name) {
+			continue
+		}
+
+		dir := filepath.Join(parent, name)
+		if classifyVaultData(dir) != vaultDataAbsent {
+			stores = append(stores, dir)
+		}
+	}
+
+	slices.Sort(stores)
+
+	return stores
+}
+
+// isMigrationStoreName reports whether name is one a migration to raft gives
+// a store beside the data directory named base.
+func isMigrationStoreName(base, name string) bool {
+	if name == base+migrationStagingSuffix {
+		return true
+	}
+
+	for _, suffix := range []string{migrationBackupSuffix, migrationFailedSuffix, migrationPartialSuffix} {
+		if strings.HasPrefix(name, base+suffix) && len(name) > len(base+suffix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // migrateAndRestart moves a stopped file vault onto raft storage and reopens
@@ -1161,8 +1271,7 @@ func keysRefusedAdvice(paths map[string]string, startErr error, tried string) st
 			strings.Join(backups, " and "), paths["vaultDir"], newest, paths["vaultDir"])
 	}
 
-	b.WriteString("; to replace it with a new, empty vault, run 'ocfp vault teardown' and then " +
-		"'ocfp vault inception', and teardown moves the old vault aside rather than deleting it")
+	b.WriteString("; " + replaceVaultAdvice)
 
 	return b.String()
 }
@@ -1273,9 +1382,11 @@ func wrapStopAfterFailure(stopErr error) error {
 }
 
 // archiveAndStartFresh moves the stopped vault aside, keeping its data and
-// any keys, and starts a new, empty vault in its place. It succeeds with an
-// error-level warning, because the bloc now runs on a vault without the old
-// secrets and a person has to know where they went.
+// any keys, and starts a new, empty vault in its place. Its one caller is
+// startWithoutData, which reaches it only when there is no data to lose,
+// and vault start never reaches it. It succeeds with an error-level warning,
+// because the bloc now runs on a vault without the old secrets and a person
+// has to know where they went.
 func (run *inceptionRun) archiveAndStartFresh(ctx context.Context, reason string) error {
 	paths := run.paths
 

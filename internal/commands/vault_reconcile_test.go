@@ -271,24 +271,39 @@ func TestReconcile_RaftWithBothKeysRestartsInPlace(t *testing.T) {
 	assert.Empty(t, archivesOf(t, paths))
 }
 
-func TestReconcile_RaftMissingAKeyArchivesAndStartsFresh(t *testing.T) {
+// requireRefusedForMissingKeys checks a run that found vault data without
+// both keys: it refused, started nothing, archived nothing, and said how to
+// restore the keys or replace the vault on purpose.
+func requireRefusedForMissingKeys(t *testing.T, paths map[string]string, fake *fakeInception, err error) {
+	t.Helper()
+
+	require.ErrorIs(t, err, ErrInceptionKeysMissing)
+	assert.NotContains(t, strings.Join(fake.calls, "\n"), "start", "a vault with data and no keys is never started")
+	assert.NotContains(t, fake.calls, "migrate")
+	assert.Empty(t, archivesOf(t, paths))
+	assert.Contains(t, err.Error(), paths["vaultDir"])
+	assert.Contains(t, err.Error(), paths["rootKeyFile"])
+	assert.Contains(t, err.Error(), paths["unsealKeysFile"])
+	assert.Contains(t, err.Error(), "'ocfp vault teardown' and then 'ocfp vault inception'")
+	assert.NotContains(t, err.Error(), testSealKey)
+}
+
+// Vault data without both keys may still be worth keeping, since a key can
+// be restored from a backup, so the run refuses rather than archiving the
+// data and starting a new, empty vault over it.
+func TestReconcile_RaftMissingAKeyRefusesAndChangesNothing(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, false)
 
+	before := treeDigest(t, blocDir(paths))
 	fake := &fakeInception{probe: stoppedProbe()}
 
-	require.NoError(t, runReconcile(t, paths, fake))
+	err := runReconcile(t, paths, fake)
+	requireRefusedForMissingKeys(t, paths, fake, err)
 
-	assert.Equal(t, []string{
-		"probe", "stop", "cluster-port " + paths["clusterPort"], "start fresh", "finish fresh",
-	}, fake.calls)
-
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.FileExists(t, filepath.Join(archives[0], "data", "vault.db"))
-	assert.DirExists(t, filepath.Join(archives[0], "data", "raft"))
-	assert.FileExists(t, filepath.Join(archives[0], "root.key"), "the remaining key must be kept with the data")
+	assert.Equal(t, []string{"probe", "stop", "cluster-port " + paths["clusterPort"]}, fake.calls)
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
 }
 
 // An empty key file is as good as a missing one. safe refuses an empty token
@@ -301,10 +316,7 @@ func TestReconcile_BlankKeyFileCountsAsMissing(t *testing.T) {
 
 	fake := &fakeInception{probe: stoppedProbe()}
 
-	require.NoError(t, runReconcile(t, paths, fake))
-	assert.Contains(t, fake.calls, "start fresh")
-	assert.NotContains(t, fake.calls, "start restart")
-	require.Len(t, archivesOf(t, paths), 1)
+	requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
 }
 
 func unsealKeyRejected() error {
@@ -376,7 +388,6 @@ func TestReconcile_RejectedKeyAfterMigrationNamesTheFileBackup(t *testing.T) {
 // one is up without saved keys, never that it did not start.
 func TestReconcile_ArchivedThenNewVaultWithoutSavedKeys(t *testing.T) {
 	paths := reconcilePaths(t)
-	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, false)
 
 	fake := &fakeInception{
@@ -501,6 +512,74 @@ func TestReconcile_AbsentWithLeftoverKeysArchivesAndStartsFresh(t *testing.T) {
 	assert.FileExists(t, filepath.Join(archives[0], "root.key"))
 	assert.FileExists(t, filepath.Join(archives[0], "unseal.keys"))
 	assert.NoFileExists(t, paths["rootKeyFile"], "stale keys must never be reused by the new vault")
+}
+
+// Key files with no data beside them are archived only when nothing beside
+// the data directory holds a store those keys may open. A file store kept by
+// a migration, or a raft copy moved aside, may be the vault the keys belong
+// to, so the run refuses and names it.
+func TestReconcile_AbsentWithLeftoverKeysBesideAStoreRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		suffix string
+		write  func(t *testing.T, dir string)
+	}{
+		{migrationBackupSuffix + "20261006-120000", writeFileData},
+		{migrationFailedSuffix + "20261006-120000", writeRaftData},
+		{migrationPartialSuffix + "20261006-120000", writeRaftData},
+		{migrationStagingSuffix, writeRaftData},
+	} {
+		t.Run(tc.suffix, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeKeys(t, paths, true, true)
+
+			store := paths["vaultDir"] + tc.suffix
+			tc.write(t, store)
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{probe: stoppedProbe()}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrInceptionDataElsewhere)
+			assert.Equal(t, []string{"probe", "stop", "cluster-port " + paths["clusterPort"]}, fake.calls)
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+			assert.Empty(t, archivesOf(t, paths))
+			assert.Contains(t, err.Error(), store)
+			assert.Contains(t, err.Error(), paths["vaultDir"])
+			assert.Contains(t, err.Error(), "'ocfp vault teardown' and then 'ocfp vault inception'")
+		})
+	}
+
+	t.Run("an empty directory beside the data holds no store", func(t *testing.T) {
+		paths := reconcilePaths(t)
+		writeKeys(t, paths, true, true)
+		require.NoError(t, os.MkdirAll(paths["vaultDir"]+migrationBackupSuffix+"20261006-120000", 0o700))
+
+		fake := &fakeInception{probe: stoppedProbe()}
+
+		require.NoError(t, runReconcile(t, paths, fake))
+		assert.Contains(t, fake.calls, "start fresh")
+		require.Len(t, archivesOf(t, paths), 1)
+	})
+}
+
+// With no data and no keys, a store that a migration to raft kept or moved
+// aside may still be the vault, once its keys are restored, so no new vault
+// starts beside it and nothing changes.
+func TestReconcile_AbsentWithoutKeysBesideAStoreRefuses(t *testing.T) {
+	paths := reconcilePaths(t)
+	store := paths["vaultDir"] + migrationBackupSuffix + "20261006-120000"
+	writeFileData(t, store)
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionDataElsewhere)
+	assert.Equal(t, []string{"probe", "stop", "cluster-port " + paths["clusterPort"]}, fake.calls)
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+	assert.Empty(t, archivesOf(t, paths))
+	assert.Contains(t, err.Error(), store)
+	assert.Contains(t, err.Error(), "'ocfp vault teardown' and then 'ocfp vault inception'")
 }
 
 func TestReconcile_AbsentWithoutKeysStartsFresh(t *testing.T) {
@@ -698,8 +777,8 @@ func TestReconcile_FailedFreshStartKeepsTheNewToken(t *testing.T) {
 }
 
 // A key file shared by both keys, as older releases used without a bloc,
-// ends up holding only the root token. Such a vault cannot be reopened, so it
-// goes down the archive path rather than feeding a token to the unseal prompt.
+// ends up holding only the root token. Such a vault cannot be reopened, so the
+// run refuses rather than feeding a token to the unseal prompt.
 func TestReconcile_SharedKeyFileIsNotAPairOfKeys(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
@@ -708,9 +787,7 @@ func TestReconcile_SharedKeyFileIsNotAPairOfKeys(t *testing.T) {
 
 	fake := &fakeInception{probe: stoppedProbe()}
 
-	require.NoError(t, runReconcile(t, paths, fake))
-	assert.NotContains(t, fake.calls, "start restart")
-	assert.Contains(t, fake.calls, "start fresh")
+	requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
 }
 
 // A vault that answers on this bloc's port but does not hold this bloc's data
@@ -756,7 +833,6 @@ func TestReconcile_UnknownOwnershipChangesNothing(t *testing.T) {
 // went, so nobody mistakes it for lost.
 func TestReconcile_FailedFreshStartAfterArchiveNamesTheArchive(t *testing.T) {
 	paths := reconcilePaths(t)
-	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, false)
 
 	fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{ErrVaultNotReady}}
@@ -799,21 +875,17 @@ func TestReconcile_FileVaultWithKeysMigratesThenRestarts(t *testing.T) {
 }
 
 // File storage without both keys cannot be reopened after a migration, so it
-// is archived with its data and never migrated.
-func TestReconcile_FileVaultMissingAKeyIsArchivedNotMigrated(t *testing.T) {
+// is never migrated, and the run refuses with the file store left in place.
+func TestReconcile_FileVaultMissingAKeyIsRefusedNotMigrated(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeFileData(t, paths["vaultDir"])
 	writeKeys(t, paths, false, true)
 
+	before := treeDigest(t, blocDir(paths))
 	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
 
-	require.NoError(t, runReconcile(t, paths, fake))
-	assert.NotContains(t, fake.calls, "migrate")
-	assert.Contains(t, fake.calls, "start fresh")
-
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+	requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
 }
 
 func TestReconcile_FailedMigrationStartsNothing(t *testing.T) {
@@ -1090,9 +1162,9 @@ func TestReconcile_OpenVaultWhoseKeysAreRecoveredIsRestarted(t *testing.T) {
 }
 
 // A sealed or never-initialized engine holds nothing in memory that its data
-// and key files do not, so stopping it loses nothing. Without both keys it
-// still goes down the archive path, with its data kept.
-func TestReconcile_SealedRunningVaultWithoutKeysIsArchived(t *testing.T) {
+// and key files do not, so stopping it loses nothing. Without both keys the
+// run then refuses, with its data and its one key left in place.
+func TestReconcile_SealedRunningVaultWithoutKeysIsRefused(t *testing.T) {
 	for name, probe := range map[string]vaultProbe{
 		"sealed":            {state: vaultProbeVault, initialized: true, sealed: true, storageType: "file"},
 		"never initialized": {state: vaultProbeVault, sealed: true, storageType: "file"},
@@ -1104,14 +1176,10 @@ func TestReconcile_SealedRunningVaultWithoutKeysIsArchived(t *testing.T) {
 
 			fake := &fakeInception{probe: probe, session: true, migrate: fakeMigration(t)}
 
-			require.NoError(t, runReconcile(t, paths, fake))
+			err := runReconcile(t, paths, fake)
 			assert.Equal(t, "recover-keys", fake.calls[1])
-			assert.NotContains(t, fake.calls, "migrate")
-			assert.Contains(t, fake.calls, "start fresh")
-
-			archives := archivesOf(t, paths)
-			require.Len(t, archives, 1)
-			assert.DirExists(t, filepath.Join(archives[0], "data", "core"))
+			requireRefusedForMissingKeys(t, paths, fake, err)
+			assert.DirExists(t, filepath.Join(paths["vaultDir"], "core"))
 		})
 	}
 }
@@ -1146,7 +1214,7 @@ func TestReconcile_KeyRecoveryOnlyForTheBlocsRunningVault(t *testing.T) {
 	writeKeys(t, paths, false, true)
 
 	fake := &fakeInception{probe: stoppedProbe(), migrate: fakeMigration(t)}
-	require.NoError(t, runReconcile(t, paths, fake))
+	require.ErrorIs(t, runReconcile(t, paths, fake), ErrInceptionKeysMissing)
 	assert.NotContains(t, fake.calls, "recover-keys")
 
 	other := reconcilePaths(t)
@@ -1466,8 +1534,7 @@ func TestReconcile_StoppedVaultWithoutRootKeyKeepsTheTargetToken(t *testing.T) {
 }
 
 // A token of the wrong shape is never written to root.key. It is still kept
-// beside it, because the stop deletes the target that holds it, and that
-// copy travels with the archive.
+// beside it, because the stop deletes the target that holds it.
 func TestReconcile_MalformedTargetTokenIsKeptButNeverUsed(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
@@ -1475,15 +1542,10 @@ func TestReconcile_MalformedTargetTokenIsKeptButNeverUsed(t *testing.T) {
 
 	fake := &fakeInception{probe: stoppedProbe(), targetToken: "s.BAD TOKEN"}
 
-	require.NoError(t, runReconcile(t, paths, fake))
-	assert.NotContains(t, fake.calls, "start restart")
+	requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
+	assert.NoFileExists(t, paths["rootKeyFile"])
 
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.NoFileExists(t, filepath.Join(archives[0], "root.key"))
-
-	kept, err := filepath.Glob(filepath.Join(archives[0], "root.key.saferc-*"))
-	require.NoError(t, err)
+	kept := tokenSidecars(t, paths)
 	require.Len(t, kept, 1)
 	assert.Equal(t, "s.BAD TOKEN\n", readKey(t, kept[0]))
 }
@@ -1840,8 +1902,8 @@ func TestReconcile_StoppedVaultRecoversTheUnsealKeyFromItsLogs(t *testing.T) {
 }
 
 // Only a whole key counts. A log with a cut-short key, or none, leaves the
-// vault to the archive path as before, with its data and keys kept.
-func TestReconcile_StoppedVaultWithoutAKeyInItsLogsIsArchived(t *testing.T) {
+// unseal key missing, so the run refuses with the data and keys in place.
+func TestReconcile_StoppedVaultWithoutAKeyInItsLogsIsRefused(t *testing.T) {
 	for name, logged := range map[string]string{
 		"no log":        "",
 		"no key":        "Now targeting x\n",
@@ -1859,9 +1921,7 @@ func TestReconcile_StoppedVaultWithoutAKeyInItsLogsIsArchived(t *testing.T) {
 
 			fake := &fakeInception{probe: stoppedProbe()}
 
-			require.NoError(t, runReconcile(t, paths, fake))
-			assert.Contains(t, fake.calls, "start fresh")
-			require.Len(t, archivesOf(t, paths), 1)
+			requireRefusedForMissingKeys(t, paths, fake, runReconcile(t, paths, fake))
 		})
 	}
 }
