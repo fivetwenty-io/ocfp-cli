@@ -23,6 +23,11 @@ import (
 // records them in order, so each test can assert both what ran and what the
 // disk looks like afterwards.
 type fakeInception struct {
+	// rootTokenErr is what every check of root.key against the running
+	// vault returns, and rootTokenChecks counts those checks.
+	rootTokenErr    error
+	rootTokenChecks int
+
 	probe          vaultProbe
 	session        bool
 	target         bool
@@ -42,6 +47,13 @@ type fakeInception struct {
 	disableErr     error                                                               // what teardown's boot unit disable returns
 	cleanupErr     error                                                               // what teardown's cleanup returns instead of running
 	calls          []string
+}
+
+// rootTokenWorks is the fake check of root.key against the running vault.
+func (f *fakeInception) rootTokenWorks(context.Context, map[string]string) error {
+	f.rootTokenChecks++
+
+	return f.rootTokenErr
 }
 
 func (f *fakeInception) record(call string) {

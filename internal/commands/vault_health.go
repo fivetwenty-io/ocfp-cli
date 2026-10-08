@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"syscall"
 	"time"
+
+	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
 )
 
 const (
@@ -102,5 +105,58 @@ func probeInceptionVaultWith(ctx context.Context, client *http.Client, addr stri
 		initialized: *status.Initialized,
 		sealed:      *status.Sealed,
 		storageType: status.StorageType,
+	}
+}
+
+// ErrInceptionRootTokenRefused reports a running inception vault that does
+// not take the token saved in root.key. A restart opens the vault with that
+// token, so a vault that refuses it could not be reopened after a stop.
+var ErrInceptionRootTokenRefused = errors.New("the running inception vault refuses the token in root.key")
+
+// checkInceptionRootToken asks the bloc's running vault whether it takes the
+// token in root.key.
+func checkInceptionRootToken(ctx context.Context, paths map[string]string) error {
+	return checkInceptionRootTokenWith(ctx, http.DefaultClient, "http://127.0.0.1:"+paths["port"],
+		paths["rootKeyFile"])
+}
+
+// checkInceptionRootTokenWith asks the vault at addr to look up the token in
+// rootKeyFile. The token travels only in the request header, and no error
+// quotes it. A vault that answers 401 or 403 refuses it, and any other answer,
+// or none, leaves the question open, which is an error of its own, because a
+// sealed or struggling vault cannot vouch for a token either.
+func checkInceptionRootTokenWith(ctx context.Context, client *http.Client, addr, rootKeyFile string) error {
+	token, err := keyfile.Read(rootKeyFile)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, vaultHealthCheckTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/v1/auth/token/lookup-self", nil)
+	if err != nil {
+		return fmt.Errorf("cannot ask the vault at %s whether it takes the token in %s: %w", addr, rootKeyFile, err)
+	}
+
+	req.Header.Set("X-Vault-Token", token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cannot ask the vault at %s whether it takes the token in %s: %w", addr, rootKeyFile, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultProbeBodyLimit))
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("%w: %s", ErrInceptionRootTokenRefused, rootKeyFile)
+	default:
+		return fmt.Errorf("cannot tell whether the vault at %s takes the token in %s, because it answered %s",
+			addr, rootKeyFile, resp.Status)
 	}
 }

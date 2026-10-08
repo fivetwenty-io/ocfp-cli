@@ -2,15 +2,18 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // sealStatusServer answers /v1/sys/seal-status with body and status.
@@ -128,4 +131,86 @@ func TestProbeInceptionVault_ClosedPortIsStopped(t *testing.T) {
 
 	state := probeInceptionVaultWith(context.Background(), client, "http://127.0.0.1:1").state
 	assert.Equal(t, vaultProbeStopped, state)
+}
+
+// tokenLookupServer answers /v1/auth/token/lookup-self with status and
+// records the token each request carried.
+func tokenLookupServer(t *testing.T, status int, seen *[]string) *httptest.Server {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/auth/token/lookup-self" {
+			w.WriteHeader(http.StatusNotFound)
+
+			return
+		}
+
+		*seen = append(*seen, r.Header.Get("X-Vault-Token"))
+
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+// The root token is checked by asking the running vault to look it up, with
+// the token from root.key in the request header and nowhere else.
+func TestCheckInceptionRootToken(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		status  int
+		refused bool
+		ok      bool
+	}{
+		"taken":         {status: http.StatusOK, ok: true},
+		"forbidden":     {status: http.StatusForbidden, refused: true},
+		"unauthorized":  {status: http.StatusUnauthorized, refused: true},
+		"sealed":        {status: http.StatusServiceUnavailable},
+		"server failed": {status: http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			rootKey := filepath.Join(t.TempDir(), "root.key")
+			require.NoError(t, os.WriteFile(rootKey, []byte("s.ROOT-TOKEN-SENTINEL\n"), 0o600))
+
+			var seen []string
+
+			srv := tokenLookupServer(t, tc.status, &seen)
+
+			err := checkInceptionRootTokenWith(context.Background(), srv.Client(), srv.URL, rootKey)
+			assert.Equal(t, []string{"s.ROOT-TOKEN-SENTINEL"}, seen, "root.key's token, trimmed, is sent once")
+
+			if tc.ok {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+			assert.Equal(t, tc.refused, errors.Is(err, ErrInceptionRootTokenRefused))
+			assert.Contains(t, err.Error(), rootKey)
+			assert.NotContains(t, err.Error(), "SENTINEL")
+		})
+	}
+}
+
+// A vault that does not answer cannot vouch for the token, which is not the
+// same as refusing it.
+func TestCheckInceptionRootToken_NoAnswer(t *testing.T) {
+	t.Parallel()
+
+	rootKey := filepath.Join(t.TempDir(), "root.key")
+	require.NoError(t, os.WriteFile(rootKey, []byte("s.ROOT-TOKEN-SENTINEL\n"), 0o600))
+
+	srv := httptest.NewServer(http.NotFoundHandler())
+	addr := srv.URL
+	srv.Close()
+
+	err := checkInceptionRootTokenWith(context.Background(), http.DefaultClient, addr, rootKey)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInceptionRootTokenRefused)
+	assert.NotContains(t, err.Error(), "SENTINEL")
 }
