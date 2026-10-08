@@ -502,7 +502,7 @@ func TestInceptionLockFilePerBloc(t *testing.T) {
 
 // A second run for the same bloc waits for the first and then gives up
 // without doing anything, while another bloc goes ahead at once.
-func TestWithInceptionVaultLock(t *testing.T) {
+func TestWithLockedInceptionPaths(t *testing.T) {
 	t.Setenv("OCFP_HOME", t.TempDir())
 
 	orig := inceptionLockTimeout
@@ -510,20 +510,17 @@ func TestWithInceptionVaultLock(t *testing.T) {
 
 	t.Cleanup(func() { inceptionLockTimeout = orig })
 
-	a := mustInceptionPaths(t, "ocfp-lab-a", false)
-	b := mustInceptionPaths(t, "ocfp-lab-b", false)
-
-	err := withInceptionVaultLock(a, func() error {
+	err := withLockedInceptionPaths("ocfp-lab-a", false, nil, func(map[string]string) error {
 		ran := false
 
-		require.ErrorIs(t, withInceptionVaultLock(a, func() error {
+		require.ErrorIs(t, withLockedInceptionPaths("ocfp-lab-a", false, nil, func(map[string]string) error {
 			ran = true
 
 			return nil
 		}), config.ErrFileLockTimeout)
 		assert.False(t, ran, "a second run for the same bloc must not run")
 
-		require.NoError(t, withInceptionVaultLock(b, func() error {
+		require.NoError(t, withLockedInceptionPaths("ocfp-lab-b", false, nil, func(map[string]string) error {
 			ran = true
 
 			return nil
