@@ -399,11 +399,16 @@ as it can on the way:
     resumes on the next run.
   - When the engine rejects a saved key, ocfp stops the vault, leaves its
     data and keys as they were, and refuses. The error names the refused key
-    file and any file store a migration kept to roll back to. To replace such
-    a vault with a new, empty one, run 'ocfp vault teardown' and then 'ocfp
-    vault inception'.
-  - Only when a key is missing does ocfp rename the old vault to
-    vault.superseded-{timestamp} and start a new one. Nothing is ever deleted.
+    file and any file store a migration kept to roll back to.
+  - When the vault has data but a key is missing, even after ocfp looks in
+    the vault logs, ocfp leaves the data and the remaining key in place and
+    refuses, so the key can be restored and the command run again.
+  - To replace either kind of vault with a new, empty one, run
+    'ocfp vault teardown' and then 'ocfp vault inception'.
+  - Only key files left with no data are renamed aside, to
+    vault.superseded-{timestamp}, before a new vault starts. No new vault
+    starts while a store a migration kept or moved aside still sits beside
+    the data directory, with or without key files. Nothing is ever deleted.
 
 One run at a time works on a bloc's vault. A second run for the same bloc
 waits up to five minutes for the first to finish.
