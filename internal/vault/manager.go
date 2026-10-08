@@ -1417,7 +1417,7 @@ func (m *Manager) killTmuxSession(ctx context.Context, session string) error {
 func (m *Manager) killSafeProcesses(port int) error {
 	err := m.killSafeLocalProcesses(port)
 
-	killOrphanedInceptionEngine(context.Background(), strconv.Itoa(port), localInceptionVaultDB(m.blocName), m.logger)
+	killOrphanedLocalEngine(context.Background(), m.blocName, strconv.Itoa(port), m.logger)
 
 	return err
 }
@@ -1536,10 +1536,23 @@ func (m *Manager) cleanupVaultFiles(_ string) error {
 		return ErrHomeNotSet
 	}
 
+	// The bloc's directory is resolved before anything is removed, so a bloc
+	// whose vault directory is ambiguous loses no files at all.
+	blocDir := ""
+
+	if m.blocName != "" {
+		var err error
+
+		blocDir, err = config.OcfpBlocDir(m.blocName)
+		if err != nil {
+			return fmt.Errorf("removed no vault files: %w", err)
+		}
+	}
+
 	removedFiles := 0
 
 	removedFiles += m.removeGlobalVaultFiles(homeDir)
-	removedFiles += m.removeBlocSpecificVaultFiles()
+	removedFiles += m.removeBlocSpecificVaultFiles(blocDir)
 
 	m.logCleanupResults(removedFiles)
 
@@ -1563,15 +1576,14 @@ func (m *Manager) removeGlobalVaultFiles(homeDir string) int {
 	return removedCount
 }
 
-// removeBlocSpecificVaultFiles removes bloc-specific vault files.
-func (m *Manager) removeBlocSpecificVaultFiles() int {
-	if m.blocName == "" {
+// removeBlocSpecificVaultFiles removes the vault files under the bloc's
+// resolved directory, and nothing when blocDir is empty.
+func (m *Manager) removeBlocSpecificVaultFiles(blocDir string) int {
+	if blocDir == "" {
 		return 0
 	}
 
 	removedCount := 0
-
-	blocDir := config.OcfpBlocDir(m.blocName)
 
 	blocVaultKeyFile := filepath.Join(blocDir, "vault", "root.key")
 	if m.removeFileIfExists(blocVaultKeyFile, "bloc vault key") {
@@ -2160,7 +2172,11 @@ func buildPathWithKey(currentPath, key string) string {
 // Returns the path to the snapshot file.
 func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
 	// Create snapshot directory
-	blocDir := config.OcfpBlocDir(m.blocName)
+	blocDir, err := config.OcfpBlocDir(m.blocName)
+	if err != nil {
+		return "", err
+	}
+
 	if blocDir == "" {
 		return "", ErrHomeNotSet
 	}
@@ -2168,7 +2184,7 @@ func (m *Manager) snapshotInceptionVault(inceptionName string) (string, error) {
 	snapshotDir := filepath.Join(blocDir, "vault", "snapshots", "inception")
 
 	// #nosec -- path components are from trusted config
-	err := os.MkdirAll(snapshotDir, 0700) //nolint:mnd // path components are from trusted config
+	err = os.MkdirAll(snapshotDir, 0700) //nolint:mnd // path components are from trusted config
 	if err != nil {
 		return "", fmt.Errorf("failed to create snapshot directory: %w", err)
 	}

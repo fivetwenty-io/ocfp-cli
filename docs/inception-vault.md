@@ -26,6 +26,18 @@ On a bastion, we move the port in the config file and not in the environment. Th
 
 In the bloc layout, which every current bloc uses, the vault's files live under the data home, which is `~/.local/share/ocfp` unless `XDG_DATA_HOME` or `OCFP_HOME` says otherwise.
 
+A bloc created before ocfp moved to that layout may still keep its files in the legacy `~/.ocfp/<bloc>` directory, and some blocs have files in both places. ocfp uses one of the two directories for each bloc, and it prefers the one that holds the bloc's vault, so that a directory without a vault never hides one that has a vault. A directory holds a vault when its `vault/` directory has a `root.key` or an `unseal.keys` file, or a `data/` directory with anything in it. An empty `data/` directory doesn't count, because there's nothing in it to lose. The rest of the choice works like this:
+
+- When only one of the two directories holds a vault, ocfp uses that one. It does so even when the other directory holds bloc files of its own, such as ssh keys or deployments, and in that case it prints a warning that the bloc's files are split between the two directories. Stopping the vault and running `ocfp config migrate` brings them together.
+
+- When one directory is a link to the other, or its `vault/` directory is a link to the other's, both paths lead to one vault, and ocfp uses it through the XDG path.
+
+- When neither directory holds a vault, ocfp uses the XDG directory if it holds anything at all, then the legacy directory if that holds anything, and otherwise the XDG directory, which is where a new bloc's files go.
+
+- When both directories hold a vault, ocfp refuses to use either one. Every vault command fails with an error that names both directories, and both vaults are left exactly as they are. The boot unit's `ocfp vault start` refuses too, so after a reboot the vault stays down until we set one copy aside.
+
+To settle a bloc with two vaults, we first make sure they are two vaults, because a link deeper inside either `vault/` directory can make one vault show up in both places. `ls -l` on both `vault/` directories shows any data directory or key file that is a link, and `realpath` on both shows where they lead. If anything in one points into the other, there may be only one vault behind both paths, so we move nothing and sort out the link by hand, because moving a directory that a link points into strands the vault behind it. When there are no links, we find out which vault is in use. `lsof -nP -iTCP:<port> -sTCP:LISTEN` shows what serves the bloc's API port, `tmux ls` shows whether the bloc's session is running, and the files and their dates under each `vault/` directory, including `root.key` and `unseal.keys`, show which copy is newer and which holds more. If the copy we set aside is the running one, we stop it first with `tmux kill-session -t <bloc>-inception-vault`. Then we rename that copy's `vault` directory, for example to `vault.set-aside`, rather than deleting it, so that both vaults stay on disk. The next ocfp command uses the vault that remains.
+
 | Path | What it holds |
 |------|---------------|
 | `<bloc>/vault/data/` | The vault's storage. A raft vault has `vault.db` and a `raft/` directory here, and a file-backed vault from an older ocfp has a `core/` directory instead. |
@@ -191,7 +203,7 @@ The unit is a system unit that runs as the operator, the user that bastion init 
 
 - It starts after `ocfp-dataset.service` and `network-online.target`. On a bastion that has no `ocfp-dataset.service`, such as one on AWS, that ordering has no effect.
 
-- It starts only when the bloc's drop-in exists and the bloc's `unseal.keys` exists, either in `~/.local/share/ocfp/<bloc>/vault/` or in the legacy `~/.ocfp/<bloc>/vault/`. On a bastion where the vault was never created, or was archived, systemd skips the unit without an error. An instance without its drop-in never starts, so the template never runs the vault as root.
+- It starts only when the bloc's drop-in exists and the bloc's `unseal.keys` exists, either in `~/.local/share/ocfp/<bloc>/vault/` or in the legacy `~/.ocfp/<bloc>/vault/`. On a bastion where the vault was never created, or was archived, systemd skips the unit without an error. An instance without its drop-in never starts, so the template never runs the vault as root. When both of those directories hold a vault, `ocfp vault start` refuses, and the unit fails until we set one of them aside, as the section on files on disk describes.
 
 - It is a oneshot that stays active after the command exits, and it never restarts on its own. A failed start stays failed until we look at it.
 
@@ -266,6 +278,7 @@ A new vault is held to the same standard. When ocfp starts one, it takes the new
 | `ocfp vault start refused to restart the inception vault: the inception vault port is taken` | `ocfp vault start` found something other than this bloc's vault on the API port, either at its first look or when it probed the port again right before a stop. It stopped nothing and left whatever holds the port running. | Find what holds the port with `lsof -i :<port>`, and stop it if it does not belong there. To move this bloc's ports for the boot unit, set `vault_inception_port` in the bloc's entry in `~/.config/ocfp/config.yml`, because the unit never sees `OCFP_VAULT_INCEPTION_PORT`. |
 | `ocfp vault start refused to restart the inception vault: the inception vault cluster port is taken` | `ocfp vault start` found the cluster port, which is the API port plus 1000, in use. When the vault was running, the command found this only after it had stopped the vault, so the vault stays stopped. | Free the cluster port and run `ocfp vault start --bloc <bloc>` again, or move both ports with `vault_inception_port` in the config file. |
 | `the installed ocfp binary has no 'vault start' command` | The `vault_boot_unit` phase of `ocfp init bastion` ran `/usr/local/bin/ocfp vault start --check-support` on the bastion, and it failed, usually because that ocfp predates `vault start`. Nothing was installed or enabled. | Install an ocfp release that has `ocfp vault start` on the bastion, and run `ocfp init bastion` again. |
+| `the bloc has an inception vault in two directories` | Both `~/.local/share/ocfp/<bloc>` and `~/.ocfp/<bloc>` hold a vault, and ocfp will not guess which one holds the secrets the bloc needs. Every command that uses the bloc's directory refuses, including `ocfp vault start` from the boot unit, and nothing in either directory changed. | Check both `vault/` directories for links first, and move nothing while a link joins them. Otherwise find the copy in use, stop it only if it's the one we set aside, and rename the other copy's `vault` directory rather than deleting it, as the section on files on disk describes. Then run the command again. |
 | `timed out waiting for another ocfp run to release its lock` | Another ocfp run has worked on this bloc's vault for more than five minutes. | Wait for that run to finish, or stop it, and run the command again. A killed run releases the lock on its own. |
 
 ## Testing on a workstation

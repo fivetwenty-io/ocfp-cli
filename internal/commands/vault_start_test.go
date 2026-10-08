@@ -17,7 +17,7 @@ import (
 func startTestPaths(t *testing.T, dataDir string) map[string]string {
 	t.Helper()
 
-	paths := getVaultInceptionPaths("ocfp-lab-drgao", false)
+	paths := mustInceptionPaths(t, "ocfp-lab-drgao", false)
 	vaultRoot := filepath.Dir(dataDir)
 
 	paths["vaultDir"] = dataDir

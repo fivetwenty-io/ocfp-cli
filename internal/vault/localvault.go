@@ -57,18 +57,40 @@ var localCommandOutput = func(ctx context.Context, name string, args ...string) 
 
 // localInceptionVaultDB returns the raft database of the bloc's
 // workstation-local inception vault (see getVaultInceptionPaths in
-// internal/commands).
-func localInceptionVaultDB(blocName string) string {
+// internal/commands). It is empty when there is no home directory, and an
+// error when the bloc's directory cannot be resolved, such as when the bloc
+// has a vault in both its XDG and its legacy directory.
+func localInceptionVaultDB(blocName string) (string, error) {
 	if blocName != "" {
-		return filepath.Join(config.OcfpBlocDir(blocName), "vault", "data", "vault.db")
+		blocDir, err := config.OcfpBlocDir(blocName)
+		if err != nil {
+			return "", err
+		}
+
+		return filepath.Join(blocDir, "vault", "data", "vault.db"), nil
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return "", nil //nolint:nilerr // no home means no vault.db to tie an engine to, so nothing is killed
 	}
 
-	return filepath.Join(home, ".vault", "vault.db")
+	return filepath.Join(home, ".vault", "vault.db"), nil
+}
+
+// killOrphanedLocalEngine runs killOrphanedInceptionEngine against the bloc's
+// own vault.db. When the bloc's directory cannot be resolved, no listener can
+// be tied to the bloc, so nothing is killed and the reason is logged.
+func killOrphanedLocalEngine(ctx context.Context, blocName, port string, log *zap.SugaredLogger) {
+	vaultDB, err := localInceptionVaultDB(blocName)
+	if err != nil {
+		log.Warnw("Not looking for an orphaned inception vault engine, because the bloc's vault directory "+
+			"cannot be resolved", "port", port, "error", err)
+
+		return
+	}
+
+	killOrphanedInceptionEngine(ctx, port, vaultDB, log)
 }
 
 // localInceptionRootKeyFile returns the file holding the root token of the
@@ -76,7 +98,12 @@ func localInceptionVaultDB(blocName string) string {
 // internal/commands).
 func localInceptionRootKeyFile(blocName string) (string, error) {
 	if blocName != "" {
-		return filepath.Join(config.OcfpBlocDir(blocName), "vault", "root.key"), nil
+		blocDir, err := config.OcfpBlocDir(blocName)
+		if err != nil {
+			return "", err
+		}
+
+		return filepath.Join(blocDir, "vault", "root.key"), nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -251,7 +278,7 @@ func TeardownLocalInception(ctx context.Context, blocName string) error {
 		log.Debugw("No local safe processes to kill", "port", port, "error", err)
 	}
 
-	killOrphanedInceptionEngine(ctx, port, localInceptionVaultDB(blocName), log)
+	killOrphanedLocalEngine(ctx, blocName, port, log)
 
 	//nolint:noinlineerr // errors are passed to the logger for context
 	if err := runLocalCommand(ctx, "safe", "target", "delete", target); err != nil {

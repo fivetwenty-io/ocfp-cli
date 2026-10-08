@@ -203,8 +203,10 @@ func listenerLine(port string) string {
 	return "lsof -nP -t -iTCP:" + port + " -sTCP:LISTEN"
 }
 
-func holderLine(blocName string) string {
-	return "lsof -t " + filepath.Join(config.OcfpBlocDir(blocName), "vault", "data", "vault.db")
+func holderLine(t *testing.T, blocName string) string {
+	t.Helper()
+
+	return "lsof -t " + filepath.Join(mustBlocDir(t, blocName), "vault", "data", "vault.db")
 }
 
 // An engine whose safe was killed keeps the port and the raft data. Teardown
@@ -220,7 +222,7 @@ func TestTeardownLocalInception_KillsTheOrphanedEngineOnly(t *testing.T) {
 	self := strconv.Itoa(os.Getpid())
 
 	fake.outputs[listenerLine(port)] = []string{"4242\n5151\n" + self + "\n"}
-	fake.outputs[holderLine("ocfp-lab-drgao")] = []string{"4242\n" + self + "\n", ""}
+	fake.outputs[holderLine(t, "ocfp-lab-drgao")] = []string{"4242\n" + self + "\n", ""}
 
 	require.NoError(t, TeardownLocalInception(context.Background(), "ocfp-lab-drgao"))
 
@@ -246,7 +248,7 @@ func TestTeardownLocalInception_EscalatesAfterAGracePeriod(t *testing.T) {
 	t.Cleanup(restore)
 
 	fake.outputs[listenerLine(port)] = []string{"4242\n"}
-	fake.outputs[holderLine("ocfp-lab-drgao")] = []string{"4242\n"}
+	fake.outputs[holderLine(t, "ocfp-lab-drgao")] = []string{"4242\n"}
 
 	require.NoError(t, TeardownLocalInception(context.Background(), "ocfp-lab-drgao"))
 
@@ -265,7 +267,7 @@ func TestTeardownLocalInception_LsofFailureKillsNothing(t *testing.T) {
 	port := localInceptionVaultPort("ocfp-lab-drgao")
 
 	fake.errs[listenerLine(port)] = exitWith(2)
-	fake.outputs[holderLine("ocfp-lab-drgao")] = []string{"4242\n"}
+	fake.outputs[holderLine(t, "ocfp-lab-drgao")] = []string{"4242\n"}
 
 	require.NoError(t, TeardownLocalInception(context.Background(), "ocfp-lab-drgao"))
 	assert.Empty(t, killed(*recorded))
@@ -328,7 +330,7 @@ func TestTeardownLocalInception_SavesTheTargetTokenBeforeDeletingTheTarget(t *te
 	home := isolateLocalHome(t)
 	writeSafeRC(t, home, teardownTestBloc+"-inception", blocPortURL(teardownTestBloc), teardownTestToken)
 
-	rootKey := filepath.Join(config.OcfpBlocDir(teardownTestBloc), "vault", "root.key")
+	rootKey := filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key")
 
 	var heldAtDelete string
 
@@ -354,7 +356,7 @@ func TestTeardownLocalInception_FillsABlankRootKey(t *testing.T) {
 	writeSafeRC(t, home, teardownTestBloc+"-inception", blocPortURL(teardownTestBloc), teardownTestToken)
 	stubLocalCommands(t)
 
-	rootKey := filepath.Join(config.OcfpBlocDir(teardownTestBloc), "vault", "root.key")
+	rootKey := filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key")
 	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0o700))
 	require.NoError(t, os.WriteFile(rootKey, []byte("  \n"), 0o600))
 
@@ -370,7 +372,7 @@ func TestTeardownLocalInception_KeepsADifferentTokenBesideRootKey(t *testing.T) 
 	writeSafeRC(t, home, teardownTestBloc+"-inception", blocPortURL(teardownTestBloc), teardownTestToken)
 	stubLocalCommands(t)
 
-	rootKey := filepath.Join(config.OcfpBlocDir(teardownTestBloc), "vault", "root.key")
+	rootKey := filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key")
 	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0o700))
 	require.NoError(t, os.WriteFile(rootKey, []byte("hvs.someothertoken9876543210\n"), 0o600))
 
@@ -397,7 +399,7 @@ func TestTeardownLocalInception_DeletesNothingWhenTheTokenCannotBeKept(t *testin
 
 	// A root.key that is not a readable file cannot be compared with the
 	// token, so the token cannot be kept.
-	rootKey := filepath.Join(config.OcfpBlocDir(teardownTestBloc), "vault", "root.key")
+	rootKey := filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key")
 	require.NoError(t, os.MkdirAll(rootKey, 0o700))
 
 	err := TeardownLocalInception(context.Background(), teardownTestBloc)
@@ -417,7 +419,7 @@ func TestTeardownLocalInception_IgnoresATargetOnAnotherPort(t *testing.T) {
 
 	assert.Contains(t, *recorded, "safe target delete "+teardownTestBloc+"-inception")
 
-	_, err := os.Stat(filepath.Join(config.OcfpBlocDir(teardownTestBloc), "vault", "root.key"))
+	_, err := os.Stat(filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key"))
 	assert.ErrorIs(t, err, os.ErrNotExist, "a target that is not the bloc's own must not be saved")
 }
 
@@ -444,4 +446,17 @@ func TestTeardownLocalInception_BareNamesKeepTheTokenInHomeVaultRootKey(t *testi
 	saferc, err := filepath.Glob(oldKeyFile + ".*")
 	require.NoError(t, err)
 	assert.Empty(t, saferc, "nothing is written beside the old key file")
+}
+
+// mustBlocDir returns config.OcfpBlocDir for a bloc whose directory
+// resolves, failing the test when it does not.
+func mustBlocDir(t *testing.T, blocName string) string {
+	t.Helper()
+
+	dir, err := config.OcfpBlocDir(blocName)
+	if err != nil {
+		t.Fatalf("config.OcfpBlocDir(%q) error = %v", blocName, err)
+	}
+
+	return dir
 }

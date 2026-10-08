@@ -217,7 +217,7 @@ func noBlocVaultLayout(t *testing.T) (string, map[string]string) {
 
 	t.Cleanup(func() { homeDirFn = original })
 
-	paths := getVaultInceptionPaths("", false)
+	paths := mustInceptionPaths(t, "", false)
 
 	require.NoError(t, os.MkdirAll(filepath.Join(paths["vaultDir"], "raft"), 0o700))
 	require.NoError(t, os.WriteFile(paths["rootKeyFile"], []byte("root\n"), 0o600))

@@ -185,10 +185,16 @@ func (g *GCPBastionInit) getBastionIP() (string, error) {
 //
 //nolint:unparam // signature kept for interface compatibility
 func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
-	// Look for state file in standard locations
-	statePaths := []string{
-		filepath.Join(config.OcfpBlocDir(g.config.Name), "state.json"),
-		filepath.Join(".", "state.json"),
+	// Look for state file in standard locations. A bloc directory that
+	// cannot be resolved is skipped: this lookup only reads, and it always
+	// returns empty so the caller falls through to its other sources.
+	statePaths := []string{filepath.Join(".", "state.json")}
+
+	blocDir, err := config.OcfpBlocDir(g.config.Name)
+	if err != nil {
+		g.log.Debugw("Skipping the bloc directory in the state file lookup", "error", err)
+	} else {
+		statePaths = append([]string{filepath.Join(blocDir, "state.json")}, statePaths...)
 	}
 
 	for _, statePath := range statePaths {
