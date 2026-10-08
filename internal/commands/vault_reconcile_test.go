@@ -27,6 +27,11 @@ type fakeInception struct {
 	// vault returns, and rootTokenChecks counts those checks.
 	rootTokenErr    error
 	rootTokenChecks int
+	// targetTokenErr is what every check of safe's target token against
+	// the running vault returns, and checkedTargetTokens lists the tokens
+	// those checks were given.
+	targetTokenErr      error
+	checkedTargetTokens []string
 	// canMigrateErr is what every check of the engine's migration support
 	// returns.
 	canMigrateErr error
@@ -75,6 +80,15 @@ func (f *fakeInception) rootTokenWorks(context.Context, map[string]string) error
 	f.rootTokenChecks++
 
 	return f.rootTokenErr
+}
+
+// targetTokenWorks is the fake check of safe's target token against the
+// running vault.
+func (f *fakeInception) targetTokenWorks(_ context.Context, _ map[string]string, token string) error {
+	f.record("target-token")
+	f.checkedTargetTokens = append(f.checkedTargetTokens, token)
+
+	return f.targetTokenErr
 }
 
 func (f *fakeInception) record(call string) {
@@ -165,8 +179,9 @@ func (f *fakeInception) steps() inceptionSteps {
 
 			return f.recoverErr
 		},
-		targetToken:    func(map[string]string) string { return f.targetToken },
-		rootTokenWorks: f.rootTokenWorks,
+		targetToken:      func(map[string]string) string { return f.targetToken },
+		rootTokenWorks:   f.rootTokenWorks,
+		targetTokenWorks: f.targetTokenWorks,
 		canMigrate: func(context.Context) error {
 			f.record("can-migrate")
 
@@ -2050,19 +2065,20 @@ func TestReconcile_OpenFileVaultThatRefusesRootKeyIsLeftRunning(t *testing.T) {
 	}
 }
 
-// Only an open vault that the run would migrate is asked about root.key. A
-// sealed vault holds nothing the restart could lose, and an open raft vault
-// that is restarted gets the retry with safe's token, as before.
-func TestReconcile_ChecksTheRootTokenOnlyBeforeMigratingAnOpenVault(t *testing.T) {
+// Only an open vault that the run would stop is asked about root.key, both
+// one it would migrate and an open raft vault it would restart in place. A
+// sealed vault holds nothing the restart could lose.
+func TestReconcile_ChecksTheRootTokenOnlyBeforeStoppingAnOpenVault(t *testing.T) {
 	for name, tc := range map[string]struct {
-		probe  vaultProbe
-		data   func(t *testing.T, dir string)
-		checks int
+		probe   vaultProbe
+		data    func(t *testing.T, dir string)
+		session bool
+		checks  int
 	}{
-		"open file vault":   {probe: runningFileProbe(), data: writeFileData, checks: 1},
+		"open file vault":   {probe: runningFileProbe(), data: writeFileData, session: true, checks: 1},
 		"sealed file vault": {probe: sealedFileProbe(), data: writeFileData},
 		"open raft vault, no session": {
-			probe: healthyRaftProbe(), data: writeRaftData,
+			probe: healthyRaftProbe(), data: writeRaftData, checks: 1,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -2070,13 +2086,97 @@ func TestReconcile_ChecksTheRootTokenOnlyBeforeMigratingAnOpenVault(t *testing.T
 			tc.data(t, paths["vaultDir"])
 			writeKeys(t, paths, true, true)
 
-			fake := &fakeInception{probe: tc.probe, session: tc.checks > 0, migrate: fakeMigration(t)}
+			fake := &fakeInception{probe: tc.probe, session: tc.session, migrate: fakeMigration(t)}
 
 			require.NoError(t, runReconcile(t, paths, fake))
 			assert.Equal(t, tc.checks, fake.rootTokenChecks)
 			assert.Contains(t, fake.calls, "stop")
 		})
 	}
+}
+
+// An open raft vault that is not healthy, such as one started outside its
+// tmux session, is stopped and restarted in place, and the restart retries
+// with safe's token when the engine refuses root.key. So vault inception asks
+// the running vault about both tokens first, and when it takes neither, or
+// cannot say, the run refuses with the vault still running and nothing
+// written.
+func TestReconcile_OpenRaftVaultThatRefusesBothTokensIsLeftRunning(t *testing.T) {
+	refused := fmt.Errorf("%w: test", ErrInceptionRootTokenRefused)
+
+	for name, tc := range map[string]struct {
+		targetToken    string
+		targetTokenErr error
+		targetChecked  bool
+	}{
+		"target token refused": {
+			targetToken: safeRCToken, targetTokenErr: errors.New("the vault refuses the token safe's target holds"),
+			targetChecked: true,
+		},
+		"target token cannot be checked": {
+			targetToken: safeRCToken, targetTokenErr: errors.New("the vault did not answer the lookup"),
+			targetChecked: true,
+		},
+		"no target token":                 {},
+		"target token is root.key's":      {targetToken: "s.ROOT-TOKEN-SENTINEL"},
+		"target token of the wrong shape": {targetToken: "s.BAD TOKEN"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := reconcilePaths(t)
+			writeRaftData(t, paths["vaultDir"])
+			writeKeys(t, paths, true, true)
+
+			before := treeDigest(t, blocDir(paths))
+			fake := &fakeInception{
+				probe: healthyRaftProbe(), targetToken: tc.targetToken,
+				rootTokenErr: refused, targetTokenErr: tc.targetTokenErr,
+			}
+
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrInceptionRootTokenRefused)
+			assert.Equal(t, 1, fake.rootTokenChecks)
+			assert.NotContains(t, fake.calls, "stop")
+			assert.Equal(t, before, treeDigest(t, blocDir(paths)), "nothing is written, not even a token copy")
+
+			if tc.targetChecked {
+				assert.Equal(t, []string{tc.targetToken}, fake.checkedTargetTokens)
+				require.ErrorIs(t, err, tc.targetTokenErr)
+			} else {
+				assert.Empty(t, fake.checkedTargetTokens, "only a different, token-shaped token is worth a retry")
+			}
+
+			msg := err.Error()
+			assert.Contains(t, msg, paths["rootKeyFile"])
+			assert.Contains(t, msg, "the restart opens the vault with that token")
+			assert.NotContains(t, msg, "after the migration")
+			assert.Contains(t, msg, "stopped nothing")
+			assert.NotContains(t, msg, "SENTINEL")
+		})
+	}
+}
+
+// When the running raft vault refuses root.key but takes the token safe's
+// target holds, the restart's retry opens it with that token, so the run
+// goes on, and root.key holds the token from then on.
+func TestReconcile_OpenRaftVaultThatTakesTheTargetTokenIsRestarted(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	fake := &fakeInception{
+		probe: healthyRaftProbe(), targetToken: safeRCToken,
+		rootTokenErr: fmt.Errorf("%w: test", ErrInceptionRootTokenRefused),
+		startErrs:    []error{tokenRejected()},
+	}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+	assert.Equal(t, []string{
+		"probe", "target-token", "stop", "cluster-port " + paths["clusterPort"],
+		"start restart", "stop", "start restart", "finish restart",
+	}, fake.calls)
+	assert.Equal(t, []string{safeRCToken}, fake.checkedTargetTokens)
+	assert.Equal(t, safeRCToken+"\n", readKey(t, paths["rootKeyFile"]))
+	assert.Empty(t, archivesOf(t, paths))
 }
 
 // A restart right after the migration that the engine refuses the root

@@ -565,7 +565,7 @@ func (run *migrateStorageRun) requireWorkingRootToken(ctx context.Context, found
 	}
 
 	return fmt.Errorf("%w%s", found.rootTokenErr,
-		rootTokenRefusedAdvice(run.paths, "migrate-storage", run.steps.vaultStart.targetToken(run.paths)))
+		rootTokenRefusedAdvice(run.paths, "migrate-storage", restartAfterMigration, run.steps.vaultStart.targetToken(run.paths)))
 }
 
 // requireOpenVaultKeysSaved refuses to stop an open vault unless both keys
