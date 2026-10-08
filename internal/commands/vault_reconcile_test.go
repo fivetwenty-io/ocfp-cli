@@ -307,28 +307,68 @@ func TestReconcile_BlankKeyFileCountsAsMissing(t *testing.T) {
 	require.Len(t, archivesOf(t, paths), 1)
 }
 
-func TestReconcile_RejectedKeysArchiveAndStartFresh(t *testing.T) {
+func unsealKeyRejected() error {
+	return fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected)
+}
+
+// A vault whose saved key the engine refuses still holds its data, and the
+// keys may be what is wrong rather than the data, so the run refuses. It
+// stops what it started, archives nothing, starts no new vault, and says how
+// to replace the vault on purpose.
+func TestReconcile_RejectedKeysRefuseAndChangeNothing(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, true)
 
-	fake := &fakeInception{
-		probe:     stoppedProbe(),
-		startErrs: []error{fmt.Errorf("%w: !! The root token in x was rejected by OpenBao", ErrVaultKeysRejected)},
-	}
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{unsealKeyRejected()}}
 
-	require.NoError(t, runReconcile(t, paths, fake))
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysRefused)
+	require.ErrorIs(t, err, ErrVaultKeysRejected)
 
 	assert.Equal(t, []string{
-		"probe", "stop", "cluster-port " + paths["clusterPort"],
-		"start restart", "stop", "start fresh", "finish fresh",
-	}, fake.calls)
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "start restart", "stop",
+	}, fake.calls, "the refused vault is stopped and nothing else happens")
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+	assert.Empty(t, archivesOf(t, paths))
 
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.FileExists(t, filepath.Join(archives[0], "data", "vault.db"))
-	assert.FileExists(t, filepath.Join(archives[0], "root.key"))
-	assert.FileExists(t, filepath.Join(archives[0], "unseal.keys"))
+	assert.Contains(t, err.Error(), paths["unsealKeysFile"], "the error names the key file the engine refused")
+	assert.Contains(t, err.Error(), paths["vaultDir"])
+	assert.Contains(t, err.Error(), "'ocfp vault teardown' and then 'ocfp vault inception'")
+	assert.NotContains(t, err.Error(), migrationBackupSuffix, "no file store was kept, so there is nothing to roll back to")
+	assert.NotContains(t, err.Error(), testSealKey)
+}
+
+// Right after a migration to raft, the file store it came from is still
+// beside the data. A refused key then names that store and how to go back
+// to it, and a refused root token names root.key.
+func TestReconcile_RejectedKeyAfterMigrationNamesTheFileBackup(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	older := paths["vaultDir"] + migrationBackupSuffix + "20261001-090000"
+	newer := paths["vaultDir"] + migrationBackupSuffix + "20261006-115900"
+
+	writeFileData(t, older)
+	writeFileData(t, newer)
+
+	before := treeDigest(t, blocDir(paths))
+	fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{tokenRejected()}}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysRefused)
+	assert.Equal(t, before, treeDigest(t, blocDir(paths)))
+	assert.Empty(t, archivesOf(t, paths))
+	assert.NotContains(t, fake.calls, "start fresh")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "the engine refused the key in "+paths["rootKeyFile"])
+	assert.Contains(t, msg, older)
+	assert.Contains(t, msg, newer)
+	assert.Contains(t, msg, "rename "+newer+" to "+paths["vaultDir"], "the rollback starts from the newest file store")
+	assert.Contains(t, msg, "'ocfp vault teardown' and then 'ocfp vault inception'")
 }
 
 // A new vault that started after an archive but whose keys could not be saved
@@ -376,27 +416,6 @@ func TestReconcile_FinishFailureLeavesTheNewVaultRunning(t *testing.T) {
 				"probe", "stop", "cluster-port " + paths["clusterPort"], "start fresh", "finish fresh",
 			}, fake.calls)
 			assert.Empty(t, archivesOf(t, paths))
-		})
-
-		t.Run("archive then fresh/"+name, func(t *testing.T) {
-			paths := reconcilePaths(t)
-			writeRaftData(t, paths["vaultDir"])
-			writeKeys(t, paths, true, true)
-
-			fake := &fakeInception{
-				probe:     stoppedProbe(),
-				startErrs: []error{fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected)},
-				finishErr: finishErr,
-			}
-
-			err := runReconcile(t, paths, fake)
-			require.ErrorIs(t, err, finishErr)
-
-			assert.Equal(t, []string{
-				"probe", "stop", "cluster-port " + paths["clusterPort"],
-				"start restart", "stop", "start fresh", "finish fresh",
-			}, fake.calls)
-			require.Len(t, archivesOf(t, paths), 1, "only the rejected vault may be archived")
 		})
 	}
 }
@@ -1531,9 +1550,9 @@ func TestReconcile_RejectedRootKeyRetriesWithTheTargetToken(t *testing.T) {
 	assert.Empty(t, archivesOf(t, paths))
 }
 
-// When the engine rejects the target's token too, the vault is archived with
-// both tokens in it.
-func TestReconcile_BothTokensRejectedArchivesBoth(t *testing.T) {
+// When the engine rejects the target's token too, the run refuses with both
+// tokens left where they are, and the error names both.
+func TestReconcile_BothTokensRejectedRefuses(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, true)
@@ -1542,20 +1561,53 @@ func TestReconcile_BothTokensRejectedArchivesBoth(t *testing.T) {
 		probe: stoppedProbe(), targetToken: safeRCToken, startErrs: []error{tokenRejected(), tokenRejected()},
 	}
 
-	require.NoError(t, runReconcile(t, paths, fake))
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysRefused)
 	assert.Equal(t, []string{
 		"probe", "stop", "cluster-port " + paths["clusterPort"],
-		"start restart", "stop", "start restart", "stop", "start fresh", "finish fresh",
+		"start restart", "stop", "start restart", "stop",
 	}, fake.calls)
+	assert.Empty(t, archivesOf(t, paths))
+	assert.Equal(t, "s.ROOT-TOKEN-SENTINEL\n", readKey(t, paths["rootKeyFile"]))
 
-	archives := archivesOf(t, paths)
-	require.Len(t, archives, 1)
-	assert.Equal(t, "s.ROOT-TOKEN-SENTINEL\n", readKey(t, filepath.Join(archives[0], "root.key")))
-
-	kept, err := filepath.Glob(filepath.Join(archives[0], "root.key.saferc-*"))
-	require.NoError(t, err)
+	kept := tokenSidecars(t, paths)
 	require.Len(t, kept, 1)
 	assert.Equal(t, safeRCToken+"\n", readKey(t, kept[0]))
+	assert.Contains(t, err.Error(), paths["rootKeyFile"])
+	assert.Contains(t, err.Error(), kept[0])
+	assert.NotContains(t, err.Error(), safeRCToken)
+}
+
+// A copy of safe's token that an earlier run kept beside root.key may be the
+// token the vault takes, so a refused root token names it, and never quotes
+// it. A copy the retry already tried is not offered again.
+func TestReconcile_RefusedRootTokenNamesKeptTokenCopies(t *testing.T) {
+	paths := reconcilePaths(t)
+	writeRaftData(t, paths["vaultDir"])
+	writeKeys(t, paths, true, true)
+
+	earlier := paths["rootKeyFile"] + ".saferc-20261001-090000"
+	require.NoError(t, os.WriteFile(earlier, []byte("s.EARLIER-TOKEN-SENTINEL\n"), 0o600))
+
+	fake := &fakeInception{
+		probe: stoppedProbe(), targetToken: safeRCToken, startErrs: []error{tokenRejected(), tokenRejected()},
+	}
+
+	err := runReconcile(t, paths, fake)
+	require.ErrorIs(t, err, ErrInceptionKeysRefused)
+
+	kept := tokenSidecars(t, paths)
+	require.Len(t, kept, 2)
+
+	tried := kept[0]
+	if tried == earlier {
+		tried = kept[1]
+	}
+
+	msg := err.Error()
+	assert.Contains(t, msg, "safe's target held a different root token, which ocfp kept in "+earlier)
+	assert.Equal(t, 1, strings.Count(msg, tried), "the copy the retry tried is named once, as refused")
+	assert.NotContains(t, msg, "SENTINEL")
 }
 
 // A retry that fails for any reason other than a refused key says nothing
@@ -1584,7 +1636,7 @@ func TestReconcile_NoRetryWithoutADifferentToken(t *testing.T) {
 		targetToken string
 		startErr    error
 	}{
-		"unseal key refused": {targetToken: safeRCToken, startErr: fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected)},
+		"unseal key refused": {targetToken: safeRCToken, startErr: unsealKeyRejected()},
 		"same token":         {targetToken: "s.ROOT-TOKEN-SENTINEL", startErr: tokenRejected()},
 		"no target":          {startErr: tokenRejected()},
 	} {
@@ -1595,12 +1647,12 @@ func TestReconcile_NoRetryWithoutADifferentToken(t *testing.T) {
 
 			fake := &fakeInception{probe: stoppedProbe(), targetToken: tc.targetToken, startErrs: []error{tc.startErr}}
 
-			require.NoError(t, runReconcile(t, paths, fake))
+			err := runReconcile(t, paths, fake)
+			require.ErrorIs(t, err, ErrInceptionKeysRefused)
 			assert.Equal(t, []string{
-				"probe", "stop", "cluster-port " + paths["clusterPort"],
-				"start restart", "stop", "start fresh", "finish fresh",
+				"probe", "stop", "cluster-port " + paths["clusterPort"], "start restart", "stop",
 			}, fake.calls)
-			require.Len(t, archivesOf(t, paths), 1)
+			assert.Empty(t, archivesOf(t, paths))
 		})
 	}
 }

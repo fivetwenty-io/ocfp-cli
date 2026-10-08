@@ -333,9 +333,12 @@ func TestVaultStart_ForeignPortHolderIsRefused(t *testing.T) {
 // refuses. It never archives, never starts a new vault, and never retries
 // with another token, so the data and both keys stay where they were.
 func TestVaultStart_RejectedKeyStopsAndRefuses(t *testing.T) {
-	for name, startErr := range map[string]error{
-		"unseal key": fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected),
-		"root token": fmt.Errorf("%w: the token in root.key", ErrVaultRootTokenRejected),
+	for name, tc := range map[string]struct {
+		startErr error
+		keyFile  string
+	}{
+		"unseal key": {fmt.Errorf("%w: !! Unable to unseal: invalid key", ErrVaultKeysRejected), "unsealKeysFile"},
+		"root token": {fmt.Errorf("%w: the token in root.key", ErrVaultRootTokenRejected), "rootKeyFile"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			paths := reconcilePaths(t)
@@ -343,13 +346,15 @@ func TestVaultStart_RejectedKeyStopsAndRefuses(t *testing.T) {
 			writeKeys(t, paths, true, true)
 
 			before := treeDigest(t, blocDir(paths))
-			fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{startErr}}
+			fake := &fakeInception{probe: stoppedProbe(), startErrs: []error{tc.startErr}}
 
 			err := runVaultStartWith(t, paths, fake)
 			require.ErrorIs(t, err, ErrVaultStartRefused)
 			require.ErrorIs(t, err, ErrVaultStartKeysRejected)
 			require.ErrorIs(t, err, ErrVaultKeysRejected)
-			assert.Contains(t, err.Error(), "ocfp vault inception")
+			assert.Contains(t, err.Error(), "the engine refused the key in "+paths[tc.keyFile])
+			assert.Contains(t, err.Error(), "'ocfp vault teardown' and then 'ocfp vault inception'")
+			assert.NotContains(t, err.Error(), "archives a vault", "inception no longer archives a vault whose key is refused")
 			assert.Equal(t, []string{
 				"probe", "cluster-port " + paths["clusterPort"], "probe", "stop", "start restart", "probe", "stop",
 			}, fake.calls, "what was started is stopped, and nothing else runs")
@@ -447,6 +452,10 @@ func TestVaultStart_RejectedRootTokenDoesNotRetryWithTheTargetToken(t *testing.T
 	require.NoError(t, readErr)
 	assert.Equal(t, "s.ROOT-TOKEN-SENTINEL\n", string(root), "root.key is never replaced")
 	assertNothingReplaced(t, paths, fake)
+
+	kept := tokenSidecars(t, paths)
+	require.Len(t, kept, 1)
+	assert.Contains(t, err.Error(), kept[0], "the error names the kept copy of safe's token, which may open the vault")
 }
 
 // A refused key whose vault then will not stop is still a refusal, and the
