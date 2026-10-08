@@ -776,28 +776,39 @@ func (run *vaultStartRun) reopenInPlace(ctx context.Context) error {
 // vault between vault start's checks and its stop, as two boot units do
 // when they run at once. What answers then is left running.
 func (run *vaultStartRun) requireOwnPortHolder(ctx context.Context) error {
-	paths := run.paths
+	return requireOwnInceptionPortHolder(ctx, run.paths, run.steps.probe, run.steps.ownsVault, "vault start")
+}
 
-	probe := run.steps.probe(ctx, "http://127.0.0.1:"+paths["port"])
+// requireOwnInceptionPortHolder is the check behind requireOwnPortHolder,
+// shared by every command that stops the bloc's vault only after checks that
+// ran a while before. actor names the command in the error, which says that
+// it stopped nothing.
+func requireOwnInceptionPortHolder(
+	ctx context.Context, paths map[string]string,
+	probe func(ctx context.Context, addr string) vaultProbe,
+	ownsVault func(ctx context.Context, paths map[string]string, data vaultDataState) (bool, error),
+	actor string,
+) error {
+	found := probe(ctx, "http://127.0.0.1:"+paths["port"])
 
-	switch probe.state {
+	switch found.state {
 	case vaultProbeStopped:
 		return nil
 	case vaultProbeStranger:
 		return inceptionPortTakenError(paths,
-			"something that is not a vault answers there now, so vault start stopped nothing and left it running")
+			"something that is not a vault answers there now, so "+actor+" stopped nothing and left it running")
 	case vaultProbeVault:
 	}
 
-	owned, err := run.steps.ownsVault(ctx, paths, classifyVaultData(paths["vaultDir"]))
+	owned, err := ownsVault(ctx, paths, classifyVaultData(paths["vaultDir"]))
 	if err != nil {
-		return fmt.Errorf("vault start stopped nothing, because it cannot tell whose vault answers on port %s now: %w",
-			paths["port"], err)
+		return fmt.Errorf("%s stopped nothing, because it cannot tell whose vault answers on port %s now: %w",
+			actor, paths["port"], err)
 	}
 
 	if !owned {
 		return inceptionPortTakenError(paths, "a vault answers there now that this bloc cannot prove is its own, "+
-			"so vault start stopped nothing and left it running")
+			"so "+actor+" stopped nothing and left it running")
 	}
 
 	return nil
