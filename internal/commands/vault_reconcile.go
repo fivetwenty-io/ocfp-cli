@@ -113,6 +113,9 @@ type inceptionSteps struct {
 	// targetToken returns the root token safe holds for the bloc's own
 	// target, read before a stop deletes that target.
 	targetToken func(paths map[string]string) string
+	// rootTokenWorks reports why the running vault does not take the token
+	// in root.key, if it does not.
+	rootTokenWorks func(ctx context.Context, paths map[string]string) error
 	// safeTarget reads and sets safe's current target, so that a run that
 	// brings back the bloc's existing vault can put back the target that
 	// was current before it.
@@ -147,7 +150,8 @@ type inceptionRun struct {
 // stranger on the port, someone else's vault on the port, a data directory
 // holding both kinds of storage, and a cluster port in use all return an
 // error with the disk exactly as it was, and so does an open vault whose
-// keys cannot be saved, which is left running. A healthy vault is left
+// keys cannot be saved, or one the run would migrate that does not take the
+// token in root.key, which is left running. A healthy vault is left
 // running. A vault with its data and both keys is restarted in place. Data
 // without both keys, and keys the engine refused, stop the run with the data
 // and keys left in place. Only key files left with no data anywhere lead to
@@ -181,6 +185,11 @@ func reconcileInceptionVault(ctx context.Context, run *inceptionRun) error {
 	}
 
 	err = run.recoverRunningKeys(ctx, found)
+	if err != nil {
+		return err
+	}
+
+	err = run.requireWorkingRootToken(ctx, found)
 	if err != nil {
 		return err
 	}
@@ -249,10 +258,60 @@ func (run *inceptionRun) recoverRunningKeys(ctx context.Context, found preflight
 	return nil
 }
 
+// requireWorkingRootToken refuses to stop an open vault that the run would
+// migrate when that vault does not take the token in root.key, or cannot say
+// whether it does. The restart after a migration opens the vault with that
+// token alone, so such a vault would stay down, while left running it still
+// serves its secrets. A sealed vault holds nothing a stop could lose, and an
+// open raft vault is restarted by restart, which retries safe's token.
+func (run *inceptionRun) requireWorkingRootToken(ctx context.Context, found preflightFindings) error {
+	if !found.open || (found.data != vaultDataFile && found.journal == nil) {
+		return nil
+	}
+
+	err := run.steps.rootTokenWorks(ctx, run.paths)
+	if err != nil {
+		return fmt.Errorf("%w%s", err, rootTokenRefusedAdvice(run.paths, "vault inception", run.steps.targetToken(run.paths)))
+	}
+
+	return nil
+}
+
+// rootTokenRefusedAdvice explains why command stopped nothing when an open
+// vault does not take the token in root.key, and how to go on. It names
+// safe's target when that target holds a token other than root.key's, and
+// every copy of a token ocfp kept beside root.key, since one of them may be
+// the token the vault takes. It never quotes a token.
+func rootTokenRefusedAdvice(paths map[string]string, command, targetToken string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "; the restart after the migration opens the vault with that token, so %s stopped nothing, "+
+		"and the vault is still running", command)
+
+	held, _ := keyfile.Read(paths["rootKeyFile"])
+	if targetToken != "" && targetToken != held {
+		fmt.Fprintf(&b, "; safe's target %s holds a different token, which may be the one the vault takes",
+			paths["vaultName"])
+	}
+
+	kept, _ := keyfile.KeptTokenCopies(paths["rootKeyFile"])
+	if len(kept) > 0 {
+		fmt.Fprintf(&b, "; ocfp kept tokens that safe's target held earlier in %s, and one of them may be the "+
+			"one the vault takes", strings.Join(kept, " and "))
+	}
+
+	fmt.Fprintf(&b, "; once %s holds the token the vault takes, at mode 0600, run the command again",
+		paths["rootKeyFile"])
+
+	return b.String()
+}
+
 // preflightFindings is what preflight learned about the bloc.
 type preflightFindings struct {
 	// journal is the migration in flight, if any.
 	journal *migrationJournal
+	// data is the kind of storage the data directory holds.
+	data vaultDataState
 	// running reports that this bloc's own vault answers on the port.
 	running bool
 	// open reports that the running vault is initialized and unsealed, so
@@ -288,7 +347,7 @@ func (run *inceptionRun) preflight(ctx context.Context) (preflightFindings, erro
 	}
 
 	if probe.state != vaultProbeVault {
-		return preflightFindings{journal: journal}, nil
+		return preflightFindings{journal: journal, data: data}, nil
 	}
 
 	owned, err := run.steps.ownsVault(ctx, paths, data)
@@ -302,6 +361,7 @@ func (run *inceptionRun) preflight(ctx context.Context) (preflightFindings, erro
 
 	return preflightFindings{
 		journal: journal,
+		data:    data,
 		running: true,
 		open:    probe.initialized && !probe.sealed,
 		healthy: journal == nil && run.isHealthy(ctx, probe, data),
@@ -1208,8 +1268,14 @@ func (run *inceptionRun) restartAfterMigration(ctx context.Context, backup strin
 		return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
 	}
 
+	advice := ""
+	if errors.Is(err, ErrVaultRootTokenRejected) {
+		advice = keptTokenCopiesAdvice(paths, "")
+	}
+
 	err = fmt.Errorf("%w: the raft data is in %s and the file store it came from is kept in %s, "+
-		"and neither was changed after the migration: %w", ErrRestartAfterMigrationFailed, paths["vaultDir"], backup, err)
+		"and neither was changed after the migration: %w%s", ErrRestartAfterMigrationFailed, paths["vaultDir"], backup,
+		err, advice)
 
 	return errors.Join(err, wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log)))
 }

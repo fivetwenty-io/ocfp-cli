@@ -397,7 +397,9 @@ as it can on the way:
   - A file-backed vault from an older ocfp is stopped and migrated to raft
     with the engine's 'operator migrate'. The file store is kept beside the
     data as data.file-backup-{timestamp}, and an interrupted migration
-    resumes on the next run.
+    resumes on the next run. An open vault is stopped for a migration only
+    when it takes the token in root.key, because the restart opens it with
+    that token, and otherwise it is left running.
   - When the engine rejects a saved key, ocfp stops the vault, leaves its
     data and keys as they were, and refuses. The error names the refused key
     file and any file store a migration kept to roll back to.

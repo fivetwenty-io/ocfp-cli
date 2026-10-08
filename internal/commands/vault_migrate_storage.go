@@ -535,31 +535,8 @@ func (run *migrateStorageRun) requireWorkingRootToken(ctx context.Context, found
 		return nil
 	}
 
-	paths := run.paths
-
-	var b strings.Builder
-
-	b.WriteString("; the restart after the migration opens the vault with that token, so migrate-storage " +
-		"stopped nothing, and the vault is still running")
-
-	target := run.steps.vaultStart.targetToken(paths)
-	held, _ := keyfile.Read(paths["rootKeyFile"])
-
-	if target != "" && target != held {
-		fmt.Fprintf(&b, "; safe's target %s holds a different token, which may be the one the vault takes",
-			paths["vaultName"])
-	}
-
-	kept, _ := keyfile.KeptTokenCopies(paths["rootKeyFile"])
-	if len(kept) > 0 {
-		fmt.Fprintf(&b, "; ocfp kept tokens that safe's target held earlier in %s, and one of them may be the "+
-			"one the vault takes", strings.Join(kept, " and "))
-	}
-
-	fmt.Fprintf(&b, "; once %s holds the token the vault takes, at mode 0600, run the command again",
-		paths["rootKeyFile"])
-
-	return fmt.Errorf("%w%s", found.rootTokenErr, b.String())
+	return fmt.Errorf("%w%s", found.rootTokenErr,
+		rootTokenRefusedAdvice(run.paths, "migrate-storage", run.steps.vaultStart.targetToken(run.paths)))
 }
 
 // requireOpenVaultKeysSaved refuses to stop an open vault unless both keys
