@@ -7,8 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 )
@@ -19,6 +21,19 @@ import (
 // so the command refuses before it moves anything.
 var ErrMigrateInceptionVaultRunning = errors.New(
 	"refusing to migrate while a bloc's inception vault is running; stop it first")
+
+// ErrMigrateInceptionVaultBusy is returned when another ocfp run holds the
+// inception vault lock of a bloc that config migrate would move. That run is
+// working on the bloc's vault, and moving the bloc's directory would pull
+// the vault's data and keys out from under it.
+var ErrMigrateInceptionVaultBusy = errors.New(
+	"refusing to migrate while another ocfp run works on a bloc's inception vault")
+
+// migrateBlocLockTimeout bounds how long config migrate waits for each
+// bloc's inception vault lock. It is short, because a run that holds the
+// lock may hold it for minutes, and config migrate refuses rather than wait
+// for one.
+var migrateBlocLockTimeout = 5 * time.Second //nolint:gochecknoglobals // tests shorten the wait
 
 // inceptionLivenessProbes are the checks config migrate uses to tell whether
 // a bloc's inception vault is up. They are the same probes ocfp vault start
@@ -65,7 +80,9 @@ type runningBlocVault struct {
 // starting, or slow to answer can look like a stranger, and the session
 // alone counts too, because it is how ocfp runs the vault. Every bloc that
 // is up is named, so one refusal covers them all. The probes only read, so
-// this runs on a dry run as well.
+// this runs on a dry run as well. Whether a bloc may hold a vault/ is looked
+// up afresh on every call, so the call config migrate makes under the
+// blocs' locks also probes a bloc whose vault/ appeared after the first.
 func refuseIfBlocVaultsRunning(ctx context.Context, plan []migratePlanEntry, probes inceptionLivenessProbes) error {
 	var running []runningBlocVault
 
@@ -136,4 +153,64 @@ func (v runningBlocVault) describe() string {
 	}
 
 	return fmt.Sprintf("bloc %s: %s; stop it with %s", v.bloc, strings.Join(found, " and "), stop)
+}
+
+// migratingBlocVaults returns, in name order, every bloc directory in plan,
+// which are the blocs whose locks config migrate holds while it moves them.
+// A bloc with no vault/ is locked too, because a vault command that resolves
+// its legacy directory would start a vault there while it moved.
+func migratingBlocVaults(plan []migratePlanEntry) []string {
+	var blocs []string
+
+	for _, entry := range plan {
+		if entry.class == migrateClassDataOther {
+			blocs = append(blocs, entry.name)
+		}
+	}
+
+	slices.Sort(blocs)
+
+	return slices.Compact(blocs)
+}
+
+// withBlocVaultLocks runs fn while holding the inception vault lock of every
+// bloc in blocs. The locks are taken in the order given, which callers keep
+// sorted by name, and each wait is bounded by migrateBlocLockTimeout. When a
+// lock stays held, fn never runs, the locks already taken are released, and
+// the error wraps ErrMigrateInceptionVaultBusy and names the bloc. A lock
+// that cannot be taken for any other reason, such as a permission error,
+// ends the run the same way, but its error names that failure and does not
+// wrap ErrMigrateInceptionVaultBusy, since no other run holds the lock.
+//
+// Every vault command takes its bloc's lock before it resolves the bloc's
+// directory, so while these locks are held no vault command works on these
+// blocs, and one that starts meanwhile waits and then resolves the
+// directory the bloc moved to.
+func withBlocVaultLocks(blocs []string, fn func() error) error {
+	if len(blocs) == 0 {
+		return fn()
+	}
+
+	bloc := blocs[0]
+	lockFile := inceptionLockPath(bloc, false)
+	acquired := false
+
+	err := config.WithFileLock(lockFile, migrateBlocLockTimeout, func() error {
+		acquired = true
+
+		return withBlocVaultLocks(blocs[1:], fn)
+	})
+	if acquired || err == nil {
+		return err
+	}
+
+	if errors.Is(err, config.ErrFileLockTimeout) {
+		return fmt.Errorf("%w. Nothing was moved. Another ocfp run, such as 'ocfp vault inception' or "+
+			"'ocfp vault start', holds bloc %s's inception vault lock, %s. Run 'ocfp config migrate' again once "+
+			"it has finished: %w", ErrMigrateInceptionVaultBusy, bloc, lockFile, err)
+	}
+
+	return fmt.Errorf("refusing to migrate, because the inception vault lock of bloc %s, %s, could not be taken. "+
+		"Nothing was moved. Fix the cause given at the end of this message, and then run 'ocfp config migrate' "+
+		"again: %w", bloc, lockFile, err)
 }
