@@ -406,6 +406,11 @@ as it can on the way:
     refuses, so the key can be restored and the command run again.
   - To replace either kind of vault with a new, empty one, run
     'ocfp vault teardown' and then 'ocfp vault inception'.
+  - Bringing back the bloc's existing vault makes the bloc's safe target
+    current, so the command then puts back whichever target was current
+    before, unless none was. A new vault that the run creates stays the
+    current target. When the earlier target cannot be put back, the
+    command only warns.
   - Only key files left with no data are renamed aside, to
     vault.superseded-{timestamp}, before a new vault starts. No new vault
     starts while a store a migration kept or moved aside still sits beside
@@ -638,6 +643,8 @@ type cleanupCommand struct {
 	name string
 	args []string
 	tmux bool
+	// withoutEnv names environment variables the command runs without.
+	withoutEnv []string
 }
 
 // vaultCleanupCommands builds the cleanup plan for one bloc's inception vault.
@@ -1570,6 +1577,9 @@ vault, never starts a new one, and never migrates one.
     refuses, and leaves the data and keys where they were.
   - Right before each stop, the command probes the API port again, and it
     stops nothing when the vault there is not this bloc's own.
+  - A restart makes the bloc's safe target current, so the command then
+    puts back whichever target was current before, unless none was. When
+    it cannot, it only warns, because the vault is up.
 
 Every refusal names what is wrong. 'ocfp vault inception' is the command
 that decides what to do with a vault that cannot simply be reopened, and an

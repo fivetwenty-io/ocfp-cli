@@ -44,6 +44,7 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		migrate:     migrateFileVaultToRaft,
 		recoverKeys: recoverInceptionKeys,
 		targetToken: blocTargetToken,
+		safeTarget:  newSafeCurrentTargetSteps(tools.safe),
 		now:         time.Now,
 	}
 }
