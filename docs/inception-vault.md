@@ -132,7 +132,7 @@ To read the old secrets, we start a throwaway vault from the archive with safe b
 
 ## Migration from file storage
 
-An inception vault created by ocfp v0.3.7 or earlier stores its data in file storage. When ocfp finds such a vault with both keys, it stops the vault and migrates it to raft with the engine's `operator migrate` command. The steps run in this order.
+An inception vault created by ocfp v0.3.7 or earlier stores its data in file storage. When ocfp finds such a vault with both keys, it stops the vault and migrates it to raft with the engine's `operator migrate` command. Before it stops anything, it checks that the engine has `operator migrate` and that the version the engine reports is not OpenBao 2.8 or later, which cannot read file storage. When either check fails, the command refuses, and a running file vault keeps running on its unchanged file store. An engine whose version cannot be read is not refused, so the copy is the step that finds out. The steps run in this order.
 
 1. ocfp checks that the engine has `operator migrate`, and refuses before it writes anything if the engine does not.
 
@@ -291,7 +291,7 @@ A new vault is held to the same standard. When ocfp starts one, it takes the new
 | `inception vault did not stop` | A process still holds `vault.db` or the port after the stop. | Find the process with `lsof -t <data>/vault.db` and stop it, then run the command again. |
 | `the inception vault is running but cannot be re-targeted` | A healthy vault runs, but safe has no target for it and `root.key` is empty. | Recover the root token, write it to `root.key`, and run the command again. |
 | `the vault engine cannot migrate storage` | The engine has no `operator migrate` command. | Point `SAFE_ENGINE` and `PATH` at HashiCorp Vault or OpenBao 2.7 or earlier, or migrate by hand. |
-| `the vault engine cannot read file storage` | The engine no longer supports file storage. The data was left file-backed. `ocfp vault migrate-storage` refuses before it stops anything when the engine reports OpenBao 2.8 or later. | Point `SAFE_ENGINE` and `PATH` at an engine that can read it, or migrate by hand. |
+| `the vault engine cannot read file storage` | The engine no longer supports file storage. The data was left file-backed. `ocfp vault inception` and `ocfp vault migrate-storage` both refuse before they stop anything when the engine reports OpenBao 2.8 or later. | Point `SAFE_ENGINE` and `PATH` at an engine that can read it, or migrate by hand. |
 | `the file-to-raft migration failed` | `operator migrate` failed. The staging directory moved to `data.raft-failed-<timestamp>`, and `data` is unchanged. | Read `raft-migration-<timestamp>.log` in the log directory, fix the cause, and run the command again. |
 | `the inception vault did not restart after its migration to raft` | The raft data is in place, but the vault did not open on it. Nothing was archived. | Read the vault log. The error names both the raft data and the file backup, so we can move the backup back to `data` to return to the old vault. |
 | `the raft migration journal cannot be trusted` | The journal is unreadable or describes a migration ocfp could not have left. | Inspect the journal and the directories beside `data`, put them right by hand, and remove the journal. |

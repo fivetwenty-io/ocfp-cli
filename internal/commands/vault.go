@@ -423,7 +423,9 @@ waits up to five minutes for the first to finish.
 
 This needs safe v1.25.0 or later. The engine is OpenBao or HashiCorp Vault,
 chosen the way safe chooses it. Migrating a file-backed vault also needs an
-engine that can still read file storage, such as OpenBao 2.7 or earlier.
+engine that can still read file storage, such as OpenBao 2.7 or earlier, and
+the command refuses an engine that reports a later OpenBao before it stops
+anything.
 docs/inception-vault.md describes the states, the backup directories, and how
 to recover from each error.
 
