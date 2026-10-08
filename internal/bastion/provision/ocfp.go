@@ -83,36 +83,7 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	lines = append(lines, `mkdir -p "${KITS_ROOT}"`)
 	lines = append(lines, "")
 
-	lines = append(lines, `if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`)
-	lines = append(lines, `    if [ -d "${DEPLOYMENTS_ROOT}/.git" ]; then`)
-	lines = append(lines, `        # Valid git repository exists, update it`)
-	lines = append(lines, `        log_info 'Updating deployments repository'`)
-	lines = append(lines, `        if git -C "${DEPLOYMENTS_ROOT}" fetch --all --prune && git -C "${DEPLOYMENTS_ROOT}" pull --ff-only; then`)
-	lines = append(lines, `            log_success 'Deployments repository updated'`)
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_warning 'Failed to update deployments repository - please verify connectivity and credentials'`)
-	lines = append(lines, "        fi")
-	lines = append(lines, `    elif [ -d "${DEPLOYMENTS_ROOT}" ]; then`)
-	lines = append(lines, `        # Directory exists but is not a valid git repository`)
-	lines = append(lines, `        log_warning 'Deployments directory exists but is not a valid git repository'`)
-	lines = append(lines, `        log_info 'Removing invalid deployments directory'`)
-	lines = append(lines, `        rm -rf "${DEPLOYMENTS_ROOT}"`)
-	lines = append(lines, `        log_info 'Cloning deployments repository'`)
-	lines = append(lines, `        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`)
-	lines = append(lines, `            log_success 'Deployments repository cloned'`)
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_error 'Failed to clone deployments repository'`)
-	lines = append(lines, "        fi")
-	lines = append(lines, "    else")
-	lines = append(lines, `        # No directory exists, clone fresh`)
-	lines = append(lines, `        log_info 'Cloning deployments repository'`)
-	lines = append(lines, `        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`)
-	lines = append(lines, `            log_success 'Deployments repository cloned'`)
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_error 'Failed to clone deployments repository'`)
-	lines = append(lines, "        fi")
-	lines = append(lines, "    fi")
-	lines = append(lines, "fi")
+	lines = append(lines, generateDeploymentsRepoBlock()...)
 	lines = append(lines, "")
 
 	lines = append(lines, "# Verify release-mode deployments are present")
@@ -136,46 +107,117 @@ func (om *OCFPManager) GenerateOCFPConfigureScript(_ctx context.Context) string 
 	lines = append(lines, "done")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Clone or refresh the kit checkout for every dev-mode deployment.")
-	lines = append(lines, "# The kits come from genesis-community over HTTPS, so this runs whether or")
-	lines = append(lines, "# not a deployments repository is configured, and a kit tree that was")
-	lines = append(lines, "# rsynced in by hand (no .git) is left exactly as it is.")
-	lines = append(lines, "declare -A KIT_REPOS="+formatShellAssoc(kitRepos))
-	lines = append(lines, "declare -A KIT_BRANCHES="+formatShellAssoc(kitBranches))
-	lines = append(lines, `for deployment in "${DEV_DEPLOYMENTS[@]}"; do`)
-	lines = append(lines, `    KIT_REPO="${KIT_REPOS[$deployment]}"`)
-	lines = append(lines, `    KIT_BRANCH="${KIT_BRANCHES[$deployment]:-}"`)
-	lines = append(lines, `    KIT_DIR="${KITS_ROOT}/${deployment}"`)
-	lines = append(lines, `    if [ -d "${KIT_DIR}/.git" ]; then`)
-	lines = append(lines, `        log_info "Updating ${deployment} genesis kit"`)
-	lines = append(lines, `        if [ -n "$KIT_BRANCH" ] && [ "$(git -C "${KIT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$KIT_BRANCH" ]; then`)
-	lines = append(lines, `            git -C "${KIT_DIR}" fetch --quiet origin "$KIT_BRANCH" && git -C "${KIT_DIR}" checkout --quiet "$KIT_BRANCH" || log_warning "Failed to switch ${deployment} kit to ${KIT_BRANCH}"`)
-	lines = append(lines, "        fi")
-	lines = append(lines, `        if git -C "${KIT_DIR}" pull --ff-only --quiet; then`)
-	lines = append(lines, `            log_success "${deployment} kit updated ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`)
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_warning "Failed to update ${deployment} kit"`)
-	lines = append(lines, "        fi")
-	lines = append(lines, `    elif [ -d "${KIT_DIR}" ] && [ -n "$(ls -A "${KIT_DIR}" 2>/dev/null)" ]; then`)
-	lines = append(lines, `        log_info "${deployment} kit at ${KIT_DIR} is not a git checkout; leaving it in place"`)
-	lines = append(lines, "    else")
-	lines = append(lines, `        log_info "Cloning ${deployment} genesis kit from ${KIT_REPO}${KIT_BRANCH:+ (branch ${KIT_BRANCH})}"`)
-	lines = append(lines, `        if git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"} "$KIT_REPO" "$KIT_DIR"; then`)
-	lines = append(lines, `            log_success "${deployment} kit cloned ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`)
-	lines = append(lines, "        else")
-	lines = append(lines, `            log_warning "Failed to clone ${deployment} kit from $KIT_REPO"`)
-	lines = append(lines, "            continue")
-	lines = append(lines, "        fi")
-	lines = append(lines, "    fi")
-	lines = append(lines, `    mkdir -p "${DEPLOYMENTS_ROOT}/${deployment}"`)
-	lines = append(lines, `    ln -sfn "$KIT_DIR" "${DEPLOYMENTS_ROOT}/${deployment}/dev"`)
-	lines = append(lines, `    log_info "Linked ${DEPLOYMENTS_ROOT}/${deployment}/dev -> ${KIT_DIR}"`)
-	lines = append(lines, "done")
+	lines = append(lines, generateKitCheckoutBlock(kitRepos, kitBranches)...)
 	lines = append(lines, "")
 
 	lines = append(lines, om.generateGenesisRepoInitScript()...)
 
 	return strings.Join(lines, "\n")
+}
+
+// generateDeploymentsRepoBlock clones or updates the deployments repository
+// at DEPLOYMENTS_ROOT when GLOBAL_DEPLOYMENTS_URL is set. A checkout is
+// fast-forwarded and an empty directory is cloned into. A directory that
+// holds files but no .git is an operator's work, so it is left as it is with
+// a warning; init used to delete it and clone over it. No message prints the
+// URL, because it can carry a token.
+func generateDeploymentsRepoBlock() []string {
+	return []string{
+		`if [ -n "$GLOBAL_DEPLOYMENTS_URL" ]; then`,
+		`    if [ -d "${DEPLOYMENTS_ROOT}/.git" ]; then`,
+		`        log_info 'Updating deployments repository'`,
+		`        if git -C "${DEPLOYMENTS_ROOT}" fetch --all --prune && git -C "${DEPLOYMENTS_ROOT}" pull --ff-only; then`,
+		`            log_success 'Deployments repository updated'`,
+		"        else",
+		`            log_warning 'Failed to update deployments repository - please verify connectivity and credentials'`,
+		"        fi",
+		`    elif [ -n "$(ls -A "${DEPLOYMENTS_ROOT}" 2>/dev/null)" ]; then`,
+		`        log_warning "${DEPLOYMENTS_ROOT} holds files but is not a git checkout, so init leaves it as it is and does not clone the deployments repository into it"`,
+		"    else",
+		`        log_info 'Cloning deployments repository'`,
+		`        if git clone "$GLOBAL_DEPLOYMENTS_URL" "${DEPLOYMENTS_ROOT}"; then`,
+		`            log_success 'Deployments repository cloned'`,
+		"        else",
+		`            log_error 'Failed to clone deployments repository'`,
+		"        fi",
+		"    fi",
+		"fi",
+	}
+}
+
+// generateKitCheckoutBlock clones or refreshes the kit checkout for every
+// dev-mode deployment and links the deployment's dev directory to it.
+//
+// Init clones what is missing and fast-forwards a clean checkout that is on
+// the branch it would clone, which is the configured kit_branch or, without
+// one, the upstream's default branch. A checkout on another branch or with
+// local changes is the operator's, and so is a dev link that points
+// elsewhere or a dev that is a real directory: each is left as it is with a
+// warning. Init used to switch such a checkout back to its branch, pull into
+// it, and repoint dev with ln -sfn.
+//
+//nolint:funlen // Script generation requires many statements
+func generateKitCheckoutBlock(kitRepos, kitBranches map[string]string) []string {
+	return []string{
+		"# Clone or refresh the kit checkout for every dev-mode deployment.",
+		"# The kits come from genesis-community over HTTPS, so this runs whether or",
+		"# not a deployments repository is configured. A kit tree that was rsynced",
+		"# in by hand (no .git), a checkout on another branch or with local changes,",
+		"# and a dev that does not link to the checkout are all left as they are.",
+		"declare -A KIT_REPOS=" + formatShellAssoc(kitRepos),
+		"declare -A KIT_BRANCHES=" + formatShellAssoc(kitBranches),
+		`for deployment in "${DEV_DEPLOYMENTS[@]}"; do`,
+		`    KIT_REPO="${KIT_REPOS[$deployment]}"`,
+		`    KIT_BRANCH="${KIT_BRANCHES[$deployment]:-}"`,
+		`    KIT_DIR="${KITS_ROOT}/${deployment}"`,
+		`    if [ -d "${KIT_DIR}/.git" ]; then`,
+		`        KIT_WANT="$KIT_BRANCH"`,
+		`        if [ -z "$KIT_WANT" ]; then`,
+		`            KIT_WANT="$(git -C "${KIT_DIR}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"`,
+		`            KIT_WANT="${KIT_WANT#origin/}"`,
+		"        fi",
+		`        KIT_HEAD="$(git -C "${KIT_DIR}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"`,
+		`        if [ -z "$KIT_WANT" ]; then`,
+		`            log_warning "${deployment} kit at ${KIT_DIR} has no configured branch and its upstream names no default, so init leaves it as it is"`,
+		`        elif [ "$KIT_HEAD" != "$KIT_WANT" ]; then`,
+		`            log_warning "${deployment} kit at ${KIT_DIR} is on ${KIT_HEAD:-a detached HEAD} rather than ${KIT_WANT}, so init leaves it as it is"`,
+		`        elif [ -n "$(git -C "${KIT_DIR}" status --porcelain 2>/dev/null || true)" ]; then`,
+		`            log_warning "${deployment} kit at ${KIT_DIR} has local changes, so init leaves it as it is"`,
+		`        elif git -C "${KIT_DIR}" pull --ff-only --quiet; then`,
+		`            log_success "${deployment} kit updated ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`,
+		"        else",
+		`            log_warning "Failed to fast-forward ${deployment} kit at ${KIT_DIR}, so it stays where it was"`,
+		"        fi",
+		`    elif [ -d "${KIT_DIR}" ] && [ -n "$(ls -A "${KIT_DIR}" 2>/dev/null)" ]; then`,
+		`        log_info "${deployment} kit at ${KIT_DIR} is not a git checkout; leaving it in place"`,
+		"    else",
+		`        log_info "Cloning ${deployment} genesis kit from ${KIT_REPO}${KIT_BRANCH:+ (branch ${KIT_BRANCH})}"`,
+		`        if git clone --quiet ${KIT_BRANCH:+-b "$KIT_BRANCH"} "$KIT_REPO" "$KIT_DIR"; then`,
+		`            log_success "${deployment} kit cloned ($(git -C "${KIT_DIR}" rev-parse --short HEAD))"`,
+		"        else",
+		`            log_warning "Failed to clone ${deployment} kit from $KIT_REPO"`,
+		"            continue",
+		"        fi",
+		"    fi",
+		`    DEV_LINK="${DEPLOYMENTS_ROOT}/${deployment}/dev"`,
+		`    mkdir -p "${DEPLOYMENTS_ROOT}/${deployment}"`,
+		`    if [ -L "$DEV_LINK" ]; then`,
+		`        DEV_TARGET="$(readlink "$DEV_LINK" || true)"`,
+		`        DEV_REAL="$(cd "$DEV_LINK" 2>/dev/null && pwd -P || true)"`,
+		`        KIT_REAL="$(cd "$KIT_DIR" 2>/dev/null && pwd -P || true)"`,
+		`        if [ "$DEV_TARGET" = "$KIT_DIR" ] || { [ -n "$DEV_REAL" ] && [ "$DEV_REAL" = "$KIT_REAL" ]; }; then`,
+		`            log_info "${DEV_LINK} already links to ${KIT_DIR}"`,
+		"        else",
+		`            log_warning "${DEV_LINK} links to ${DEV_TARGET} rather than ${KIT_DIR}, so init leaves it as it is"`,
+		"        fi",
+		`    elif [ -e "$DEV_LINK" ]; then`,
+		`        log_warning "${DEV_LINK} is a real directory or file rather than a link to ${KIT_DIR}, so init leaves it as it is"`,
+		"    else",
+		`        ln -s "$KIT_DIR" "$DEV_LINK"`,
+		`        log_info "Linked ${DEV_LINK} -> ${KIT_DIR}"`,
+		"    fi",
+		"done",
+	}
 }
 
 // defaultDeploymentNamesFor returns the ordered default deployment list for the given
