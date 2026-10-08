@@ -535,6 +535,14 @@ func validateSSHInputs(host, user, keyPath string) error {
 	return nil
 }
 
+// sshKeepaliveOptions keeps an idle session open. A keepalive every 30
+// seconds stops a firewall or NAT idle timeout from dropping a quiet
+// shell, and six missed replies (three minutes) end a dead connection.
+var sshKeepaliveOptions = []string{
+	"-o", "ServerAliveInterval=30",
+	"-o", "ServerAliveCountMax=6",
+}
+
 // addSSHStandardOptions adds standard SSH options to the command.
 func addSSHStandardOptions(cmd []string, keyPath string) []string {
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
@@ -669,6 +677,10 @@ func assembleSSHCommand(host, user, keyPath string, hopOptions []string, extraOp
 
 	// Add filtered SSH arguments
 	cmd = append(cmd, filterSSHArgs(sshArgs)...)
+
+	// Add keepalives after the caller's options, because ssh keeps the
+	// first value it sees and an operator's own setting should win
+	cmd = append(cmd, sshKeepaliveOptions...)
 
 	// Add user@host
 	cmd = append(cmd, fmt.Sprintf("%s@%s", user, host))

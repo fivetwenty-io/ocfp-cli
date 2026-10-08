@@ -197,6 +197,8 @@ func TestBuildSSHCommandForRouteArtifactsViaBastion(t *testing.T) { //nolint:par
 		"-i", key,
 		"-A",
 		"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(key, "ubuntu", "100.109.226.53"),
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=6",
 		"ubuntu@10.64.64.11",
 		"bash", "-lc", "'chronyc tracking'",
 	}
@@ -230,9 +232,40 @@ func TestBuildSSHCommandForRouteArtifactsKeepsFlagsAndOptions(t *testing.T) { //
 		"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(key, "admin", "100.109.226.53"),
 		"-o", "ServerAliveInterval=30",
 		"-t", "-L", "9001:localhost:9001", "-D", "1080",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=6",
 		"admin@10.64.64.11",
 	}
 	assert.Equal(t, expected, got)
+}
+
+// Every session sends keepalives, so a quiet shell is not dropped by an
+// idle timeout between the operator and the bastion.
+func TestBuildSSHCommandSendsKeepalives(t *testing.T) { //nolint:paralleltest // t.Setenv
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	got := buildSSHCommandForRoute(sshRoute{Host: "100.109.226.53"}, "ubuntu", "", "", []string{}, []string{})
+
+	assert.Equal(t, []string{
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=6",
+		"ubuntu@100.109.226.53",
+	}, got[len(got)-5:])
+}
+
+// ssh keeps the first value it sees for an option, so the keepalives go
+// after the operator's own options and an operator's value wins.
+func TestBuildSSHCommandLetsOperatorKeepaliveWin(t *testing.T) { //nolint:paralleltest // t.Setenv
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	got := buildSSHCommandForRoute(sshRoute{Host: "100.109.226.53"}, "ubuntu", "",
+		"-o ServerAliveInterval=120", []string{}, []string{})
+
+	operator := indexOf(got, "ServerAliveInterval=120")
+	ours := indexOf(got, "ServerAliveInterval=30")
+
+	assert.GreaterOrEqual(t, operator, 0)
+	assert.Greater(t, ours, operator)
 }
 
 // A bastion address that fails host validation must never reach the
