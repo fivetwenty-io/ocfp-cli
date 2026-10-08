@@ -161,19 +161,10 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return fmt.Errorf("bastion key sync failed: %w", err)
 	}
 
-	// Handle OCFP-only mode
-	if m.options.OCFPOnly {
-		return m.runOCFPOnlyMode(ctx)
-	}
-
-	// Handle config-only mode
-	if m.options.ConfigOnly {
-		return m.runConfigOnlyMode(ctx)
-	}
-
-	// Handle genesis-only mode
-	if m.options.GenesisOnly {
-		return m.runGenesisOnlyMode(ctx)
+	// A narrow mode runs before the provisioned check, so it still works on
+	// a bastion that init has already provisioned.
+	if _, narrow := m.narrowMode(false); narrow != nil {
+		return narrow(ctx)
 	}
 
 	// Check if already provisioned
@@ -187,6 +178,52 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	}
 
 	return m.executeInitializationPhases(ctx)
+}
+
+// Narrow modes, named after the flags that ask for them. Each runs one piece
+// of init instead of the full phase list.
+const (
+	narrowModeOCFP    = "ocfp"
+	narrowModeConfig  = "config"
+	narrowModeGenesis = "genesis"
+)
+
+// ErrConfigModeOnBastion reports --config on a run that is already on the
+// bastion, where there is no workstation config to copy.
+var ErrConfigModeOnBastion = errors.New(
+	"--config copies the workstation's ocfp config to the bastion, and this run is on the bastion, " +
+		"so there is no workstation config to copy; run 'ocfp init bastion --config' from the workstation instead")
+
+// narrowMode returns the narrow mode the options ask for and the function
+// that runs it, or an empty name and nil when they ask for the full phase
+// list. onBastion says whether this run is on the bastion itself, where
+// --config has nothing to copy and so refuses. The CLI rejects more than one
+// mode flag, and the order here only settles it for callers that build the
+// options themselves.
+func (m *Manager) narrowMode(onBastion bool) (string, func(context.Context) error) {
+	if m.options == nil {
+		return "", nil
+	}
+
+	switch {
+	case m.options.OCFPOnly:
+		return narrowModeOCFP, m.runOCFPOnlyMode
+	case m.options.ConfigOnly:
+		if onBastion {
+			return narrowModeConfig, refuseConfigOnlyOnBastion
+		}
+
+		return narrowModeConfig, m.runConfigOnlyMode
+	case m.options.GenesisOnly:
+		return narrowModeGenesis, m.runGenesisOnlyMode
+	default:
+		return "", nil
+	}
+}
+
+// refuseConfigOnlyOnBastion is --config's mode on the bastion itself.
+func refuseConfigOnlyOnBastion(_ context.Context) error {
+	return ErrConfigModeOnBastion
 }
 
 // closeSSHClient safely closes the SSH client connection.
