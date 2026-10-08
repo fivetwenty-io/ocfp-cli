@@ -132,6 +132,14 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 
 	component := f.getComponent(args)
 
+	// Refuse a bad mode flag before the config load, the prerequisite
+	// check, and the prompt, so nobody answers a question for a run that
+	// was never going to start.
+	err := f.validateModeFlagsFor(component)
+	if err != nil {
+		return err
+	}
+
 	cfg, err := f.loadConfig()
 	if err != nil {
 		return err
@@ -161,16 +169,26 @@ func (f *initFlags) getComponent(args []string) string {
 // ErrMutuallyExclusiveFlags indicates that mutually exclusive command flags were specified together.
 var ErrMutuallyExclusiveFlags = errors.New("mutually exclusive flags")
 
-// validateModeFlags validates that mutually exclusive mode flags are not used together.
-func (f *initFlags) validateModeFlags() error {
+// ErrModeFlagOutsideBastion indicates that a bastion init mode flag was given
+// to a command that has no such mode.
+var ErrModeFlagOutsideBastion = errors.New("mode flag applies only to bastion init")
+
+// activeModeFlags returns the names of the bastion init mode flags that are set.
+func (f *initFlags) activeModeFlags() []string {
+	return activeModeNames(f.genesisOnly, f.ocfpOnly, f.configOnly, f.vaultBootUnit)
+}
+
+// activeModeNames returns the names of the mode flags that are set, in a
+// fixed order.
+func activeModeNames(genesis, ocfp, configOnly, vaultBootUnit bool) []string {
 	modeFlags := []struct {
 		name  string
 		value bool
 	}{
-		{"genesis", f.genesisOnly},
-		{"ocfp", f.ocfpOnly},
-		{"config", f.configOnly},
-		{"vault-boot-unit", f.vaultBootUnit},
+		{"genesis", genesis},
+		{"ocfp", ocfp},
+		{"config", configOnly},
+		{"vault-boot-unit", vaultBootUnit},
 	}
 
 	var activeModes []string
@@ -181,11 +199,40 @@ func (f *initFlags) validateModeFlags() error {
 		}
 	}
 
+	return activeModes
+}
+
+// validateModeFlags validates that mutually exclusive mode flags are not used together.
+func (f *initFlags) validateModeFlags() error {
+	activeModes := f.activeModeFlags()
+
 	if len(activeModes) > 1 {
 		return fmt.Errorf("%w: --%s and --%s", ErrMutuallyExclusiveFlags, activeModes[0], activeModes[1])
 	}
 
 	return nil
+}
+
+// validateModeFlagsFor refuses two modes at once, and refuses any mode on a
+// component other than bastion, naming the command that does what was asked.
+func (f *initFlags) validateModeFlagsFor(component string) error {
+	err := f.validateModeFlags()
+	if err != nil {
+		return err
+	}
+
+	return refuseModeFlagsFor("ocfp init", component, RoleBastion, "ocfp init bastion", f.activeModeFlags())
+}
+
+// refuseModeFlagsFor refuses the active mode flags unless the component is
+// the one that supports them. The error names the command to run instead.
+func refuseModeFlagsFor(command, component, supported, instead string, active []string) error {
+	if len(active) == 0 || component == supported {
+		return nil
+	}
+
+	return fmt.Errorf("%w: --%s is not a mode of %s %s; run `%s --%s` instead",
+		ErrModeFlagOutsideBastion, active[0], command, component, instead, active[0])
 }
 
 // loadConfig loads the configuration and applies flag overrides.
@@ -249,12 +296,6 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 
 // executeInitialization performs the actual initialization based on component.
 func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Command, cfg *config.Config, component string) error {
-	// Validate mutually exclusive flags
-	err := f.validateModeFlags()
-	if err != nil {
-		return err
-	}
-
 	switch component {
 	case "aws":
 		return initializeAWS(cmd)
@@ -267,28 +308,25 @@ func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Comman
 	case "bosh":
 		return initializeBOSH(ctx, cfg)
 	case RoleBastion:
-		if f.genesisOnly {
-			return initializeBastionGenesisOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
-		}
-
-		if f.ocfpOnly {
-			return initializeBastionOCFPOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
-		}
-
-		if f.configOnly {
-			return initializeBastionConfigOnly(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
-		}
-
-		if f.vaultBootUnit {
-			return initializeBastionVaultBootUnitOnly(ctx, cfg, f.force, f.dryRun, f.verbose)
-		}
-
-		return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
+		return f.initializeBastionFromFlags(ctx, cfg)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
 	default:
 		return ErrUnknownComponent(component)
 	}
+}
+
+// initializeBastionFromFlags runs bastion init in the mode the flags select.
+func (f *initFlags) initializeBastionFromFlags(ctx context.Context, cfg *config.Config) error {
+	mode, err := selectBastionMode(f.genesisOnly, f.ocfpOnly, f.configOnly, f.vaultBootUnit)
+	if err != nil {
+		return err
+	}
+
+	return runBastionInit(ctx, cfg, mode, bastionRunParams{
+		force: f.force, parallel: f.parallel, dryRun: f.dryRun,
+		resume: f.resume, verbose: f.verbose, reboot: f.reboot,
+	})
 }
 
 // initializeAllComponents initializes all components in proper order.
@@ -301,7 +339,7 @@ func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Con
 		fn   func() error
 	}{
 		{"bastion", func() error {
-			return initializeBastion(ctx, cfg, f.force, f.parallel, f.dryRun, f.resume, f.verbose, f.reboot)
+			return f.initializeBastionFromFlags(ctx, cfg)
 		}},
 		{"PostgreSQL", initializePostgreSQL},
 		{"BOSH", func() error { return initializeBOSH(ctx, cfg) }},
@@ -333,7 +371,7 @@ Components:
   bastion - Initialize bastion host
   all     - Initialize all components (default)
 
-Bastion Initialization Modes (at most one):
+Bastion Initialization Modes (at most one, and only with the bastion component):
   --genesis  - Install/update only Genesis and related components
                (genesis CLI, yq, genesis kits, genesis config, deployments)
   --ocfp     - Install/update only OCFP CLI binary
@@ -343,6 +381,9 @@ Bastion Initialization Modes (at most one):
              - Install and enable only the inception vault's boot unit
                (ocfp-vault@<bloc>.service), without starting it
   (default)  - Full bastion initialization with all components
+
+Init refuses a mode flag on any other component, including all, before it
+asks anything, and the error names the bastion command to run instead.
 
 A mode runs on an already provisioned bastion too, and every mode except
 --config does the same work from a workstation as on the bastion itself.
@@ -885,176 +926,129 @@ func configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// initializeBastion performs bastion host initialization.
-func initializeBastion(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
-	log := logger.Get()
-	log.Info("Initializing bastion host")
+// bastionInitMode is the piece of bastion init a run performs.
+type bastionInitMode int
 
-	// Create provisioning options
+const (
+	bastionModeFull bastionInitMode = iota
+	bastionModeGenesis
+	bastionModeOCFP
+	bastionModeConfig
+	bastionModeVaultBootUnit
+)
+
+// bastionRunParams holds the settings every bastion init mode shares.
+type bastionRunParams struct {
+	force, parallel, dryRun, resume, verbose, reboot bool
+}
+
+// selectBastionMode turns the mode flags into one mode, and refuses two at once.
+func selectBastionMode(genesis, ocfp, configOnly, vaultBootUnit bool) (bastionInitMode, error) {
+	active := activeModeNames(genesis, ocfp, configOnly, vaultBootUnit)
+	if len(active) > 1 {
+		return bastionModeFull, fmt.Errorf("%w: --%s and --%s", ErrMutuallyExclusiveFlags, active[0], active[1])
+	}
+
+	switch {
+	case genesis:
+		return bastionModeGenesis, nil
+	case ocfp:
+		return bastionModeOCFP, nil
+	case configOnly:
+		return bastionModeConfig, nil
+	case vaultBootUnit:
+		return bastionModeVaultBootUnit, nil
+	default:
+		return bastionModeFull, nil
+	}
+}
+
+// buildBastionOptions builds the provisioning options for a mode. It is a
+// pure function so tests can check what each mode asks for without SSH.
+func buildBastionOptions(mode bastionInitMode, params bastionRunParams) *bastion.ProvisioningOptions {
 	options := &bastion.ProvisioningOptions{
-		DryRun:          dryRun,
-		Force:           force,
-		Parallel:        parallel,
-		Resume:          resume,
-		Verbose:         verbose,
+		DryRun:          params.dryRun,
+		Force:           params.force,
+		Parallel:        params.parallel,
+		Resume:          params.resume,
+		Verbose:         params.verbose,
 		MaxWorkers:      DefaultMaxWorkers,
 		ProgressOut:     os.Stdout,
 		LogFile:         "",
-		OCFPOnly:        false, // OCFPOnly is handled separately via --ocfp flag
-		RebootAfterInit: reboot,
+		RebootAfterInit: params.reboot,
+	}
+
+	switch mode {
+	case bastionModeGenesis:
+		options.GenesisOnly = true
+	case bastionModeOCFP:
+		options.OCFPOnly = true
+	case bastionModeConfig:
+		options.ConfigOnly = true
+	case bastionModeVaultBootUnit:
+		options.VaultBootUnitOnly = true
+		options.Parallel = false
+		options.Resume = false
+		options.RebootAfterInit = false
+	case bastionModeFull:
+	}
+
+	return options
+}
+
+// bastionModeText holds the words a mode prints around its run.
+type bastionModeText struct {
+	start, failed, done string
+}
+
+func (m bastionInitMode) text() bastionModeText {
+	switch m {
+	case bastionModeGenesis:
+		return bastionModeText{"\n⚙️  Installing/updating Genesis and related components...\n",
+			"Genesis installation", "Genesis installation completed successfully"}
+	case bastionModeOCFP:
+		return bastionModeText{"\n🔧 Installing/updating OCFP CLI binary to bastion...\n",
+			"OCFP CLI installation", "OCFP CLI installation completed successfully"}
+	case bastionModeConfig:
+		return bastionModeText{"\n📝 Syncing configuration files to bastion...\n",
+			"configuration sync", "Configuration sync completed successfully"}
+	case bastionModeVaultBootUnit:
+		return bastionModeText{"\n🔧 Installing the inception vault boot unit...\n",
+			"vault boot unit install", "Vault boot unit installed and enabled"}
+	case bastionModeFull:
+		return bastionModeText{"", "bastion initialization", "Bastion initialization completed successfully"}
+	}
+
+	return bastionModeText{"", "bastion initialization", "Bastion initialization completed successfully"}
+}
+
+// runBastionInit performs bastion initialization in a mode. Both
+// "ocfp init bastion" and "ocfp bastion init" call it, so they behave alike
+// on a workstation and on the bastion itself.
+func runBastionInit(ctx context.Context, cfg *config.Config, mode bastionInitMode, params bastionRunParams) error {
+	log := logger.Get()
+	text := mode.text()
+	log.Infow("Initializing bastion host", "mode", int(mode))
+
+	if text.start != "" {
+		_, _ = fmt.Fprint(os.Stdout, text.start)
 	}
 
 	// Use mode-aware initialization that detects local vs remote execution
-	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
+	err := bastion.InitializeBastionWithMode(ctx, cfg, buildBastionOptions(mode, params))
 	if err != nil {
-		return fmt.Errorf("bastion initialization failed: %w", err)
+		if mode != bastionModeFull {
+			_, _ = fmt.Fprintf(os.Stdout, "❌ %s failed: %v\n\n", text.failed, err)
+		}
+
+		return fmt.Errorf("%s failed: %w", text.failed, err)
 	}
 
-	log.Info("Bastion initialization completed successfully")
-
-	return nil
-}
-
-// initializeBastionOCFPOnly performs OCFP CLI installation/update only.
-func initializeBastionOCFPOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
-	log := logger.Get()
-	log.Info("Installing/updating OCFP CLI only")
-
-	// Provide user feedback
-	_, _ = fmt.Fprintf(os.Stdout, "\n🔧 Installing/updating OCFP CLI binary to bastion...\n")
-
-	// Create provisioning options with OCFPOnly flag set
-	options := &bastion.ProvisioningOptions{
-		DryRun:          dryRun,
-		Force:           force,
-		Parallel:        parallel,
-		Resume:          resume,
-		Verbose:         verbose,
-		MaxWorkers:      DefaultMaxWorkers,
-		ProgressOut:     os.Stdout,
-		LogFile:         "",
-		OCFPOnly:        true,
-		RebootAfterInit: reboot,
+	if mode != bastionModeFull {
+		_, _ = fmt.Fprintf(os.Stdout, "✅ %s\n\n", text.done)
 	}
 
-	// Use mode-aware initialization that detects local vs remote execution
-	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "❌ OCFP CLI installation failed: %v\n\n", err)
-
-		return fmt.Errorf("OCFP CLI installation failed: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(os.Stdout, "✅ OCFP CLI installation completed successfully\n\n")
-
-	log.Info("OCFP CLI installation completed successfully")
-
-	return nil
-}
-
-// initializeBastionGenesisOnly performs Genesis installation/update only.
-func initializeBastionGenesisOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
-	log := logger.Get()
-	log.Info("Installing/updating Genesis and related components only")
-
-	// Provide user feedback
-	_, _ = fmt.Fprintf(os.Stdout, "\n⚙️  Installing/updating Genesis and related components...\n")
-
-	// Create provisioning options with GenesisOnly flag set
-	options := &bastion.ProvisioningOptions{
-		DryRun:          dryRun,
-		Force:           force,
-		Parallel:        parallel,
-		Resume:          resume,
-		Verbose:         verbose,
-		MaxWorkers:      DefaultMaxWorkers,
-		ProgressOut:     os.Stdout,
-		LogFile:         "",
-		GenesisOnly:     true,
-		RebootAfterInit: reboot,
-	}
-
-	// Use mode-aware initialization that detects local vs remote execution
-	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "❌ Genesis installation failed: %v\n\n", err)
-
-		return fmt.Errorf("genesis installation failed: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(os.Stdout, "✅ Genesis installation completed successfully\n\n")
-
-	log.Info("Genesis installation completed successfully")
-
-	return nil
-}
-
-// initializeBastionConfigOnly performs configuration file sync only.
-func initializeBastionConfigOnly(ctx context.Context, cfg *config.Config, force, parallel, dryRun, resume, verbose, reboot bool) error {
-	log := logger.Get()
-	log.Info("Syncing configuration files only")
-
-	// Provide user feedback
-	_, _ = fmt.Fprintf(os.Stdout, "\n📝 Syncing configuration files to bastion...\n")
-
-	// Create provisioning options with ConfigOnly flag set
-	options := &bastion.ProvisioningOptions{
-		DryRun:          dryRun,
-		Force:           force,
-		Parallel:        parallel,
-		Resume:          resume,
-		Verbose:         verbose,
-		MaxWorkers:      DefaultMaxWorkers,
-		ProgressOut:     os.Stdout,
-		LogFile:         "",
-		OCFPOnly:        false,
-		ConfigOnly:      true,
-		RebootAfterInit: reboot,
-	}
-
-	// Use mode-aware initialization that detects local vs remote execution
-	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "❌ Configuration sync failed: %v\n\n", err)
-
-		return fmt.Errorf("configuration sync failed: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(os.Stdout, "✅ Configuration sync completed successfully\n\n")
-
-	log.Info("Configuration sync completed successfully")
-
-	return nil
-}
-
-// initializeBastionVaultBootUnitOnly installs and enables the inception
-// vault's boot unit and does nothing else. It runs on a provisioned bastion
-// too, because that is where a unit added after provisioning is missing.
-func initializeBastionVaultBootUnitOnly(ctx context.Context, cfg *config.Config, force, dryRun, verbose bool) error {
-	log := logger.Get()
-	log.Info("Installing the inception vault boot unit only")
-
-	_, _ = fmt.Fprintf(os.Stdout, "\n🔧 Installing the inception vault boot unit...\n")
-
-	options := &bastion.ProvisioningOptions{
-		DryRun:            dryRun,
-		Force:             force,
-		Verbose:           verbose,
-		MaxWorkers:        DefaultMaxWorkers,
-		ProgressOut:       os.Stdout,
-		VaultBootUnitOnly: true,
-	}
-
-	err := bastion.InitializeBastionWithMode(ctx, cfg, options)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "❌ Vault boot unit install failed: %v\n\n", err)
-
-		return fmt.Errorf("vault boot unit install failed: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(os.Stdout, "✅ Vault boot unit installed and enabled\n\n")
-
-	log.Info("Vault boot unit installed and enabled")
+	log.Info(text.done)
 
 	return nil
 }
