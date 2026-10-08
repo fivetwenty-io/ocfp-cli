@@ -162,16 +162,17 @@ type ProvisioningProgress struct {
 
 // ProvisioningOptions configures bastion provisioning behavior.
 type ProvisioningOptions struct {
-	DryRun          bool
-	Force           bool
-	Parallel        bool
-	Resume          bool
-	Verbose         bool
-	MaxWorkers      int
-	ProgressOut     io.Writer
-	LogFile         string
-	OCFPOnly        bool
-	ConfigOnly      bool
-	GenesisOnly     bool // Install/update only Genesis and related components
-	RebootAfterInit bool // Reboot bastion after successful initialization to apply updates
+	DryRun            bool
+	Force             bool
+	Parallel          bool
+	Resume            bool
+	Verbose           bool
+	MaxWorkers        int
+	ProgressOut       io.Writer
+	LogFile           string
+	OCFPOnly          bool
+	ConfigOnly        bool
+	GenesisOnly       bool // Install/update only Genesis and related components
+	VaultBootUnitOnly bool // Install and enable only the inception vault boot unit
+	RebootAfterInit   bool // Reboot bastion after successful initialization to apply updates
 }
