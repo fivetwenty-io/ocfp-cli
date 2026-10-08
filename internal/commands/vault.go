@@ -397,9 +397,13 @@ as it can on the way:
     with the engine's 'operator migrate'. The file store is kept beside the
     data as data.file-backup-{timestamp}, and an interrupted migration
     resumes on the next run.
-  - Only when a key is missing, or the engine rejects the saved keys, does
-    ocfp rename the old vault to vault.superseded-{timestamp} and start a new
-    one. Nothing is ever deleted.
+  - When the engine rejects a saved key, ocfp stops the vault, leaves its
+    data and keys as they were, and refuses. The error names the refused key
+    file and any file store a migration kept to roll back to. To replace such
+    a vault with a new, empty one, run 'ocfp vault teardown' and then 'ocfp
+    vault inception'.
+  - Only when a key is missing does ocfp rename the old vault to
+    vault.superseded-{timestamp} and start a new one. Nothing is ever deleted.
 
 One run at a time works on a bloc's vault. A second run for the same bloc
 waits up to five minutes for the first to finish.
@@ -1085,8 +1089,8 @@ var unsealKeyRefusals = []string{
 }
 
 // isSafeKeyFailure reports whether a "!! " line says the saved root token or
-// unseal key does not open the vault. Only such a line may lead the caller to
-// archive a vault and start a fresh one.
+// unseal key does not open the vault. Only such a line makes the caller
+// refuse the vault as one whose saved key the engine refused.
 func isSafeKeyFailure(line string) bool {
 	if strings.Contains(line, "The root token in ") {
 		return isSafeTokenRefusal(line)

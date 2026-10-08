@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,6 +61,11 @@ var (
 	// right after its storage was migrated. Nothing is archived then: the
 	// keys opened the file store moments earlier, so a person has to look.
 	ErrRestartAfterMigrationFailed = errors.New("the inception vault did not restart after its migration to raft")
+
+	// ErrInceptionKeysRefused reports a vault whose saved key the engine
+	// refused. The vault still holds its data, so it is stopped and left as
+	// it is, and only 'ocfp vault teardown' may replace it.
+	ErrInceptionKeysRefused = errors.New("ocfp will not replace an inception vault whose saved key the engine refused")
 )
 
 // inceptionSteps are the actions reconcileInceptionVault takes. Production
@@ -743,10 +750,8 @@ func (run *vaultStartRun) reopenInPlace(ctx context.Context) error {
 	}
 
 	if errors.Is(err, ErrVaultKeysRejected) {
-		return refuseVaultStart(errors.Join(fmt.Errorf("%w: %w; its data in %s and its keys were left as they were; "+
-			"check %s and %s before running 'ocfp vault inception', which archives a vault whose keys the engine "+
-			"refuses", ErrVaultStartKeysRejected, err, paths["vaultDir"],
-			paths["rootKeyFile"], paths["unsealKeysFile"]), stopErr))
+		return refuseVaultStart(errors.Join(fmt.Errorf("%w: %w; %s", ErrVaultStartKeysRejected, err,
+			keysRefusedAdvice(paths, err, "")), stopErr))
 	}
 
 	return errors.Join(fmt.Errorf("failed to restart the inception vault, and its data in %s and its keys were left "+
@@ -1057,13 +1062,16 @@ func (run *inceptionRun) restartAfterMigration(ctx context.Context, backup strin
 	return errors.Join(err, wrapStopAfterFailure(run.steps.stop(ctx, paths, run.log)))
 }
 
-// restart reopens the vault with its saved keys. Only the engine refusing a
-// key leads to an archive. Any other failure says nothing about the keys, so
-// it stops what was started and leaves the data and keys where they are.
+// restart reopens the vault with its saved keys. Any failure stops what was
+// started and leaves the data and keys where they are. Nothing here archives
+// the vault or starts a new one, because a vault whose key the engine refuses
+// still holds its data, and the keys may be what is wrong.
 //
 // When the engine refuses the token in root.key and safe's target held a
-// different one before the stop, the vault is reopened once with that token
-// before anything is archived.
+// different one before the stop, the vault is reopened once with that token.
+// When the engine refuses a key and that retry does not open the vault, the
+// run refuses with ErrInceptionKeysRefused, and the error names the refused
+// key file and how to replace the vault on purpose.
 func (run *inceptionRun) restart(ctx context.Context) error {
 	paths := run.paths
 
@@ -1074,8 +1082,8 @@ func (run *inceptionRun) restart(ctx context.Context) error {
 		return run.steps.finish(ctx, paths, safeLocalRestart, run.log)
 	}
 
-	archive, err := run.stopAfterFailedRestart(ctx, err)
-	if !archive {
+	refused, err := run.stopAfterFailedRestart(ctx, err)
+	if !refused {
 		return err
 	}
 
@@ -1086,20 +1094,23 @@ func (run *inceptionRun) restart(ctx context.Context) error {
 			return nil
 		}
 
-		archive, retryErr = run.stopAfterFailedRestart(ctx, retryErr)
-		if !archive {
+		refused, retryErr = run.stopAfterFailedRestart(ctx, retryErr)
+		if !refused {
 			return retryErr
 		}
 
 		err = fmt.Errorf("%w; the token from safe's target, kept in %s, was refused too: %w", err, tokenFile, retryErr)
 	}
 
-	return run.archiveAndStartFresh(ctx, err.Error())
+	run.log.Errorw("The engine refused a saved key of the inception vault; it was stopped and left as it was",
+		"data", paths["vaultDir"], "root_token", paths["rootKeyFile"], "unseal_key", paths["unsealKeysFile"])
+
+	return fmt.Errorf("%w: %w; %s", ErrInceptionKeysRefused, err, keysRefusedAdvice(paths, err, tokenFile))
 }
 
 // stopAfterFailedRestart stops a vault that failed to restart, and reports
-// whether the failure allows an archive: only a refused key does, and only
-// once the vault is known to be down.
+// whether the engine refused a saved key once the vault is known to be down.
+// Any other failure, or a stop that failed, comes back as the error.
 func (run *inceptionRun) stopAfterFailedRestart(ctx context.Context, startErr error) (bool, error) {
 	paths := run.paths
 	stopErr := run.steps.stop(ctx, paths, run.log)
@@ -1117,6 +1128,100 @@ func (run *inceptionRun) stopAfterFailedRestart(ctx context.Context, startErr er
 	}
 
 	return true, startErr
+}
+
+// keysRefusedAdvice explains what to do about a vault whose saved key the
+// engine refused with startErr. It names the refused key file, any copy of
+// safe's token kept beside root.key other than tried when the root token was
+// refused, every file store a migration to raft kept beside the data with
+// how to roll back to the newest of them, and the two commands that replace
+// the vault on purpose. It says nothing about the stop, which the caller
+// reports, and it never quotes a key.
+func keysRefusedAdvice(paths map[string]string, startErr error, tried string) string {
+	refused := paths["unsealKeysFile"]
+	if errors.Is(startErr, ErrVaultRootTokenRejected) {
+		refused = paths["rootKeyFile"]
+	}
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "the engine refused the key in %s, and the vault's data in %s and its keys were left as "+
+		"they were", refused, paths["vaultDir"])
+
+	if refused == paths["rootKeyFile"] {
+		b.WriteString(keptTokenCopiesAdvice(paths, tried))
+	}
+
+	backups := fileStoreBackups(paths["vaultDir"])
+	if len(backups) > 0 {
+		newest := backups[len(backups)-1]
+
+		fmt.Fprintf(&b, "; the file store from before its migration to raft is kept in %s, and to roll back to it, "+
+			"move %s aside and rename %s to %s, and then run 'ocfp vault inception', which migrates it to raft again",
+			strings.Join(backups, " and "), paths["vaultDir"], newest, paths["vaultDir"])
+	}
+
+	b.WriteString("; to replace it with a new, empty vault, run 'ocfp vault teardown' and then " +
+		"'ocfp vault inception', and teardown moves the old vault aside rather than deleting it")
+
+	return b.String()
+}
+
+// keptTokenCopiesAdvice names the copies of safe's token that ocfp kept
+// beside root.key, leaving out skip, and says how to use one that the vault
+// takes. It says nothing when there are none, or when they cannot be
+// listed, since it only feeds advice.
+func keptTokenCopiesAdvice(paths map[string]string, skip string) string {
+	all, err := keyfile.KeptTokenCopies(paths["rootKeyFile"])
+	if err != nil {
+		return ""
+	}
+
+	var kept []string
+
+	for _, copyFile := range all {
+		if copyFile != skip {
+			kept = append(kept, copyFile)
+		}
+	}
+
+	if len(kept) == 0 {
+		return ""
+	}
+
+	if len(kept) == 1 {
+		return fmt.Sprintf("; safe's target held a different root token, which ocfp kept in %s, and when the "+
+			"vault takes it, copy it over %s at mode 0600 and run the command again", kept[0], paths["rootKeyFile"])
+	}
+
+	return fmt.Sprintf("; safe's target held other root tokens, which ocfp kept in %s, and when the vault takes "+
+		"one of them, copy it over %s at mode 0600 and run the command again", strings.Join(kept, " and "),
+		paths["rootKeyFile"])
+}
+
+// fileStoreBackups lists the data.file-backup-* directories beside the data
+// directory, which hold file stores that a migration to raft kept, sorted by
+// name so the newest timestamp comes last. It lists nothing when the parent
+// cannot be read, since it only feeds advice.
+func fileStoreBackups(dataDir string) []string {
+	entries, err := os.ReadDir(filepath.Dir(dataDir))
+	if err != nil {
+		return nil
+	}
+
+	prefix := filepath.Base(dataDir) + migrationBackupSuffix
+
+	var backups []string
+
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) && len(entry.Name()) > len(prefix) {
+			backups = append(backups, filepath.Join(filepath.Dir(dataDir), entry.Name()))
+		}
+	}
+
+	slices.Sort(backups)
+
+	return backups
 }
 
 // retryTokenFile returns the file holding safe's token when a restart that

@@ -196,6 +196,16 @@ new_ocfp() {
     "$S/bin/ocfp" vault inception --bloc "$bloc" >>"$S/logs/$CASE.log" 2>&1
 }
 
+# new_ocfp_vault BLOC SUBCOMMAND [ARGS...] runs another vault subcommand of
+# this branch's ocfp the way new_ocfp runs inception.
+new_ocfp_vault() {
+  local bloc=$1
+  shift
+  OCFP_VAULT_INCEPTION_PORT=$(api_port "$bloc") SAFE_ENGINE=bao \
+    PATH="$S/bin:$(dirname "$BAO_NEW"):$BASE_PATH" \
+    "$S/bin/ocfp" vault "$@" --bloc "$bloc" >>"$S/logs/$CASE.log" 2>&1
+}
+
 # old_ocfp BLOC creates a file-backed vault with the previous release and the
 # 2.6.4 engine.
 #
@@ -486,13 +496,18 @@ case_d1() {
 }
 
 case_d2() {
-  local archive logs
+  local archive logs keys rc=0
   new_ocfp smoke-g || fail "fresh start failed; see $S/logs/$CASE.log" || return 1
   stop_vault smoke-g || return 1
   [[ -s $(vault_root smoke-g)/root.key && -s $(vault_root smoke-g)/unseal.keys ]] ||
     fail "the fresh start did not save both keys" || return 1
   head -c 24 /dev/urandom | base64 >"$(vault_root smoke-g)/root.key"
-  new_ocfp smoke-g || fail "the run with a wrong token failed; see $S/logs/$CASE.log" || return 1
+  # Without the target's token there is nothing to retry with, so the
+  # engine's refusal of root.key is final.
+  scratch_safe target delete smoke-g-inception >/dev/null 2>&1 || true
+  keys=$(key_sha smoke-g)
+  new_ocfp smoke-g || rc=$?
+  [[ $rc != 0 ]] || fail "ocfp accepted a vault whose token the engine refused" || return 1
   logs="$(vault_log smoke-g) $(vault_log smoke-g).previous"
   # shellcheck disable=SC2086 # two log paths, split on purpose
   grep -q 'was rejected' $logs 2>/dev/null || fail "safe did not report the rejected token" || return 1
@@ -501,6 +516,14 @@ case_d2() {
     fail "safe tried generate-root with a wrong token"
     return 1
   fi
+  grep -q "'ocfp vault teardown' and then" "$S/logs/$CASE.log" || fail "the refusal does not say how to replace the vault" || return 1
+  assert_no_archive smoke-g || return 1
+  # The engine ran on the data before it refused the token, so raft may have
+  # written to it; what matters is that it is still there, in place.
+  [[ -f $(data_dir smoke-g)/vault.db ]] || fail "the refusal moved the data" || return 1
+  [[ $(key_sha smoke-g) == "$keys" ]] || fail "the refusal changed the keys" || return 1
+  new_ocfp_vault smoke-g teardown || fail "teardown failed; see $S/logs/$CASE.log" || return 1
+  new_ocfp smoke-g || fail "the run after teardown failed; see $S/logs/$CASE.log" || return 1
   archive=$(archive_of smoke-g)
   [[ -n $archive && -f $archive/data/vault.db ]] || fail "the archive does not hold the old data" || return 1
   expect_raft smoke-g
@@ -555,7 +578,7 @@ run_case "C1 migrate a running file vault" case_c1
 run_case "C2 migrate a stopped file vault" case_c2
 run_case "C3 resume a partial migration" case_c3
 run_case "D1 recover or archive on a missing key" case_d1
-run_case "D2 archive on a wrong token" case_d2
+run_case "D2 refuse a wrong token, then replace by hand" case_d2
 run_case "D3 refuse a taken cluster port" case_d3
 run_case "D4 refuse an old safe" case_d4
 run_case "E teardown and read-only proof" case_e
