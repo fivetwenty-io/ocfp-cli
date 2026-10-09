@@ -12,10 +12,23 @@ import (
 )
 
 // fakeSafeScript answers the three safe commands the inception gate runs.
-// 'safe targets --json' prints the JSON list on stdout, while 'safe targets'
-// and 'safe target' print their reports on stderr, as safe does.
+// 'safe targets --json' prints the JSON list on stdout, indented as safe
+// prints it or all on one line when a compact file sits beside the script,
+// while 'safe targets' and 'safe target' print their reports on stderr, as
+// safe does.
 const fakeSafeScript = `#!/bin/sh
 dir=$(dirname "$0")
+if [ "$1" = targets ] && [ "${2:-}" = --json ] && [ -e "$dir/compact" ]; then
+  printf '['
+  sep=''
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf '%s{"name":"%s","url":"https://vault.example:8200"}' "$sep" "$name"
+    sep=','
+  done < "$dir/targets"
+  printf ']\n'
+  exit 0
+fi
 if [ "$1" = targets ] && [ "${2:-}" = --json ]; then
   printf '['
   sep=''
@@ -84,6 +97,8 @@ type gateSetup struct {
 	// restoreOnly runs the restore snippet by itself, with the helper the
 	// script defines and the variables the gate would have set.
 	restoreOnly bool
+	// compact makes 'safe targets --json' print its list on one line.
+	compact bool
 }
 
 // gateRun is what a gate run decided and did.
@@ -120,6 +135,10 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 
 	if gs.targetFails {
 		require.NoError(t, os.WriteFile(filepath.Join(bin, "target_fails"), nil, 0o600))
+	}
+
+	if gs.compact {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "compact"), nil, 0o600))
 	}
 
 	om := NewOCFPManager("pve", nil, nil)
@@ -251,6 +270,41 @@ func TestInceptionActiveSnippet_KeysOffTheBlocTargets(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			active, target := runInceptionGate(t, tc.bloc, tc.targets, tc.current)
+			assert.Equal(t, tc.wantActive, active)
+			assert.Equal(t, tc.wantTarget, target)
+		})
+	}
+}
+
+// safe's JSON layout is not part of its contract, so the gate finds a bloc's
+// targets by their whole names whether the list is indented or on one line.
+func TestInceptionActiveSnippet_ReadsCompactTargetJSON(t *testing.T) {
+	const bloc = "ocfp-lab-example"
+
+	for name, tc := range map[string]struct {
+		bloc       string
+		targets    []string
+		wantActive string
+		wantTarget string
+	}{
+		"bootstrapping": {
+			bloc: bloc, targets: []string{"ops", bloc + "-inception"},
+			wantActive: "yes", wantTarget: bloc + "-inception",
+		},
+		"bloc vault up": {
+			bloc: bloc, targets: []string{bloc + "-inception", bloc + "-mgmt"},
+			wantActive: "no",
+		},
+		"a sibling's target that contains this bloc's name": {
+			bloc: "lab", targets: []string{"biglab-mgmt", "lab-inception"},
+			wantActive: "yes", wantTarget: "lab-inception",
+		},
+		"no targets at all": {
+			bloc: bloc, wantActive: "no",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			active, target := runInceptionGateWith(t, gateSetup{bloc: tc.bloc, targets: tc.targets, compact: true})
 			assert.Equal(t, tc.wantActive, active)
 			assert.Equal(t, tc.wantTarget, target)
 		})
