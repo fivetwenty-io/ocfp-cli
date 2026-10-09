@@ -555,7 +555,7 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 		"INCEPTION_ACTIVE=no",
 		`BLOC_VAULT_TARGET="${OCFP_BLOC}-mgmt"`,
 		`ocfp_safe_has_target "$BLOC_VAULT_TARGET"`,
-		`safe targets --json 2>&1 | sed -n`,
+		`safe targets --json 2>&1 | grep -o`,
 		`grep -Fx -- "$1" >/dev/null`,
 		`CURRENT_VAULT_TARGET="$(ocfp_current_safe_target)"`,
 		`INCEPTION_TARGET="$CURRENT_VAULT_TARGET"`,
