@@ -2,6 +2,8 @@ module github.com/ocfp/ocfp-cli-go
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	cloud.google.com/go/compute v1.68.0
 	cloud.google.com/go/storage v1.67.1
