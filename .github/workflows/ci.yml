@@ -83,7 +83,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.2'
           cache: false
 
       - name: Run go fmt
@@ -98,10 +98,13 @@ jobs:
         run: go vet ./...
 
       # The version lives in .golangci-version, which `make preflight`
-      # installs from too, so CI and the local run cannot disagree.
+      # installs from too, so CI and the local run cannot disagree. The Go
+      # toolchain it runs under lives in .lint-gotoolchain the same way.
       - name: Read golangci-lint version
         id: golangci
-        run: echo "version=$(tr -d '[:space:]' < .golangci-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(tr -d '[:space:]' < .golangci-version)" >> "$GITHUB_OUTPUT"
+          echo "gotoolchain=$(tr -d '[:space:]' < .lint-gotoolchain)" >> "$GITHUB_OUTPUT"
 
       # The pinned release must be built with a Go toolchain at least as new
       # as go.mod's target: golangci-lint parses the standard library with
@@ -111,8 +114,17 @@ jobs:
       # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
       # with go1.27.0. Bump .golangci-version in lockstep with the container
       # image.
+      #
+      # golangci-lint also runs under its own Go toolchain, which can trail
+      # go.mod's toolchain line. Go 1.27.2 writes export data in a format
+      # that no golangci-lint release can load yet, even one built with
+      # 1.27.2, so lint stays on go1.27.0 while everything else builds with
+      # 1.27.2. Set .lint-gotoolchain back in step with go.mod once a
+      # golangci-lint release loads 1.27.2's packages.
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOTOOLCHAIN: ${{ steps.golangci.outputs.gotoolchain }}
         with:
           version: ${{ steps.golangci.outputs.version }}
           skip-cache: true
@@ -142,7 +154,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.2'
           cache: false
 
       - name: Download dependencies
@@ -204,7 +216,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.2'
           cache: false
 
       # One job cross-compiling in sequence, not a matrix. The lab runners
@@ -281,7 +293,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.2'
           cache: false
 
       # govulncheck is the gate; gosec is a report that never blocks a merge

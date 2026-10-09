@@ -217,6 +217,11 @@ bench: ## Run benchmarks
 # The one place the golangci-lint version is set; ci.yml reads the same file.
 GOLANGCI_LINT_VERSION = $(shell tr -d '[:space:]' < .golangci-version)
 GOLANGCI_LINT_BIN := $(CURDIR)/.bin/golangci-lint
+# The Go toolchain golangci-lint and gosec run under. ci.yml and
+# scripts/ci/security-scan.sh read the same file. It can trail go.mod's
+# toolchain line, because neither tool can load packages compiled by a Go
+# release newer than the type checker it bundles.
+LINT_GOTOOLCHAIN = $(shell tr -d '[:space:]' < .lint-gotoolchain)
 HOST_BINARY = dist/ocfp-$(shell go env GOOS)-$(shell go env GOARCH)
 
 # Mirrors the GOFLAGS cap in ci.yml, which bounds compiler parallelism.
@@ -261,7 +266,7 @@ preflight-lint: $(GOLANGCI_LINT_BIN) ## CI Lint job: gofmt, go vet, golangci-lin
 	@echo "$(GREEN)[preflight] Lint$(RESET)"
 	@bash scripts/ci/check-gofmt.sh
 	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go vet ./...
-	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" $(GOLANGCI_LINT_BIN) run
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" GOTOOLCHAIN="$(LINT_GOTOOLCHAIN)" $(GOLANGCI_LINT_BIN) run
 
 preflight-test: test-scripts ## CI Test job (plus the script tests)
 	@echo "$(GREEN)[preflight] Test$(RESET)"
