@@ -24,5 +24,12 @@ go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 #
 # Pinned like govulncheck above: at @latest this step could change behaviour
 # with no commit behind it.
+#
+# gosec type-checks every package the way golangci-lint does, and under a Go
+# release newer than the loader it bundles, every package fails to load and
+# the report comes back empty. It runs under golangci-lint's toolchain, from
+# .lint-gotoolchain. govulncheck keeps the build toolchain, because the
+# standard library it checks must be the one the binary ships with.
+lint_toolchain="$(tr -d '[:space:]' <"$(dirname "${BASH_SOURCE[0]}")/../../.lint-gotoolchain")"
 go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
-"$gobin/gosec" -fmt sarif -out gosec-results.sarif ./... || true
+GOTOOLCHAIN="$lint_toolchain" "$gobin/gosec" -fmt sarif -out gosec-results.sarif ./... || true
