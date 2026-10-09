@@ -81,8 +81,8 @@ type gateSetup struct {
 	env []string
 	// restore also runs the restore snippet after the gate.
 	restore bool
-	// restoreOnly runs the restore snippet by itself, with the variables
-	// the gate would have set, so the gate's definitions can't help it.
+	// restoreOnly runs the restore snippet by itself, with the helper the
+	// script defines and the variables the gate would have set.
 	restoreOnly bool
 }
 
@@ -127,6 +127,7 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 		"set -euo pipefail",
 		`log_info() { :; }`,
 		"OCFP_BLOC=" + shellSingleQuote(bloc),
+		strings.Join(om.currentSafeTargetSnippet(), "\n"),
 		strings.Join(om.inceptionActiveSnippet(), "\n"),
 		`log_success() { :; }`,
 		`log_warning() { :; }`,
@@ -137,6 +138,7 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 			`log_info() { :; }`,
 			`log_success() { :; }`,
 			`log_warning() { :; }`,
+			strings.Join(om.currentSafeTargetSnippet(), "\n"),
 			"BLOC_VAULT_TARGET=" + shellSingleQuote(bloc+"-mgmt"),
 			"INCEPTION_ACTIVE=no",
 			`INCEPTION_TARGET=""`,

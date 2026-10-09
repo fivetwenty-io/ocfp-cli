@@ -593,6 +593,42 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 	}
 }
 
+// The gate and the restore both call ocfp_current_safe_target. Defining it
+// twice made shellcheck report the gate's call as a call to a function that
+// is only defined later, so the script defines each helper once, ahead of
+// every call.
+func TestGenerateGenesisSecretsProvidersScript_DefinesEachHelperOnce(t *testing.T) {
+	t.Parallel()
+
+	script := NewOCFPManager("pve", &config.Config{Name: "ocfp-lab-example"}, nil).
+		GenerateGenesisSecretsProvidersScript(context.Background())
+
+	for _, helper := range []string{"ocfp_current_safe_target", "ocfp_safe_has_target"} {
+		definition := helper + "() {"
+		assert.Equal(t, 1, strings.Count(script, definition), "definitions of %s", helper)
+
+		defined := strings.Index(script, definition)
+		firstCall := strings.Index(script, "$("+helper+")")
+
+		if firstCall < 0 {
+			firstCall = strings.Index(script, helper+` "$`)
+		}
+
+		assert.Greater(t, firstCall, defined, "%s is called before it is defined", helper)
+	}
+
+	shellcheck, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck is not available")
+	}
+
+	path := filepath.Join(t.TempDir(), "secrets-providers.sh")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/bash\nset -euo pipefail\n"+script), 0o600))
+
+	out, err := exec.CommandContext(t.Context(), shellcheck, "-s", "bash", "-f", "gcc", "--include=SC2218", path).CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 // TestGenerateOCFPConfigureScript_DoesNotReinvokeConfigure guards against the
 // script re-entering the command that produced it. `ocfp configure` provisions
 // the bastion, and provisioning generates and runs this script, so a trailing
