@@ -3,7 +3,6 @@ package provision
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -519,6 +518,7 @@ func (om *OCFPManager) GenerateGenesisSecretsProvidersScript(_ctx context.Contex
 	lines = append(lines, "    SKIPPED_COUNT=0")
 	lines = append(lines, "    FAILED_COUNT=0")
 	lines = append(lines, "    ")
+	lines = append(lines, om.currentSafeTargetSnippet()...)
 	lines = append(lines, om.inceptionActiveSnippet()...)
 	lines = append(lines, "    for deployment_dir in \"$DEPLOYMENTS_ROOT\"/*; do")
 	lines = append(lines, "        if [ ! -d \"$deployment_dir\" ]; then")
@@ -615,7 +615,7 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) inceptionActiveSnippet() []string {
-	return slices.Concat(om.currentSafeTargetSnippet(), []string{
+	return []string{
 		"    # The inception vault is a bootstrap-only store, torn down at the end",
 		"    # of every init and empty once the bloc's own vault is up. The bloc",
 		"    # vault's safe target is created when that vault is deployed, so its",
@@ -667,12 +667,13 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"        esac",
 		"    fi",
 		"    ",
-	})
+	}
 }
 
-// currentSafeTargetSnippet defines ocfp_current_safe_target. Both the gate
-// and the restore emit it, so neither depends on the other having run
-// first, and defining the same function twice in one script is harmless.
+// currentSafeTargetSnippet defines ocfp_current_safe_target, which both the
+// gate and the restore call. The script emits it once, ahead of the gate,
+// because a second definition makes shellcheck read the gate's call as a
+// call to a function that is only defined later.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) currentSafeTargetSnippet() []string {
@@ -695,12 +696,13 @@ func (om *OCFPManager) currentSafeTargetSnippet() []string {
 // inception work is done. Init targets safe at the inception vault while it
 // bootstraps, and nothing else moves it back, so an established bloc would be
 // left pointing at a torn-down, empty vault: every later genesis command then
-// reports its secrets as missing. It defines the helper function it needs, and
-// it reads BLOC_VAULT_TARGET and INCEPTION_ACTIVE, which the gate sets.
+// reports its secrets as missing. It calls ocfp_current_safe_target, which the
+// script defines ahead of the gate, and it reads BLOC_VAULT_TARGET and
+// INCEPTION_ACTIVE, which the gate sets.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
-	return slices.Concat(om.currentSafeTargetSnippet(), []string{
+	return []string{
 		"    if [ \"$INCEPTION_ACTIVE\" != yes ] && [ -n \"$BLOC_VAULT_TARGET\" ]; then",
 		"        RESTORE_CURRENT_TARGET=\"$(ocfp_current_safe_target)\"",
 		"        if [ \"$RESTORE_CURRENT_TARGET\" = \"$BLOC_VAULT_TARGET\" ]; then",
@@ -712,7 +714,7 @@ func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
 		"        fi",
 		"    fi",
 		"    ",
-	})
+	}
 }
 
 // secretsProviderClearSnippet removes the deployment's secrets_provider block so
