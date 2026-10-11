@@ -690,6 +690,22 @@ func TestReconcile_AbsentWithoutKeysStartsFresh(t *testing.T) {
 	assert.Empty(t, archivesOf(t, paths))
 }
 
+// A bloc that has never had an inception vault has no vault directory at
+// all, and a directory that doesn't exist holds no store, so a new vault
+// starts.
+func TestReconcile_NewBlocWithoutAVaultDirectoryStartsFresh(t *testing.T) {
+	paths := reconcilePaths(t)
+	require.NoError(t, os.Remove(filepath.Dir(paths["vaultDir"])))
+
+	fake := &fakeInception{probe: stoppedProbe()}
+
+	require.NoError(t, runReconcile(t, paths, fake))
+
+	assert.Equal(t, []string{
+		"probe", "stop", "cluster-port " + paths["clusterPort"], "start fresh", "finish fresh",
+	}, fake.calls)
+}
+
 func TestReconcile_MixedDataChangesNothing(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
