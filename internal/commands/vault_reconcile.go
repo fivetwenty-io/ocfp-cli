@@ -1307,11 +1307,16 @@ const replaceVaultAdvice = "to replace it with a new, empty vault, run 'ocfp vau
 // a migration to raft kept or moved aside, and that still hold file or raft
 // storage: data.file-backup-*, data.raft-failed-*, data.raft-partial-*, and
 // data.raft-migrating. A directory that cannot be read counts as holding a
-// store, the way classifyVaultData counts it.
+// store, the way classifyVaultData counts it, but one that doesn't exist,
+// as on a bloc that has never had a vault, holds nothing.
 func migrationStoresBeside(dataDir string) []string {
 	parent, base := filepath.Dir(dataDir), filepath.Base(dataDir)
 
 	entries, err := os.ReadDir(parent)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
 	if err != nil {
 		return []string{parent}
 	}
