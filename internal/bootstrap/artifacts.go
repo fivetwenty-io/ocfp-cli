@@ -28,8 +28,8 @@ const (
 	artifactsReadinessPoll = 6 * time.Second
 
 	// artifactsDataDeviceHint is the device path the attached volume should
-	// land on inside the VM for providers that take a real device name.
-	// Cloud-init runs `zpool create rpool /dev/sdb`.
+	// land on inside the VM for providers that take a real device name. The
+	// guest provisioning addresses the data disk as /dev/sdb.
 	artifactsDataDeviceHint = "/dev/sdb"
 
 	// artifactsResourceType is the state resource Type for the artifacts VM.

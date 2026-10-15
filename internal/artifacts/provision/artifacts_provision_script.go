@@ -102,8 +102,10 @@ rm -f "${OCFP_CA_TMP}"
 # ZFS pool on the attached data disk (idempotent).
 zpool import -a >/dev/null 2>&1 || true
 if ! zpool list rpool >/dev/null 2>&1; then
-  zpool create -f -o ashift=12 rpool /dev/sdb
+  zpool create -f -o ashift=12 -o autotrim=on rpool /dev/sdb
 fi
+# ZFS sends no TRIM unless autotrim is on; converge pools created earlier.
+zpool set autotrim=on rpool || true
 if ! zfs list {{ .ZFSDataset }} >/dev/null 2>&1; then
   zfs create -o mountpoint={{ .Mountpoint }} -o compression=lz4 {{ .ZFSDataset }}
 fi
@@ -119,6 +121,8 @@ if ! grep -q "UUID=${disk_uuid} " /etc/fstab; then
   systemctl daemon-reload
 fi
 mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
+# Periodic trim rather than the discard mount option.
+systemctl enable --now fstrim.timer || true
 {{- end }}
 chown -R rustfs:rustfs {{ .Mountpoint }}
 

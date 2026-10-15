@@ -64,7 +64,8 @@ func TestRenderArtifactsCloudInit_NoTLS(t *testing.T) {
 		"runcmd:",
 		"useradd --system --home /var/lib/rustfs --shell /usr/sbin/nologin rustfs",
 		"zpool import -a || true",
-		"zpool create -f -o ashift=12 rpool /dev/sdb",
+		"zpool create -f -o ashift=12 -o autotrim=on rpool /dev/sdb",
+		"zpool set autotrim=on rpool",
 		"zfs create -o mountpoint=/data -o compression=lz4 rpool/myblock",
 		"chown -R rustfs:rustfs /data",
 		"mkdir -p /opt/rustfs/tls /var/log/rustfs",
@@ -210,6 +211,7 @@ func TestRenderArtifactsCloudInit_DefaultExt4(t *testing.T) {
 		"mkfs.ext4 /dev/sdb",
 		"blkid -o value -s UUID /dev/sdb",
 		"/data ext4 defaults,nofail 0 2",
+		"systemctl enable --now fstrim.timer || true",
 		"After=network-online.target\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -217,7 +219,7 @@ func TestRenderArtifactsCloudInit_DefaultExt4(t *testing.T) {
 		}
 	}
 
-	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service", "xfsprogs"} {
+	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service", "xfsprogs", "autotrim"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("ext4 output should not contain %q\n----\n%s", unwanted, out)
 		}
@@ -238,7 +240,7 @@ func TestRenderArtifactsCloudInit_XFS(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, want := range []string{"- xfsprogs", "mkfs.xfs /dev/sdb", "/data xfs defaults,nofail 0 2"} {
+	for _, want := range []string{"- xfsprogs", "mkfs.xfs /dev/sdb", "/data xfs defaults,nofail 0 2", "systemctl enable --now fstrim.timer || true"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("xfs output missing %q\n----\n%s", want, out)
 		}
