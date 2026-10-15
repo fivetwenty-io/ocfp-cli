@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
@@ -122,4 +123,9 @@ func (m *Manager) BastionDataDiskSpec() *cpi.DataDiskSpec {
 // ShowsVolumesInPlan exposes shouldShowVolumes for testing.
 func (m *Manager) ShowsVolumesInPlan() bool {
 	return m.shouldShowVolumes()
+}
+
+// AttachArtifactsDataVolume exposes attachArtifactsDataVolume for testing.
+func (m *Manager) AttachArtifactsDataVolume(ctx context.Context, instanceID, vmName string) (*cpi.Volume, error) {
+	return m.attachArtifactsDataVolume(ctx, instanceID, vmName)
 }

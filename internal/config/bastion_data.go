@@ -29,6 +29,14 @@ const (
 // The moment anything attaches a second disk that stops holding.
 const BastionDataDiskSerial = "ocfpdata"
 
+// ArtifactsDataDiskSerial is the disk serial PVE stamps on the artifacts VM's
+// data disk, which the guest exposes at
+// /dev/disk/by-id/scsi-SQEMU_QEMU_HARDDISK_<serial>.
+//
+// It gives the guest a stable path to the disk. The guest still addresses the
+// disk as /dev/sdb, which holds because the attach spec pins the slot to scsi1.
+const ArtifactsDataDiskSerial = "ocfpartifacts"
+
 // BastionDataDefaultSizeGiB is the default size of the bastion's data disk.
 //
 // Measured against a fully built-out bastion, the genuinely irreplaceable
