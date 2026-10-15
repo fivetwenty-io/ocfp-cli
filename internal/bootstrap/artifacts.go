@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
@@ -27,7 +28,8 @@ const (
 	artifactsReadinessPoll = 6 * time.Second
 
 	// artifactsDataDeviceHint is the device path the attached volume should
-	// land on inside the VM. Cloud-init runs `zpool create rpool /dev/sdb`.
+	// land on inside the VM for providers that take a real device name.
+	// Cloud-init runs `zpool create rpool /dev/sdb`.
 	artifactsDataDeviceHint = "/dev/sdb"
 
 	// artifactsResourceType is the state resource Type for the artifacts VM.
@@ -366,6 +368,22 @@ func artifactsTags(base map[string]string, blocName string) map[string]string {
 	return base
 }
 
+// artifactsDataAttachSpec returns the device argument for attaching the
+// artifacts data volume.
+//
+// PVE takes a slot spec rather than a device name. discard=on lets the thin
+// pool reclaim blocks the guest frees, which the bare /dev/sdb hint never
+// asked for. The slot stays scsi1, where the disk has always landed, so the
+// guest's /dev/sdb still holds. Other providers receive the hint as a real
+// device name and keep it.
+func (m *Manager) artifactsDataAttachSpec() string {
+	if strings.EqualFold(m.options.Provider, "pve") {
+		return "scsi1,discard=on,serial=" + config.ArtifactsDataDiskSerial
+	}
+
+	return artifactsDataDeviceHint
+}
+
 // attachArtifactsDataVolume creates and attaches the bulk data volume.
 func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmName string) (*cpi.Volume, error) {
 	// Adopt a preserved disk before allocating a new one. A teardown that
@@ -375,7 +393,7 @@ func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmN
 	if existing := m.preservedArtifactsVolume(vmName); existing != "" {
 		logger.Infof("Adopting preserved artifacts data volume %s", existing)
 
-		err := m.provider.StorageManager().AttachVolume(ctx, existing, instanceID, artifactsDataDeviceHint)
+		err := m.provider.StorageManager().AttachVolume(ctx, existing, instanceID, m.artifactsDataAttachSpec())
 		if err != nil {
 			return nil, fmt.Errorf("attach preserved data volume %s: %w", existing, err)
 		}
@@ -403,7 +421,7 @@ func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmN
 		return nil, fmt.Errorf("create data volume: %w", err)
 	}
 
-	err = m.provider.StorageManager().AttachVolume(ctx, vol.ID, instanceID, artifactsDataDeviceHint)
+	err = m.provider.StorageManager().AttachVolume(ctx, vol.ID, instanceID, m.artifactsDataAttachSpec())
 	if err != nil {
 		// Volume created but not attached — clean it up to avoid orphans.
 		_ = m.provider.StorageManager().DeleteVolume(ctx, vol.ID)
