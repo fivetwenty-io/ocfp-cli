@@ -155,6 +155,16 @@ func TestRenderArtifactsProvisionScript_IdempotentZpoolAndBinary(t *testing.T) {
 		t.Error("script must create the rpool zpool on /dev/sdb")
 	}
 
+	// ZFS sends no TRIM unless autotrim is on, so a new pool is created with it
+	// and an existing pool is converged to it.
+	if !strings.Contains(got, "zpool create -f -o ashift=12 -o autotrim=on rpool /dev/sdb") {
+		t.Error("zpool create must enable autotrim")
+	}
+
+	if !strings.Contains(got, "zpool set autotrim=on rpool") {
+		t.Error("script must set autotrim=on on an existing pool")
+	}
+
 	// dataset creation guarded too.
 	if !strings.Contains(got, "rpool/rustfs") {
 		t.Error("script must create the configured ZFS dataset")
@@ -188,6 +198,7 @@ func TestRenderArtifactsProvisionScript_DefaultExt4(t *testing.T) {
 	for _, w := range []string{
 		"mkfs.ext4 /dev/sdb",
 		"/data/rustfs ext4 defaults,nofail 0 2",
+		"systemctl enable --now fstrim.timer || true",
 		"After=network-online.target\n",
 	} {
 		if !strings.Contains(got, w) {
@@ -195,7 +206,7 @@ func TestRenderArtifactsProvisionScript_DefaultExt4(t *testing.T) {
 		}
 	}
 
-	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service"} {
+	for _, unwanted := range []string{"zfsutils-linux", "zpool", "zfs create", "zfs-mount.service", "autotrim"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("ext4 script should not contain %q", unwanted)
 		}
@@ -214,7 +225,7 @@ func TestRenderArtifactsProvisionScript_XFSInstallsXfsprogs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, w := range []string{"xfsprogs", "mkfs.xfs /dev/sdb"} {
+	for _, w := range []string{"xfsprogs", "mkfs.xfs /dev/sdb", "systemctl enable --now fstrim.timer || true"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("xfs script missing %q", w)
 		}
