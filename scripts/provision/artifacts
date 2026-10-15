@@ -158,16 +158,20 @@ case "${ARTIFACTS_DATA_FILESYSTEM}" in
       systemctl daemon-reload
     fi
     mountpoint -q "${RUSTFS_VOLUMES}" || mount "${RUSTFS_VOLUMES}"
+    # Periodic trim rather than the discard mount option.
+    systemctl enable --now fstrim.timer || true
     ;;
   zfs)
     ZPOOL="${RUSTFS_ZFS_DATASET%%/*}"
     zpool import -a 2>/dev/null || true
     if ! zpool list "${ZPOOL}" >/dev/null 2>&1; then
       log "Creating ZFS pool ${ZPOOL} on ${DATA_DEVICE}"
-      zpool create -f -o ashift=12 "${ZPOOL}" "${DATA_DEVICE}"
+      zpool create -f -o ashift=12 -o autotrim=on "${ZPOOL}" "${DATA_DEVICE}"
     else
       log "ZFS pool ${ZPOOL} already present"
     fi
+    # ZFS sends no TRIM unless autotrim is on; converge pools created earlier.
+    zpool set autotrim=on "${ZPOOL}" || true
 
     if ! zfs list "${RUSTFS_ZFS_DATASET}" >/dev/null 2>&1; then
       log "Creating ZFS dataset ${RUSTFS_ZFS_DATASET} at ${RUSTFS_VOLUMES}"

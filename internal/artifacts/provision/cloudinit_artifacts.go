@@ -195,8 +195,9 @@ runcmd:
   - zpool import -a || true
   - |
     if ! zpool list rpool > /dev/null 2>&1; then
-      zpool create -f -o ashift=12 rpool /dev/sdb
+      zpool create -f -o ashift=12 -o autotrim=on rpool /dev/sdb
     fi
+  - zpool set autotrim=on rpool || true
   - zfs create -o mountpoint={{ .Mountpoint }} -o compression=lz4 {{ .ZFSDataset }}
 {{- else }}
   - |
@@ -210,6 +211,7 @@ runcmd:
       echo "UUID=${uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail 0 2" >> /etc/fstab
     fi
   - mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
+  - systemctl enable --now fstrim.timer || true
 {{- end }}
   - chown -R rustfs:rustfs {{ .Mountpoint }}
   - mkdir -p /opt/rustfs/tls /var/log/rustfs
