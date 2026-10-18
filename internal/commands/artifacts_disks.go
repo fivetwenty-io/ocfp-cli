@@ -36,6 +36,13 @@ const (
 	verdictPendingDelete  = "pending-delete"
 )
 
+// What the re-read after a write showed.
+const (
+	fixStateApplied     = "applied"
+	fixStatePending     = "pending-restart"
+	fixStateUnconfirmed = "unconfirmed"
+)
+
 // Disk roles. Root disks are shown for information and never fail the check.
 const (
 	diskRoleRoot = "root"
@@ -84,6 +91,7 @@ type artifactsDiskRow struct {
 	Pending      string `json:"pending,omitempty"`
 	Verdict      string `json:"verdict"`
 	Fixed        bool   `json:"fixed,omitempty"`
+	FixState     string `json:"fix_state,omitempty"`
 	NewValue     string `json:"new_value,omitempty"`
 	Error        string `json:"error,omitempty"`
 
@@ -92,6 +100,8 @@ type artifactsDiskRow struct {
 	digest string
 	// node is the PVE node the config was read on, where a fix writes it.
 	node string
+	// confirmErr is why the re-read after a fix failed, when it did.
+	confirmErr string
 }
 
 // artifactsDiskReport is the whole result of `ocfp artifacts disks`.
@@ -140,7 +150,7 @@ func artifactsDisks(ac *artifactsContext, out io.Writer, fix, asJSON bool) error
 	report := inspectManagedDisks(ac.parent, reader, ac.blocName, vms)
 
 	if fix {
-		applyDiscardFixes(ac.parent, writer, &report)
+		applyDiscardFixes(ac.parent, reader, writer, &report)
 	}
 
 	if report.Fixed > 0 {
@@ -394,10 +404,16 @@ func diskDiscardVerdict(disk pve.VMDiskSlot) string {
 }
 
 // applyDiscardFixes writes discard=on into each managed data disk that is
-// missing-on-thin, using the value and digest it was read under. A fixed disk
-// reads as pending-restart, since the change waits for a cold start. A
+// missing-on-thin, using the value, digest, and node it was read under. A
 // refused write stays missing-on-thin and is recorded as an error.
-func applyDiscardFixes(ctx context.Context, writer vmDiskDiscardWriter, report *artifactsDiskReport) {
+//
+// After a write the VM's disks are read again, because PVE applies the change
+// at once on a stopped VM and queues it on a running one. That re-read is the
+// same read the check makes, and it says which happened without asking for
+// the VM's power state. A disk whose change is live reads as ok, a queued one
+// as pending-restart, and one the re-read could not confirm as
+// pending-restart too, since that is the safe assumption.
+func applyDiscardFixes(ctx context.Context, reader vmDiskReader, writer vmDiskDiscardWriter, report *artifactsDiskReport) {
 	for i := range report.Disks {
 		row := &report.Disks[i]
 
@@ -417,36 +433,88 @@ func applyDiscardFixes(ctx context.Context, writer vmDiskDiscardWriter, report *
 
 		row.Fixed = true
 		row.NewValue = wrote
-		row.Pending = wrote
-		row.Discard += " (on pending)"
-		row.Verdict = verdictPendingRestart
 		report.Fixed++
 		report.Drift--
+
+		confirmDiscardFix(ctx, reader, row, wrote)
 	}
 }
 
-// artifactsDiskNextSteps tells the operator what a fix leaves for them to do.
-func artifactsDiskNextSteps(blocName string, disks []artifactsDiskRow) []string {
-	var vms []string
+// confirmDiscardFix re-reads a fixed disk and records whether its change is
+// live, queued for a cold start, or could not be confirmed.
+func confirmDiscardFix(ctx context.Context, reader vmDiskReader, row *artifactsDiskRow, wrote string) {
+	row.FixState = fixStateUnconfirmed
 
-	seen := map[string]bool{}
+	disks, err := reader.VMDisks(ctx, row.VMID)
+	if err != nil {
+		row.confirmErr = err.Error()
+	} else if disk, found := disks.Slot(row.Slot); !found {
+		row.confirmErr = "the slot is no longer in the VM's config"
+	} else {
+		switch {
+		case disk.DiscardOn():
+			row.FixState = fixStateApplied
+			row.Value, row.LiveValue, row.Pending = disk.Value, disk.LiveValue, ""
+			row.Discard = disk.Discard
+			row.Verdict = verdictOK
 
-	for _, d := range disks {
-		if d.Fixed && !seen[d.VMID] {
-			seen[d.VMID] = true
-			vms = append(vms, fmt.Sprintf("%s (%s)", d.VM, d.VMID))
+			return
+		case disk.PendingDiscardOn():
+			row.FixState = fixStatePending
+			row.Value, row.LiveValue = disk.Value, disk.LiveValue
+		default:
+			row.confirmErr = "the re-read shows discard=on neither live nor pending"
 		}
 	}
 
-	return []string{
-		fmt.Sprintf("The change takes effect only after a cold stop and start of %s. "+
+	row.Pending = wrote
+	row.Discard += " (on pending)"
+	row.Verdict = verdictPendingRestart
+}
+
+// artifactsDiskNextSteps tells the operator what a fix leaves for them to do,
+// which depends on whether each VM took the change at once or queued it.
+func artifactsDiskNextSteps(blocName string, disks []artifactsDiskRow) []string {
+	var applied, pending []string
+
+	var steps []string
+
+	for _, d := range disks {
+		if !d.Fixed {
+			continue
+		}
+
+		vm := fmt.Sprintf("%s (%s)", d.VM, d.VMID)
+
+		switch d.FixState {
+		case fixStateApplied:
+			applied = append(applied, vm)
+		case fixStatePending:
+			pending = append(pending, vm)
+		default:
+			steps = append(steps, fmt.Sprintf("Re-reading %s after the write failed (%s), so the change "+
+				"could not be confirmed. If %s is running, cold stop and start it; a guest reboot is not enough.",
+				vm, d.confirmErr, vm))
+		}
+	}
+
+	if len(pending) > 0 {
+		steps = append(steps, fmt.Sprintf("The change takes effect only after a cold stop and start of %s. "+
 			"A guest reboot is not enough, because the running VM keeps its old disk config.",
-			strings.Join(vms, " and ")),
+			strings.Join(pending, " and ")))
+	}
+
+	if len(applied) > 0 {
+		steps = append(steps, fmt.Sprintf("The change is already live on %s, because the VM was not running "+
+			"when it was written. No restart is needed.", strings.Join(applied, " and ")))
+	}
+
+	return append(steps,
 		"The disk's data is untouched. Only the disk's config option changed.",
 		fmt.Sprintf("The guest must also trim before the pool gets blocks back. "+
 			"Re-running `ocfp artifacts provision --bloc %s` enables fstrim.timer, "+
 			"or you can run `sudo fstrim -v` on the data mount once.", blocName),
-	}
+	)
 }
 
 // artifactsDiskRemedy tells the operator how to fix the disks that still lack
@@ -461,7 +529,7 @@ func artifactsDiskRemedy(blocName string, drift int, fixAttempted bool) string {
 	return fmt.Sprintf(
 		"%d managed data disk(s) on thin storage lack discard=on, so the pool never gets their freed blocks back. "+
 			"Run `ocfp artifacts disks --bloc %s --fix` to add discard=on, keeping every other disk option, "+
-			"then cold stop and start each VM it names. The disk's data is untouched.", drift, blocName)
+			"then cold stop and start each running VM it names. The disk's data is untouched.", drift, blocName)
 }
 
 // renderArtifactsDiskReport writes the report as JSON or as a table.
