@@ -194,7 +194,9 @@ ocfp artifacts disks --bloc production
 ocfp artifacts disks --bloc production --fix
 ```
 
-The verdicts are `ok`, `missing-on-thin`, `thick-not-needed`, `unknown-pool`, and `pending-restart`. Root disks are shown for information only, and `--fix` never changes them. The fix writes the disk's config under the digest it just read, so it fails rather than overwrite a config that changed in between. It never stops, starts, or reboots a VM. The change takes effect only after a cold stop and start of the VM, because a guest reboot does not reload the disk config. The disk's data is untouched, and the guest still has to trim, which re-running `ocfp artifacts provision` sets up with fstrim.timer. `ocfp artifacts status` shows a one-line warning when a managed data disk is missing discard or has it only pending.
+The verdicts are `ok`, `missing-on-thin`, `pending-restart`, `pending-delete`, `thick-not-needed`, and `unknown-pool`. The discard column shows what the running VM uses, so a disk whose `discard=on` is queued for the next cold start reads as `pending-restart` rather than `ok`. A disk whose removal is queued reads as `pending-delete`, and `--fix` leaves it alone. The command exits non-zero when a managed data disk on thin storage lacks discard, or when it can't read a VM's disks or find and classify its data disk. A `pending-restart` or `pending-delete` disk doesn't fail the check.
+
+Root disks are shown for information only, and `--fix` never changes them. The fix writes the disk's config on the node it was read from, under the digest it just read, so it fails rather than overwrite a config that changed in between. It never stops, starts, or reboots a VM. Afterwards the command reads the disk again and says what happened. A stopped VM takes the change at once, and a running VM needs a cold stop and start, because a guest reboot does not reload the disk config. The disk's data is untouched, and the guest still has to trim, which re-running `ocfp artifacts provision` sets up with fstrim.timer. `ocfp artifacts status` shows a one-line warning when a managed data disk is missing discard or has it only pending.
 
 ### State Management
 
