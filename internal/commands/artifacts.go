@@ -91,6 +91,7 @@ secret/ocfp/{bloc}/ca and never mints one unless --generate is passed.`,
 	cmd.Flags().Bool("fingerprint", false, "ca action: print the sha256 CA fingerprint instead of the PEM")
 	cmd.Flags().String("out", "", "ca action: write the CA cert PEM to this file (0644) instead of stdout")
 	cmd.Flags().Bool("generate", false, "ca action: mint a new bloc CA if one is not already configured")
+	cmd.Flags().Bool("fix", false, "disks action: set discard=on on managed data disks on thin storage that lack it (never restarts a VM)")
 
 	bindFlagsOnRun(cmd, map[string]string{
 		"bloc":     "bloc",
@@ -137,7 +138,9 @@ func runArtifactsCmd(cmd *cobra.Command, args []string) error {
 	case "status":
 		return artifactsStatus(ctx, asJSON)
 	case "disks":
-		return artifactsDisks(ctx, os.Stdout, asJSON)
+		fix, _ := cmd.Flags().GetBool("fix")
+
+		return artifactsDisks(ctx, os.Stdout, fix, asJSON)
 	case "provision":
 		return artifactsProvision(cmd, ctx, log)
 	case "start":

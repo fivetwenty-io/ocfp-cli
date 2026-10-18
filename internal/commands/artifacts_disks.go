@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -18,6 +19,7 @@ import (
 var (
 	ErrArtifactsDiskDrift        = errors.New("managed data disks on thin storage lack discard=on")
 	ErrArtifactsDiskCheckFailed  = errors.New("could not check every managed disk")
+	ErrArtifactsDiskFixFailed    = errors.New("setting discard=on failed on managed data disks")
 	ErrArtifactsDisksUnsupported = errors.New("the disk check needs a provider that reports VM disk config (pve)")
 	ErrArtifactsNoManagedVMs     = errors.New("no artifacts VM or bastion recorded for bloc")
 )
@@ -47,6 +49,12 @@ type vmDiskReader interface {
 	VMDisks(ctx context.Context, instanceID string) (*pve.VMDisks, error)
 }
 
+// vmDiskDiscardWriter is the optional write a provider's storage manager
+// offers to set discard=on on one disk slot under the config digest.
+type vmDiskDiscardWriter interface {
+	EnableDiskDiscard(ctx context.Context, instanceID, slot, currentValue, digest string) (string, error)
+}
+
 // managedDiskVM is a VM ocfp owns, with what identifies its data disk.
 type managedDiskVM struct {
 	Name         string
@@ -62,32 +70,57 @@ type artifactsDiskRow struct {
 	Slot         string `json:"slot"`
 	Role         string `json:"role"`
 	Volume       string `json:"volume"`
+	Value        string `json:"value"`
 	Pool         string `json:"pool"`
 	PoolType     string `json:"pool_type"`
 	Provisioning string `json:"provisioning"`
 	Discard      string `json:"discard"`
 	Pending      string `json:"pending,omitempty"`
 	Verdict      string `json:"verdict"`
+	Fixed        bool   `json:"fixed,omitempty"`
+	NewValue     string `json:"new_value,omitempty"`
+	Error        string `json:"error,omitempty"`
+
+	// digest is the config digest Value was read under. A fix sends it back
+	// so PVE refuses the write if the config changed in between.
+	digest string
 }
 
 // artifactsDiskReport is the whole result of `ocfp artifacts disks`.
 type artifactsDiskReport struct {
-	Bloc   string             `json:"bloc"`
-	Disks  []artifactsDiskRow `json:"disks"`
-	Notes  []string           `json:"notes,omitempty"`
-	Errors []string           `json:"errors,omitempty"`
-	Drift  int                `json:"drift"`
-	Remedy string             `json:"remedy,omitempty"`
+	Bloc      string             `json:"bloc"`
+	Disks     []artifactsDiskRow `json:"disks"`
+	Notes     []string           `json:"notes,omitempty"`
+	Errors    []string           `json:"errors,omitempty"`
+	Drift     int                `json:"drift"`
+	Fixed     int                `json:"fixed"`
+	FixFailed int                `json:"fix_failed"`
+	Remedy    string             `json:"remedy,omitempty"`
+	NextSteps []string           `json:"next_steps,omitempty"`
 }
 
 // artifactsDisks implements `ocfp artifacts disks`. It reads the disks of the
 // bloc's managed VMs and reports, for each root and data disk, whether a thin
 // pool gets freed blocks back. It fails when a managed data disk on thin
 // storage lacks discard=on, or when a VM's disks could not be read.
-func artifactsDisks(ac *artifactsContext, out io.Writer, asJSON bool) error {
+//
+// With fix, each managed data disk that is missing-on-thin gets discard=on
+// written into its config. Root disks and every other verdict are left
+// alone, and no VM is stopped, started, or rebooted. A refused write fails
+// the command even when other disks were fixed in the same run.
+func artifactsDisks(ac *artifactsContext, out io.Writer, fix, asJSON bool) error {
 	reader, ok := ac.provider.StorageManager().(vmDiskReader)
 	if !ok {
 		return ErrArtifactsDisksUnsupported
+	}
+
+	var writer vmDiskDiscardWriter
+
+	if fix {
+		writer, ok = ac.provider.StorageManager().(vmDiskDiscardWriter)
+		if !ok {
+			return ErrArtifactsDisksUnsupported
+		}
 	}
 
 	vms := managedDiskVMs(ac)
@@ -97,8 +130,16 @@ func artifactsDisks(ac *artifactsContext, out io.Writer, asJSON bool) error {
 
 	report := inspectManagedDisks(ac.parent, reader, ac.blocName, vms)
 
+	if fix {
+		applyDiscardFixes(ac.parent, writer, &report)
+	}
+
+	if report.Fixed > 0 {
+		report.NextSteps = artifactsDiskNextSteps(ac.blocName, report.Disks)
+	}
+
 	if report.Drift > 0 {
-		report.Remedy = artifactsDiskRemedy(report.Drift)
+		report.Remedy = artifactsDiskRemedy(ac.blocName, report.Drift, fix)
 	}
 
 	err := renderArtifactsDiskReport(out, report, asJSON)
@@ -107,6 +148,8 @@ func artifactsDisks(ac *artifactsContext, out io.Writer, asJSON bool) error {
 	}
 
 	switch {
+	case report.FixFailed > 0:
+		return fmt.Errorf("%w: %d disk(s)", ErrArtifactsDiskFixFailed, report.FixFailed)
 	case len(report.Errors) > 0:
 		return fmt.Errorf("%w: %d error(s)", ErrArtifactsDiskCheckFailed, len(report.Errors))
 	case report.Drift > 0:
@@ -185,7 +228,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 		}
 
 		if root, found := disks.Slot(rootDiskSlot); found {
-			report.Disks = append(report.Disks, artifactsDiskRowFor(vm, root, diskRoleRoot))
+			report.Disks = append(report.Disks, artifactsDiskRowFor(vm, root, diskRoleRoot, disks.Digest))
 		}
 
 		data, found := disks.DataDisk(vm.DataVolumeID, vm.DataSerial)
@@ -197,7 +240,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 			continue
 		}
 
-		row := artifactsDiskRowFor(vm, data, diskRoleData)
+		row := artifactsDiskRowFor(vm, data, diskRoleData, disks.Digest)
 		if row.Verdict == verdictMissingOnThin {
 			report.Drift++
 		}
@@ -209,7 +252,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 }
 
 // artifactsDiskRowFor builds the report row for one disk.
-func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role string) artifactsDiskRow {
+func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role, digest string) artifactsDiskRow {
 	discard := disk.Discard
 	if discard == "" {
 		discard = "absent"
@@ -225,12 +268,14 @@ func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role string) art
 		Slot:         disk.Slot,
 		Role:         role,
 		Volume:       disk.VolumeID,
+		Value:        disk.Value,
 		Pool:         disk.Pool,
 		PoolType:     disk.PoolType,
 		Provisioning: string(disk.Provisioning),
 		Discard:      discard,
 		Pending:      disk.PendingValue,
 		Verdict:      diskDiscardVerdict(disk),
+		digest:       digest,
 	}
 }
 
@@ -257,12 +302,75 @@ func diskDiscardVerdict(disk pve.VMDiskSlot) string {
 	}
 }
 
-// artifactsDiskRemedy tells the operator how to fix drifted disks by hand.
-func artifactsDiskRemedy(drift int) string {
+// applyDiscardFixes writes discard=on into each managed data disk that is
+// missing-on-thin, using the value and digest it was read under. A fixed disk
+// reads as pending-restart, since the change waits for a cold start. A
+// refused write stays missing-on-thin and is recorded as an error.
+func applyDiscardFixes(ctx context.Context, writer vmDiskDiscardWriter, report *artifactsDiskReport) {
+	for i := range report.Disks {
+		row := &report.Disks[i]
+
+		if row.Role != diskRoleData || row.Verdict != verdictMissingOnThin {
+			continue
+		}
+
+		wrote, err := writer.EnableDiskDiscard(ctx, row.VMID, row.Slot, row.Value, row.digest)
+		if err != nil {
+			row.Error = err.Error()
+			report.FixFailed++
+			report.Errors = append(report.Errors, fmt.Sprintf(
+				"%s (%s) %s: setting discard=on failed: %v", row.VM, row.VMID, row.Slot, err))
+
+			continue
+		}
+
+		row.Fixed = true
+		row.NewValue = wrote
+		row.Pending = wrote
+		row.Discard += " (on pending)"
+		row.Verdict = verdictPendingRestart
+		report.Fixed++
+		report.Drift--
+	}
+}
+
+// artifactsDiskNextSteps tells the operator what a fix leaves for them to do.
+func artifactsDiskNextSteps(blocName string, disks []artifactsDiskRow) []string {
+	var vms []string
+
+	seen := map[string]bool{}
+
+	for _, d := range disks {
+		if d.Fixed && !seen[d.VMID] {
+			seen[d.VMID] = true
+			vms = append(vms, fmt.Sprintf("%s (%s)", d.VM, d.VMID))
+		}
+	}
+
+	return []string{
+		fmt.Sprintf("The change takes effect only after a cold stop and start of %s. "+
+			"A guest reboot is not enough, because the running VM keeps its old disk config.",
+			strings.Join(vms, " and ")),
+		"The disk's data is untouched. Only the disk's config option changed.",
+		fmt.Sprintf("The guest must also trim before the pool gets blocks back. "+
+			"Re-running `ocfp artifacts provision --bloc %s` enables fstrim.timer, "+
+			"or you can run `sudo fstrim -v` on the data mount once.", blocName),
+	}
+}
+
+// artifactsDiskRemedy tells the operator how to fix the disks that still lack
+// discard=on.
+func artifactsDiskRemedy(blocName string, drift int, fixAttempted bool) string {
+	if fixAttempted {
+		return fmt.Sprintf(
+			"%d managed data disk(s) on thin storage still lack discard=on because the write was refused. "+
+				"Check the error above, then re-run `ocfp artifacts disks --bloc %s --fix`.", drift, blocName)
+	}
+
 	return fmt.Sprintf(
 		"%d managed data disk(s) on thin storage lack discard=on, so the pool never gets their freed blocks back. "+
-			"Add discard=on to each disk's config, keeping its other options, then cold stop and start the VM. "+
-			"The disk's data is untouched.", drift)
+			"Run `ocfp artifacts disks --bloc %s --fix` to add discard=on, keeping every other disk option, "+
+			"then cold stop and start each VM it names. The disk's data is untouched.", drift, blocName)
 }
 
 // renderArtifactsDiskReport writes the report as JSON or as a table.
@@ -303,6 +411,14 @@ func renderArtifactsDiskReport(out io.Writer, report artifactsDiskReport, asJSON
 		_, _ = fmt.Fprintf(out, "error: %s\n", e)
 	}
 
+	if len(report.NextSteps) > 0 {
+		_, _ = fmt.Fprintf(out, "\nSet discard=on on %d disk(s). What happens next:\n", report.Fixed)
+
+		for _, step := range report.NextSteps {
+			_, _ = fmt.Fprintf(out, "  - %s\n", step)
+		}
+	}
+
 	if report.Remedy != "" {
 		_, _ = fmt.Fprintf(out, "\n%s\n", report.Remedy)
 	}
@@ -310,8 +426,12 @@ func renderArtifactsDiskReport(out io.Writer, report artifactsDiskReport, asJSON
 	return nil
 }
 
-// Compile-time check that the PVE storage manager offers the disk view.
-var _ vmDiskReader = (*pve.StorageManager)(nil)
+// Compile-time checks that the PVE storage manager offers the disk view and
+// the discard write.
+var (
+	_ vmDiskReader        = (*pve.StorageManager)(nil)
+	_ vmDiskDiscardWriter = (*pve.StorageManager)(nil)
+)
 
 // Compile-time check that the disk view is reached through cpi.StorageManager.
 var _ cpi.StorageManager = (*pve.StorageManager)(nil)

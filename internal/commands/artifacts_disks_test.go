@@ -24,7 +24,7 @@ type fakeDiskStorage struct {
 
 	disks    map[string]*pve.VMDisks
 	readErrs map[string]error
-	putErr   error
+	putErrs  map[string]error
 	puts     []fakeDiskPut
 }
 
@@ -49,10 +49,10 @@ func (f *fakeDiskStorage) VMDisks(_ context.Context, instanceID string) (*pve.VM
 func (f *fakeDiskStorage) EnableDiskDiscard(_ context.Context, instanceID, slot, current, digest string) (string, error) {
 	put := fakeDiskPut{VMID: instanceID, Slot: slot, Current: current, Digest: digest}
 
-	if f.putErr != nil {
+	if err := f.putErrs[instanceID]; err != nil {
 		f.puts = append(f.puts, put)
 
-		return "", f.putErr
+		return "", err
 	}
 
 	put.Wrote = strings.TrimSuffix(current, ",discard=ignore") + ",discard=on"
@@ -207,7 +207,7 @@ func TestArtifactsDisks_FlagsALegacyDataDiskAndExitsNonZero(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := artifactsDisks(fx.ac, &out, false)
+	err := artifactsDisks(fx.ac, &out, false, false)
 	if !errors.Is(err, ErrArtifactsDiskDrift) {
 		t.Fatalf("error = %v, want ErrArtifactsDiskDrift", err)
 	}
@@ -245,7 +245,7 @@ func TestArtifactsDisks_JSONReport(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := artifactsDisks(fx.ac, &out, true)
+	err := artifactsDisks(fx.ac, &out, false, true)
 	if !errors.Is(err, ErrArtifactsDiskDrift) {
 		t.Fatalf("error = %v, want ErrArtifactsDiskDrift", err)
 	}
@@ -349,7 +349,7 @@ func TestArtifactsDisks_Verdicts(t *testing.T) {
 
 			var out bytes.Buffer
 
-			err := artifactsDisks(fx.ac, &out, true)
+			err := artifactsDisks(fx.ac, &out, false, true)
 
 			if tc.wantDrift != errors.Is(err, ErrArtifactsDiskDrift) {
 				t.Fatalf("error = %v, want drift %v", err, tc.wantDrift)
@@ -384,7 +384,7 @@ func TestArtifactsDisks_RootDiskIsInformational(t *testing.T) {
 
 	var out bytes.Buffer
 
-	if err := artifactsDisks(fx.ac, &out, false); err != nil {
+	if err := artifactsDisks(fx.ac, &out, false, false); err != nil {
 		t.Fatalf("error = %v, want none: a root disk is informational", err)
 	}
 
@@ -407,7 +407,7 @@ func TestArtifactsDisks_ReadFailureFailsTheCommand(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := artifactsDisks(fx.ac, &out, false)
+	err := artifactsDisks(fx.ac, &out, false, false)
 	if !errors.Is(err, ErrArtifactsDiskCheckFailed) {
 		t.Fatalf("error = %v, want ErrArtifactsDiskCheckFailed", err)
 	}
@@ -426,7 +426,158 @@ func TestArtifactsDisks_UnsupportedProvider(t *testing.T) {
 
 	var out bytes.Buffer
 
-	if err := artifactsDisks(fx.ac, &out, false); !errors.Is(err, ErrArtifactsDisksUnsupported) {
+	if err := artifactsDisks(fx.ac, &out, false, false); !errors.Is(err, ErrArtifactsDisksUnsupported) {
 		t.Errorf("error = %v, want ErrArtifactsDisksUnsupported", err)
+	}
+}
+
+// TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk pins what --fix may
+// touch. Of a root disk lacking discard, a thin data disk lacking it, and a
+// thick data disk lacking it, only the thin data disk is written, once, with
+// its full current value and the digest it was read under. No VM is stopped,
+// started, rebooted, or even asked for its power state.
+func TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk(t *testing.T) {
+	t.Parallel()
+
+	disks := legacyBlocDisks()
+	disks["105"].Disks[0] = thinDisk("scsi0", "local-lvm-data:vm-105-disk-0,size=32G,ssd=1", "", "")
+	disks["102"].Disks[1] = pve.VMDiskSlot{
+		Slot: "scsi1", Value: "thick:vm-102-data,serial=ocfpdata,size=64G", VolumeID: "thick:vm-102-data",
+		Pool: "thick", PoolType: "lvm", Provisioning: pve.ProvisioningThick,
+	}
+
+	fx := newDiskTestFixture(t, disks)
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, false); err != nil {
+		t.Fatalf("artifactsDisks --fix: %v\n%s", err, out.String())
+	}
+
+	want := fakeDiskPut{
+		VMID:    "105",
+		Slot:    "scsi1",
+		Current: "local-lvm-data:vm-105-data,backup=0,size=500G",
+		Digest:  "a105",
+		Wrote:   "local-lvm-data:vm-105-data,backup=0,size=500G,discard=on",
+	}
+
+	if len(fx.storage.puts) != 1 || fx.storage.puts[0] != want {
+		t.Fatalf("writes = %+v, want exactly %+v", fx.storage.puts, want)
+	}
+
+	if len(fx.compute.powerCalls) != 0 {
+		t.Errorf("power calls = %v, want none", fx.compute.powerCalls)
+	}
+
+	text := out.String()
+
+	for _, want := range []string{
+		"cold stop and start",
+		"guest reboot",
+		"data is untouched",
+		"ocfp artifacts provision",
+		"fstrim.timer",
+		"sudo fstrim -v",
+		"pending-restart",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestArtifactsDisks_FixJSONReportsTheWrittenValue pins the --fix --json
+// shape: the fixed disk carries the value written and reads as
+// pending-restart, and the guidance travels in next_steps.
+func TestArtifactsDisks_FixJSONReportsTheWrittenValue(t *testing.T) {
+	t.Parallel()
+
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, true); err != nil {
+		t.Fatalf("artifactsDisks --fix --json: %v", err)
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if !data.Fixed || data.Verdict != verdictPendingRestart ||
+		data.NewValue != "local-lvm-data:vm-105-data,backup=0,size=500G,discard=on" {
+		t.Errorf("fixed disk = %+v, want fixed, pending-restart, with the written value", data)
+	}
+
+	if report.Fixed != 1 || report.Drift != 0 || len(report.NextSteps) == 0 {
+		t.Errorf("fixed %d drift %d next_steps %v, want 1, 0, and guidance", report.Fixed, report.Drift, report.NextSteps)
+	}
+}
+
+// TestArtifactsDisks_FixLeavesEverythingElseAlone asserts --fix writes
+// nothing when no data disk is missing-on-thin: a change already queued, an
+// unknown pool, and a disk that is already correct.
+func TestArtifactsDisks_FixLeavesEverythingElseAlone(t *testing.T) {
+	t.Parallel()
+
+	disks := legacyBlocDisks()
+	disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,size=500G", "",
+		"local-lvm-data:vm-105-data,size=500G,discard=on")
+	disks["102"].Disks[1] = pve.VMDiskSlot{
+		Slot: "scsi1", Value: "nfs-a:102/vm-102-data.raw,serial=ocfpdata,size=64G", VolumeID: "nfs-a:102/vm-102-data.raw",
+		Pool: "nfs-a", PoolType: "nfs", Provisioning: pve.ProvisioningUnknown,
+	}
+
+	fx := newDiskTestFixture(t, disks)
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, false); err != nil {
+		t.Fatalf("artifactsDisks --fix: %v", err)
+	}
+
+	if len(fx.storage.puts) != 0 {
+		t.Errorf("writes = %+v, want none", fx.storage.puts)
+	}
+
+	if strings.Contains(out.String(), "fstrim") {
+		t.Errorf("post-fix guidance printed although nothing was written:\n%s", out.String())
+	}
+}
+
+// TestArtifactsDisks_FixReportsAFailedWrite makes sure a refused write is
+// shown and fails the command, even when another disk was fixed in the same
+// run. Partial success must never read as success.
+func TestArtifactsDisks_FixReportsAFailedWrite(t *testing.T) {
+	t.Parallel()
+
+	disks := legacyBlocDisks()
+	disks["102"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-102-data,serial=ocfpdata,size=64G", "", "")
+
+	fx := newDiskTestFixture(t, disks)
+	fx.storage.putErrs = map[string]error{"102": errors.New("config file has been modified by another user")}
+
+	var out bytes.Buffer
+
+	err := artifactsDisks(fx.ac, &out, true, false)
+	if !errors.Is(err, ErrArtifactsDiskFixFailed) {
+		t.Fatalf("error = %v, want ErrArtifactsDiskFixFailed", err)
+	}
+
+	if len(fx.storage.puts) != 2 {
+		t.Errorf("writes = %+v, want an attempt on each drifted disk", fx.storage.puts)
+	}
+
+	text := out.String()
+
+	if !strings.Contains(text, "config file has been modified by another user") {
+		t.Errorf("output does not name the failed write:\n%s", text)
+	}
+
+	if !strings.Contains(text, "missing-on-thin") {
+		t.Errorf("the disk whose write failed is not still shown as missing-on-thin:\n%s", text)
 	}
 }
