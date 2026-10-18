@@ -530,6 +530,11 @@ func TestEnableDiskDiscard_RefusesUnsafeWrites(t *testing.T) {
 		{"no node", "", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "d", ErrDiskNodeMissing},
 		{"unused slot", "pve1", "105", "unused0", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
 		{"non-disk key", "pve1", "105", "net0", "virtio=AA:BB,bridge=vmbr0", "d", ErrInvalidDiskSlotValue},
+		{"bus prefix with no index", "pve1", "105", "scsi", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"controller key", "pve1", "105", "scsihw", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"trailing text", "pve1", "105", "scsi1a", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"upper case", "pve1", "105", "SCSI1", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"cdrom value", "pve1", "105", "ide2", "local-lvm-data:vm-105-cloudinit,media=cdrom", "d", ErrInvalidDiskSlotValue},
 		{"malformed value", "pve1", "105", "scsi1", "local-lvm-data:vm-105-data,,size=500G", "d", ErrInvalidDiskSlotValue},
 		{"bad vmid", "pve1", "abc", "scsi1", "local-lvm-data:vm-105-data", "d", ErrInvalidVMID},
 	}
@@ -565,5 +570,28 @@ func TestEnableDiskDiscard_ReturnsAFailedPut(t *testing.T) {
 		"pve1", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "stale")
 	if !errors.Is(err, errDigest) {
 		t.Errorf("error = %v, want the PUT failure", err)
+	}
+}
+
+// TestEnableDiskDiscard_AcceptsEveryDiskBus pins the slot names a write may
+// target: a bus name followed by its index, on each of the four buses.
+func TestEnableDiskDiscard_AcceptsEveryDiskBus(t *testing.T) {
+	t.Parallel()
+
+	for _, slot := range []string{"scsi0", "scsi30", "virtio15", "sata5", "ide3"} {
+		t.Run(slot, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakePVEClient{}
+
+			if _, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(),
+				"pve1", "105", slot, "local-lvm-data:vm-105-data,size=500G", "d"); err != nil {
+				t.Fatalf("EnableDiskDiscard(%s): %v", slot, err)
+			}
+
+			if fake.putCalls != 1 {
+				t.Errorf("PUT calls = %d, want 1", fake.putCalls)
+			}
+		})
 	}
 }

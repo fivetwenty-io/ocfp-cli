@@ -4,17 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// diskBusPrefixes are the config key prefixes of slots that attach a disk to
-// the guest. Unlike diskSlotPrefixes it leaves out unusedN, because a volume
-// parked there is not attached and its options do nothing.
+// diskBusSlotPattern matches the config keys of slots that attach a disk to
+// the guest: a bus name and its index, such as scsi1. Unlike diskSlotPrefixes
+// it leaves out unusedN, because a volume parked there is not attached and its
+// options do nothing, and it leaves out keys that merely share a prefix, such
+// as scsihw.
 //
-//nolint:gochecknoglobals // intentional package-level lookup table
-var diskBusPrefixes = []string{"scsi", "virtio", "sata", "ide"}
+//nolint:gochecknoglobals // compiled once; read-only
+var diskBusSlotPattern = regexp.MustCompile(`^(scsi|virtio|sata|ide)\d+$`)
 
 // VMDiskSlot is one disk attached to a VM, as its config and pending list
 // report it.
@@ -155,7 +158,7 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 
 	for key, raw := range config {
 		value, ok := raw.(string)
-		if !ok || !hasAnyPrefix(key, diskBusPrefixes) {
+		if !ok || !diskBusSlotPattern.MatchString(key) {
 			continue
 		}
 
@@ -177,7 +180,7 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 	// A slot whose removal is queued is already gone from the merged config,
 	// so the pending list is the only place it shows up.
 	for key, entry := range pending {
-		if _, inConfig := config[key]; inConfig || !entry.Delete || !hasAnyPrefix(key, diskBusPrefixes) {
+		if _, inConfig := config[key]; inConfig || !entry.Delete || !diskBusSlotPattern.MatchString(key) {
 			continue
 		}
 
@@ -292,7 +295,7 @@ func (m *StorageManager) EnableDiskDiscard(ctx context.Context, node, instanceID
 		return "", fmt.Errorf("%w: %s", ErrInvalidVMID, instanceID)
 	}
 
-	if !hasAnyPrefix(slot, diskBusPrefixes) {
+	if !diskBusSlotPattern.MatchString(slot) {
 		return "", fmt.Errorf("%w: %s is not an attached disk slot", ErrInvalidDiskSlotValue, slot)
 	}
 

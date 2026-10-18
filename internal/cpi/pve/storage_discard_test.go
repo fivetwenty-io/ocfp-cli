@@ -232,6 +232,9 @@ func TestDiscardOnValue_RefusesMalformedValues(t *testing.T) {
 		"local-lvm-data:vm-105-data,discard=ignore,discard=on",
 		":vm-105-data,size=64G",
 		"local-lvm-data:,size=64G",
+		"local-lvm-data:vm-105-cloudinit,media=cdrom",
+		"local-lvm-data:iso/ubuntu.iso,media=cdrom,size=2G",
+		"local-lvm-data:vm-105-data,MEDIA=cdrom",
 	} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
