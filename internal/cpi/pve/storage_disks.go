@@ -277,15 +277,16 @@ func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid in
 // EnableDiskDiscard sets discard=on on one disk slot and returns the value it
 // wrote. A value that already carries discard=on is returned without a write.
 //
-// currentValue and digest must come from the same config read, normally a
-// VMDisks call. The new value is PUT together with that digest, so PVE
+// node, currentValue, and digest must come from the same config read,
+// normally a VMDisks call; the write goes to that node rather than one
+// resolved again. The new value is PUT together with that digest, so PVE
 // refuses the write if the config changed in between rather than letting us
 // overwrite a value we never saw. Every other option on the slot is kept
 // exactly, because PVE rewrites the whole slot from what we send.
 //
 // It never stops, starts, or reboots the VM. On a running VM PVE queues the
 // change, and it takes effect only after a cold stop and start.
-func (m *StorageManager) EnableDiskDiscard(ctx context.Context, instanceID, slot, currentValue, digest string) (string, error) {
+func (m *StorageManager) EnableDiskDiscard(ctx context.Context, node, instanceID, slot, currentValue, digest string) (string, error) {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", ErrInvalidVMID, instanceID)
@@ -308,9 +309,8 @@ func (m *StorageManager) EnableDiskDiscard(ctx context.Context, instanceID, slot
 		return "", fmt.Errorf("%w: VM %d %s", ErrConfigDigestMissing, vmid, slot)
 	}
 
-	node, err := m.client.getNode(ctx)
-	if err != nil {
-		return "", fmt.Errorf("resolve node for VM %d: %w", vmid, err)
+	if node == "" {
+		return "", fmt.Errorf("%w: VM %d %s", ErrDiskNodeMissing, vmid, slot)
 	}
 
 	_, err = m.client.pveClient.PutCtx(ctx,
