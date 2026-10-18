@@ -28,6 +28,12 @@ type fakeDiskStorage struct {
 	putErrs    map[string]error
 	puts       []fakeDiskPut
 	classified []string
+
+	// stopped VMs take a write at once, the way PVE applies a config change
+	// to a VM that is not running. Any other VM gets the change queued.
+	stopped map[string]bool
+	// rereadErrs fail a VM's disk read once a write has gone to it.
+	rereadErrs map[string]error
 }
 
 // fakeDiskPut records one EnableDiskDiscard call.
@@ -38,6 +44,14 @@ type fakeDiskPut struct {
 func (f *fakeDiskStorage) VMDisks(_ context.Context, instanceID string) (*pve.VMDisks, error) {
 	if err := f.readErrs[instanceID]; err != nil {
 		return nil, err
+	}
+
+	if err := f.rereadErrs[instanceID]; err != nil {
+		for _, put := range f.puts {
+			if put.VMID == instanceID && put.Wrote != "" {
+				return nil, err
+			}
+		}
 	}
 
 	d, ok := f.disks[instanceID]
@@ -74,6 +88,23 @@ func (f *fakeDiskStorage) EnableDiskDiscard(_ context.Context, node, instanceID,
 
 	put.Wrote = strings.TrimSuffix(current, ",discard=ignore") + ",discard=on"
 	f.puts = append(f.puts, put)
+
+	if d := f.disks[instanceID]; d != nil {
+		for i := range d.Disks {
+			if d.Disks[i].Slot != slot {
+				continue
+			}
+
+			disk := &d.Disks[i]
+			disk.Value = put.Wrote
+
+			if f.stopped[instanceID] {
+				disk.LiveValue, disk.Discard, disk.PendingValue = put.Wrote, "on", ""
+			} else {
+				disk.PendingValue = put.Wrote
+			}
+		}
+	}
 
 	return put.Wrote, nil
 }
@@ -1016,4 +1047,112 @@ func TestArtifactsDisks_PoolLookupFailureDegradesPerDisk(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestArtifactsDisks_FixOnAStoppedVMIsAlreadyLive covers --fix on a VM that
+// is not running. PVE applies the change at once, so the re-read after the
+// write shows discard=on live. The disk reads as ok, and the guidance says
+// the change is live instead of asking for a cold restart. The power state
+// is never asked for; the disk re-read is what tells the two cases apart.
+func TestArtifactsDisks_FixOnAStoppedVMIsAlreadyLive(t *testing.T) {
+	t.Parallel()
+
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+	fx.storage.stopped = map[string]bool{"105": true}
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, true); err != nil {
+		t.Fatalf("artifactsDisks --fix: %v\n%s", err, out.String())
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if !data.Fixed || data.FixState != fixStateApplied || data.Verdict != verdictOK || data.Discard != "on" {
+		t.Errorf("fixed disk = %+v, want fixed, applied, ok, discard on", data)
+	}
+
+	steps := strings.Join(report.NextSteps, " ")
+	if !strings.Contains(steps, "already live on dev-artifacts (105)") {
+		t.Errorf("next steps %q do not say the change is live", steps)
+	}
+
+	if strings.Contains(steps, "cold stop and start") {
+		t.Errorf("next steps %q ask for a cold restart of a stopped VM", steps)
+	}
+
+	if !strings.Contains(steps, "fstrim") {
+		t.Errorf("next steps %q drop the trim instruction", steps)
+	}
+
+	if len(fx.compute.powerCalls) != 0 {
+		t.Errorf("power calls = %v, want none", fx.compute.powerCalls)
+	}
+}
+
+// TestArtifactsDisks_FixOnARunningVMIsQueued is the running-VM side of the
+// same re-read: the change is queued, the disk reads as pending-restart, and
+// the guidance asks for a cold stop and start.
+func TestArtifactsDisks_FixOnARunningVMIsQueued(t *testing.T) {
+	t.Parallel()
+
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, true); err != nil {
+		t.Fatalf("artifactsDisks --fix: %v\n%s", err, out.String())
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if data.FixState != fixStatePending || data.Verdict != verdictPendingRestart {
+		t.Errorf("fixed disk = %+v, want pending, pending-restart", data)
+	}
+
+	steps := strings.Join(report.NextSteps, " ")
+	if !strings.Contains(steps, "cold stop and start of dev-artifacts (105)") || strings.Contains(steps, "already live") {
+		t.Errorf("next steps %q, want a cold restart of dev-artifacts (105) only", steps)
+	}
+}
+
+// TestArtifactsDisks_FixThatCannotBeConfirmed covers a write that succeeded
+// but whose re-read failed. The command cannot tell a live change from a
+// queued one, so the disk stays pending-restart and the guidance asks for a
+// cold restart only if the VM is running.
+func TestArtifactsDisks_FixThatCannotBeConfirmed(t *testing.T) {
+	t.Parallel()
+
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+	fx.storage.rereadErrs = map[string]error{"105": errors.New("pve unreachable")}
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, true); err != nil {
+		t.Fatalf("artifactsDisks --fix: %v\n%s", err, out.String())
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if !data.Fixed || data.FixState != fixStateUnconfirmed || data.Verdict != verdictPendingRestart {
+		t.Errorf("fixed disk = %+v, want fixed, unconfirmed, pending-restart", data)
+	}
+
+	steps := strings.Join(report.NextSteps, " ")
+	if !strings.Contains(steps, "If dev-artifacts (105) is running, cold stop and start it") ||
+		!strings.Contains(steps, "pve unreachable") {
+		t.Errorf("next steps %q, want the conditional restart and the re-read error", steps)
+	}
 }
