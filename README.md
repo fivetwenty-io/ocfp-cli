@@ -180,6 +180,21 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `backup` | Backup configurations |
 | `restore` | Restore from backup |
 | `config migrate` | Move a legacy `~/.ocfp` layout into the XDG config/state/data directories |
+| `artifacts` | Manage the artifacts VM with the actions `lookup`, `status`, `disks`, `provision`, `ca`, `start`, `stop`, `restart`, and `destroy` |
+
+### Checking disk discard on PVE
+
+A managed data disk on thin storage needs `discard=on`, or its pool never gets freed blocks back. Artifacts VMs created before the fix carry their data disk without it, and an overfull thin pool gives every VM on it write errors. The `disks` action checks the artifacts VM and the bastion and prints a verdict for each root and data disk.
+
+```bash
+# Report each disk's pool type, discard state, and verdict; exits non-zero on drift
+ocfp artifacts disks --bloc production
+
+# Add discard=on to each data disk that lacks it, keeping every other option
+ocfp artifacts disks --bloc production --fix
+```
+
+The verdicts are `ok`, `missing-on-thin`, `thick-not-needed`, `unknown-pool`, and `pending-restart`. Root disks are shown for information only, and `--fix` never changes them. The fix writes the disk's config under the digest it just read, so it fails rather than overwrite a config that changed in between. It never stops, starts, or reboots a VM. The change takes effect only after a cold stop and start of the VM, because a guest reboot does not reload the disk config. The disk's data is untouched, and the guest still has to trim, which re-running `ocfp artifacts provision` sets up with fstrim.timer. `ocfp artifacts status` shows a one-line warning when a managed data disk is missing discard or has it only pending.
 
 ### State Management
 
