@@ -20,8 +20,14 @@ var diskBusPrefixes = []string{"scsi", "virtio", "sata", "ide"}
 type VMDiskSlot struct {
 	// Slot is the config key, such as scsi1.
 	Slot string
-	// Value is the slot's current config value.
+	// Value is the slot's value as GET .../config returns it, with any queued
+	// change already applied. A write builds on it, so queued changes to the
+	// slot's other options survive.
 	Value string
+	// LiveValue is the value the running VM uses, which the pending list
+	// reports. It equals Value unless a change to the slot is queued, and it
+	// is empty for a disk whose attachment is itself queued.
+	LiveValue string
 	// VolumeID is the storage:volume part of Value.
 	VolumeID string
 	// Pool is the storage pool named in VolumeID.
@@ -30,7 +36,7 @@ type VMDiskSlot struct {
 	PoolType string
 	// Provisioning says whether the pool hands freed blocks back.
 	Provisioning StorageProvisioning
-	// Discard is the current discard option, or empty when the slot has none.
+	// Discard is the discard option of LiveValue, or empty when it has none.
 	Discard string
 	// PendingValue is the value queued for the slot on the next cold start,
 	// or empty when nothing is queued.
@@ -109,9 +115,11 @@ func (d *VMDisks) DataDisk(volumeID, serial string) (VMDiskSlot, bool) {
 // change queued for it.
 //
 // The config read alone is not enough. On a running VM a disk change is
-// queued until the next cold start, and GET .../config shows only the current
-// value, so the queued one comes from GET .../pending. Every read error is
-// returned: an empty answer here would read as "nothing to fix".
+// queued until the next cold start, and GET .../config returns the config
+// with that queued change already applied. What the running VM uses comes
+// from GET .../pending, whose "value" is the live value and whose "pending"
+// is the queued one. Every read error is returned: an empty answer here would
+// read as "nothing to fix".
 func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDisks, error) {
 	vmid, err := strconv.Atoi(instanceID)
 	if err != nil {
@@ -143,7 +151,12 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 			continue
 		}
 
-		disk, isVolume, err := m.describeDisk(ctx, key, value)
+		live := value
+		if entry, queued := pending[key]; queued {
+			live = entry.Value
+		}
+
+		disk, isVolume, err := m.describeDisk(ctx, key, value, live)
 		if err != nil {
 			return nil, fmt.Errorf("VM %d %s: %w", vmid, key, err)
 		}
@@ -152,7 +165,7 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 			continue
 		}
 
-		disk.PendingValue = pending[key]
+		disk.PendingValue = pending[key].Pending
 		disks.Disks = append(disks.Disks, disk)
 	}
 
@@ -161,10 +174,11 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 	return disks, nil
 }
 
-// describeDisk builds the view of one slot. It reports false for a slot that
-// is not a storage volume: a cdrom (including the cloud-init drive) or a
-// device path passed through from the host.
-func (m *StorageManager) describeDisk(ctx context.Context, slot, value string) (VMDiskSlot, bool, error) {
+// describeDisk builds the view of one slot from its merged config value and
+// its live value. It reports false for a slot that is not a storage volume: a
+// cdrom (including the cloud-init drive) or a device path passed through from
+// the host.
+func (m *StorageManager) describeDisk(ctx context.Context, slot, value, live string) (VMDiskSlot, bool, error) {
 	parsed := parseDiskSlotValue(value)
 
 	if media, _ := parsed.Option("media"); media == "cdrom" {
@@ -181,11 +195,12 @@ func (m *StorageManager) describeDisk(ctx context.Context, slot, value string) (
 		return VMDiskSlot{}, false, err
 	}
 
-	discard, _ := parsed.Option(discardOption)
+	discard, _ := parseDiskSlotValue(live).Option(discardOption)
 
 	return VMDiskSlot{
 		Slot:         slot,
 		Value:        value,
+		LiveValue:    live,
 		VolumeID:     parsed.VolumeID,
 		Pool:         pool,
 		PoolType:     poolType,
@@ -194,13 +209,21 @@ func (m *StorageManager) describeDisk(ctx context.Context, slot, value string) (
 	}, true, nil
 }
 
+// pendingChange is one key's queued change from the pending list.
+type pendingChange struct {
+	// Value is the live value, or empty when the key itself is new.
+	Value string
+	// Pending is the queued value.
+	Pending string
+}
+
 // pendingValues reads GET /nodes/{node}/qemu/{vmid}/pending and returns the
-// queued value of each key that has one.
+// live and queued value of each key that has a change queued.
 //
-// The endpoint returns a list of {key, value, pending?, delete?}. A queued
-// change shows up as a "pending" field holding the new value; an entry without
-// one is just the current value repeated.
-func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid int) (map[string]string, error) {
+// The endpoint returns a list of {key, value, pending?, delete?}, where
+// "value" is the live value and "pending" the queued one. An entry without a
+// pending field is just the live value, which GET .../config already shows.
+func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid int) (map[string]pendingChange, error) {
 	resp, err := m.client.pveClient.GetCtx(ctx, buildPVEPathf(node, "qemu/%d/pending", vmid), nil)
 	if err != nil {
 		return nil, fmt.Errorf("read VM %d pending changes: %w", vmid, err)
@@ -211,7 +234,7 @@ func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid in
 		return nil, fmt.Errorf("%w: VM %d pending changes: %T", ErrUnexpectedResponseType, vmid, resp)
 	}
 
-	pending := make(map[string]string)
+	pending := make(map[string]pendingChange)
 
 	for _, raw := range entries {
 		entry, isMap := raw.(map[string]interface{})
@@ -220,13 +243,14 @@ func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid in
 		}
 
 		key, _ := entry["key"].(string)
-		value, hasPending := entry["pending"].(string)
+		queued, hasPending := entry["pending"].(string)
 
-		if key == "" || !hasPending || strings.TrimSpace(value) == "" {
+		if key == "" || !hasPending || strings.TrimSpace(queued) == "" {
 			continue
 		}
 
-		pending[key] = value
+		live, _ := entry["value"].(string)
+		pending[key] = pendingChange{Value: live, Pending: queued}
 	}
 
 	return pending, nil
