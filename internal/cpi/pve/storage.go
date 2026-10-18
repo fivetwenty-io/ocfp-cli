@@ -700,6 +700,165 @@ func reattachValue(volumeID, options string) string {
 	return volumeID + "," + options
 }
 
+// StorageProvisioning says whether a disk's backing storage hands freed blocks
+// back to its pool when the disk carries discard=on.
+type StorageProvisioning string
+
+// Storage provisioning classes. Only thin storage benefits from discard=on.
+const (
+	ProvisioningThin    StorageProvisioning = "thin"
+	ProvisioningThick   StorageProvisioning = "thick"
+	ProvisioningUnknown StorageProvisioning = "unknown"
+)
+
+// discardOption is the disk option that lets the guest's TRIM reach the pool.
+const discardOption = "discard"
+
+// discardOn is the value of discardOption that passes TRIM through.
+const discardOn = "on"
+
+// diskSlotValue is a disk slot's config value split into the volume id and
+// the options that follow it. The options keep the order PVE wrote them in,
+// so a value rebuilt from them changes only what we changed.
+type diskSlotValue struct {
+	VolumeID string
+	Options  []string
+}
+
+// parseDiskSlotValue splits a slot value such as
+// "local-lvm:vm-100-data,size=500G,serial=ocfpartifacts" into its volume id
+// and ordered options. It does no validation; discardOnValue refuses values
+// that cannot be rewritten safely.
+func parseDiskSlotValue(value string) diskSlotValue {
+	if value == "" {
+		return diskSlotValue{}
+	}
+
+	parts := strings.Split(value, ",")
+
+	parsed := diskSlotValue{VolumeID: parts[0]}
+	if len(parts) > 1 {
+		parsed.Options = parts[1:]
+	}
+
+	return parsed
+}
+
+// String rebuilds the slot value from the volume id and options.
+func (v diskSlotValue) String() string {
+	return reattachValue(v.VolumeID, strings.Join(v.Options, ","))
+}
+
+// Option returns the value of the option with exactly the given key. A flag
+// option with no "=" reports present with an empty value. The key is compared
+// whole, so serial=discard or xdiscard=on never reads as discard.
+func (v diskSlotValue) Option(key string) (string, bool) {
+	for _, opt := range v.Options {
+		k, val, _ := strings.Cut(opt, "=")
+		if k == key {
+			return val, true
+		}
+	}
+
+	return "", false
+}
+
+// Pool returns the storage pool named before the colon in the volume id, or
+// empty for a value that names no pool (a cdrom "none", a raw device path).
+func (v diskSlotValue) Pool() string {
+	pool, _, found := strings.Cut(v.VolumeID, ":")
+	if !found {
+		return ""
+	}
+
+	return pool
+}
+
+// volumeFormatOf returns the disk format of a slot's volume. File-backed
+// storage names its volumes with the format as the extension; a format=
+// option is the fallback. Block storage carries neither, which returns empty.
+func volumeFormatOf(v diskSlotValue) string {
+	for _, ext := range []string{"qcow2", "raw", "vmdk"} {
+		if strings.HasSuffix(v.VolumeID, "."+ext) {
+			return ext
+		}
+	}
+
+	format, _ := v.Option("format")
+
+	return format
+}
+
+// classifyStorageProvisioning says whether a volume of the given format on a
+// pool of the given plugin type is thin. lvmthin, zfspool, and rbd are thin.
+// Plain lvm preallocates, so discard does nothing there. On file-backed
+// storage a qcow2 file shrinks when the guest trims, while a raw file may or
+// may not be sparse, so it is reported as unknown rather than guessed at.
+func classifyStorageProvisioning(poolType, format string) StorageProvisioning {
+	poolType = strings.ToLower(poolType)
+
+	switch poolType {
+	case "lvmthin", "zfspool", "rbd":
+		return ProvisioningThin
+	case "lvm":
+		return ProvisioningThick
+	}
+
+	if _, fileBacked := fileBackedStorageTypes[poolType]; fileBacked && strings.EqualFold(format, fileBackedVolumeFormat) {
+		return ProvisioningThin
+	}
+
+	return ProvisioningUnknown
+}
+
+// discardOnValue returns the slot value with discard=on set and every other
+// option kept exactly, in order. A missing discard option is appended and any
+// other discard value is replaced in place. A value that already carries
+// discard=on comes back unchanged.
+//
+// PVE rewrites the whole slot from the value we send, so a value we cannot
+// parse with confidence is refused rather than rewritten: an empty option, a
+// repeated discard option, or a volume id that does not name a pool and a
+// volume.
+func discardOnValue(value string) (string, error) {
+	parsed := parseDiskSlotValue(value)
+
+	pool, volume, found := strings.Cut(parsed.VolumeID, ":")
+	if !found || pool == "" || volume == "" {
+		return "", fmt.Errorf("%w: %q does not start with a storage:volume id", ErrInvalidDiskSlotValue, value)
+	}
+
+	discardAt := -1
+
+	for i, opt := range parsed.Options {
+		if opt == "" {
+			return "", fmt.Errorf("%w: %q has an empty option", ErrInvalidDiskSlotValue, value)
+		}
+
+		key, _, _ := strings.Cut(opt, "=")
+		if key != discardOption {
+			continue
+		}
+
+		if discardAt >= 0 {
+			return "", fmt.Errorf("%w: %q sets discard more than once", ErrInvalidDiskSlotValue, value)
+		}
+
+		discardAt = i
+	}
+
+	want := discardOption + "=" + discardOn
+
+	options := append([]string(nil), parsed.Options...)
+	if discardAt >= 0 {
+		options[discardAt] = want
+	} else {
+		options = append(options, want)
+	}
+
+	return diskSlotValue{VolumeID: parsed.VolumeID, Options: options}.String(), nil
+}
+
 // restoreDiskOptions re-applies the options a reassign dropped.
 //
 // It reads the target's config rather than assuming the volume's new name,
