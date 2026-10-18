@@ -47,8 +47,11 @@ const rootDiskSlot = "scsi0"
 
 // vmDiskReader is the optional disk view a provider's storage manager offers.
 // PVE implements it; the cpi.StorageManager interface stays unchanged.
+// VMDisks lists a VM's disks, and ClassifyDisk looks up the pool type of one
+// of them, so only the root and data disks cost a lookup.
 type vmDiskReader interface {
 	VMDisks(ctx context.Context, instanceID string) (*pve.VMDisks, error)
+	ClassifyDisk(ctx context.Context, disk pve.VMDiskSlot) (pve.VMDiskSlot, error)
 }
 
 // vmDiskDiscardWriter is the optional write a provider's storage manager
@@ -283,8 +286,17 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 			continue
 		}
 
+		// A root disk is informational, so a pool type that cannot be read
+		// shows as unknown-pool with the error and does not fail the check.
 		if root, found := disks.Slot(rootDiskSlot); found {
-			report.Disks = append(report.Disks, artifactsDiskRowFor(vm, root, diskRoleRoot, disks.Digest))
+			root, err := reader.ClassifyDisk(ctx, root)
+
+			row := artifactsDiskRowFor(vm, root, diskRoleRoot, disks.Digest)
+			if err != nil {
+				row.Error = err.Error()
+			}
+
+			report.Disks = append(report.Disks, row)
 		}
 
 		// A data disk that cannot be identified fails the check: a stale or
@@ -300,7 +312,16 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 			continue
 		}
 
+		// The data disk's verdict is the point of the check, so a pool type
+		// that cannot be read fails it.
+		data, err = reader.ClassifyDisk(ctx, data)
+
 		row := artifactsDiskRowFor(vm, data, diskRoleData, disks.Digest)
+		if err != nil {
+			row.Error = err.Error()
+			report.Errors = append(report.Errors, fmt.Sprintf("%s (%s) %s: %v", vm.Name, vm.ID, data.Slot, err))
+		}
+
 		if row.Verdict == verdictMissingOnThin {
 			report.Drift++
 		}

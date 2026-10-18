@@ -27,11 +27,11 @@ func legacyArtifactsConfig() map[string]interface{} {
 	}
 }
 
-// TestVMDisks_ReadsSlotsPoolTypesAndDigest covers the read the drift check
-// is built on: every attached disk with its pool, the pool's plugin type, its
-// provisioning class, and the discard option, plus the config digest the
-// write path sends back.
-func TestVMDisks_ReadsSlotsPoolTypesAndDigest(t *testing.T) {
+// TestVMDisks_ReadsSlotsAndDigest covers the read the drift check is built
+// on: every attached disk with its pool and discard option, plus the config
+// digest the write path sends back. The read asks for no pool type; that is
+// ClassifyDisk's job, done only for the disks the caller cares about.
+func TestVMDisks_ReadsSlotsAndDigest(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakePVEClient{getResponses: map[string]interface{}{
@@ -40,9 +40,16 @@ func TestVMDisks_ReadsSlotsPoolTypesAndDigest(t *testing.T) {
 		"/storage/local-lvm-data":      map[string]interface{}{"type": "lvmthin"},
 	}}
 
-	disks, err := newDiskTestManager(fake).VMDisks(context.Background(), "105")
+	manager := newDiskTestManager(fake)
+
+	disks, err := manager.VMDisks(context.Background(), "105")
 	if err != nil {
 		t.Fatalf("VMDisks: %v", err)
+	}
+
+	// config and pending only.
+	if fake.getCalls != 2 {
+		t.Errorf("GET calls = %d, want 2: VMDisks must not look up pool types", fake.getCalls)
 	}
 
 	if disks.Digest != "3f1c0d9e" || disks.Node != "pve1" || disks.VMID != 105 {
@@ -55,12 +62,17 @@ func TestVMDisks_ReadsSlotsPoolTypesAndDigest(t *testing.T) {
 
 	root, data := disks.Disks[0], disks.Disks[1]
 
-	if root.Slot != "scsi0" || root.Discard != "on" || root.Provisioning != ProvisioningThin {
-		t.Errorf("root = %+v, want scsi0 thin with discard on", root)
+	if root.Slot != "scsi0" || root.Discard != "on" || root.PoolType != "" {
+		t.Errorf("root = %+v, want scsi0 with discard on and no pool type yet", root)
 	}
 
 	if data.Slot != "scsi1" || data.VolumeID != "local-lvm-data:vm-105-data" || data.Pool != "local-lvm-data" {
 		t.Errorf("data = %+v, want scsi1 local-lvm-data:vm-105-data", data)
+	}
+
+	data, err = manager.ClassifyDisk(context.Background(), data)
+	if err != nil {
+		t.Fatalf("ClassifyDisk: %v", err)
 	}
 
 	if data.PoolType != "lvmthin" || data.Provisioning != ProvisioningThin {
@@ -216,9 +228,9 @@ func TestVMDisks_ReportsAPendingDelete(t *testing.T) {
 	}
 }
 
-// TestVMDisks_ReadsEachPoolTypeOnce makes sure a VM with several disks on the
-// same pool asks for the pool's type once.
-func TestVMDisks_ReadsEachPoolTypeOnce(t *testing.T) {
+// TestClassifyDisk_ReadsEachPoolTypeOnce makes sure classifying several
+// disks on the same pool asks for the pool's type once.
+func TestClassifyDisk_ReadsEachPoolTypeOnce(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakePVEClient{getResponses: map[string]interface{}{
@@ -227,8 +239,17 @@ func TestVMDisks_ReadsEachPoolTypeOnce(t *testing.T) {
 		"/storage/local-lvm-data":      map[string]interface{}{"type": "lvmthin"},
 	}}
 
-	if _, err := newDiskTestManager(fake).VMDisks(context.Background(), "105"); err != nil {
+	manager := newDiskTestManager(fake)
+
+	disks, err := manager.VMDisks(context.Background(), "105")
+	if err != nil {
 		t.Fatalf("VMDisks: %v", err)
+	}
+
+	for _, disk := range disks.Disks {
+		if _, err := manager.ClassifyDisk(context.Background(), disk); err != nil {
+			t.Fatalf("ClassifyDisk(%s): %v", disk.Slot, err)
+		}
 	}
 
 	// config, pending, and one storage lookup.
@@ -237,9 +258,27 @@ func TestVMDisks_ReadsEachPoolTypeOnce(t *testing.T) {
 	}
 }
 
-// TestVMDisks_ClassifiesFileBackedVolumesByFormat checks a qcow2 file on NFS
-// reads as thin and a raw file on a dir pool as unknown.
-func TestVMDisks_ClassifiesFileBackedVolumesByFormat(t *testing.T) {
+// TestClassifyDisk_ReturnsALookupFailure makes sure a pool whose type cannot
+// be read leaves the disk unknown and hands the error back, so the caller
+// decides whether that disk matters.
+func TestClassifyDisk_ReturnsALookupFailure(t *testing.T) {
+	t.Parallel()
+
+	disk := VMDiskSlot{Slot: "scsi1", Value: "gone:vm-105-data,size=500G", VolumeID: "gone:vm-105-data", Pool: "gone"}
+
+	got, err := newDiskTestManager(&fakePVEClient{}).ClassifyDisk(context.Background(), disk)
+	if !errors.Is(err, errFakeNoCannedResponse) {
+		t.Errorf("error = %v, want the lookup failure", err)
+	}
+
+	if got.Provisioning != ProvisioningUnknown || got.Slot != "scsi1" || got.Value != disk.Value {
+		t.Errorf("disk = %+v, want the same disk with unknown provisioning", got)
+	}
+}
+
+// TestClassifyDisk_ClassifiesFileBackedVolumesByFormat checks a qcow2 file on
+// NFS reads as thin and a raw file on a dir pool as unknown.
+func TestClassifyDisk_ClassifiesFileBackedVolumesByFormat(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakePVEClient{getResponses: map[string]interface{}{
@@ -253,13 +292,25 @@ func TestVMDisks_ClassifiesFileBackedVolumesByFormat(t *testing.T) {
 		"/storage/nfs-a":               map[string]interface{}{"type": "nfs"},
 	}}
 
-	disks, err := newDiskTestManager(fake).VMDisks(context.Background(), "105")
+	manager := newDiskTestManager(fake)
+
+	disks, err := manager.VMDisks(context.Background(), "105")
 	if err != nil {
 		t.Fatalf("VMDisks: %v", err)
 	}
 
 	root, _ := disks.Slot("scsi0")
 	data, _ := disks.Slot("scsi1")
+
+	root, err = manager.ClassifyDisk(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ClassifyDisk(scsi0): %v", err)
+	}
+
+	data, err = manager.ClassifyDisk(context.Background(), data)
+	if err != nil {
+		t.Fatalf("ClassifyDisk(scsi1): %v", err)
+	}
 
 	if root.Provisioning != ProvisioningUnknown {
 		t.Errorf("raw on dir = %q, want unknown", root.Provisioning)
@@ -284,7 +335,6 @@ func TestVMDisks_ReturnsReadErrors(t *testing.T) {
 	for _, missing := range []string{
 		"/nodes/pve1/qemu/105/config",
 		"/nodes/pve1/qemu/105/pending",
-		"/storage/local-lvm-data",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			t.Parallel()

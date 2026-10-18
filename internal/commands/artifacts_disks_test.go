@@ -22,10 +22,12 @@ import (
 type fakeDiskStorage struct {
 	cpi.StorageManager
 
-	disks    map[string]*pve.VMDisks
-	readErrs map[string]error
-	putErrs  map[string]error
-	puts     []fakeDiskPut
+	disks      map[string]*pve.VMDisks
+	readErrs   map[string]error
+	poolErrs   map[string]error
+	putErrs    map[string]error
+	puts       []fakeDiskPut
+	classified []string
 }
 
 // fakeDiskPut records one EnableDiskDiscard call.
@@ -44,6 +46,21 @@ func (f *fakeDiskStorage) VMDisks(_ context.Context, instanceID string) (*pve.VM
 	}
 
 	return d, nil
+}
+
+// ClassifyDisk returns the disk as the fixture built it, pool type included,
+// unless its pool is in poolErrs. Each call is recorded as "slot:pool".
+func (f *fakeDiskStorage) ClassifyDisk(_ context.Context, disk pve.VMDiskSlot) (pve.VMDiskSlot, error) {
+	f.classified = append(f.classified, disk.Slot+":"+disk.Pool)
+
+	if err := f.poolErrs[disk.Pool]; err != nil {
+		disk.PoolType = ""
+		disk.Provisioning = pve.ProvisioningUnknown
+
+		return disk, err
+	}
+
+	return disk, nil
 }
 
 func (f *fakeDiskStorage) EnableDiskDiscard(_ context.Context, instanceID, slot, current, digest string) (string, error) {
@@ -905,4 +922,95 @@ func TestArtifactsDisks_UnidentifiedDataDiskFailsTheCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestArtifactsDisks_PoolLookupFailureDegradesPerDisk covers a pool whose
+// type cannot be read. On a root disk it is shown as unknown-pool with the
+// error and does not fail the check. On the data disk it fails the check,
+// because that disk's verdict is the point of the command. Disks that are
+// neither root nor data are never classified at all.
+func TestArtifactsDisks_PoolLookupFailureDegradesPerDisk(t *testing.T) {
+	t.Parallel()
+
+	errLookup := errors.New("storage lookup refused")
+
+	correct := func(d map[string]*pve.VMDisks) {
+		d["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+	}
+
+	t.Run("root pool", func(t *testing.T) {
+		t.Parallel()
+
+		disks := legacyBlocDisks()
+		correct(disks)
+		disks["105"].Disks[0] = thinDisk("scsi0", "rootpool:vm-105-disk-0,discard=on,size=32G", "on", "")
+
+		fx := newDiskTestFixture(t, disks)
+		fx.storage.poolErrs = map[string]error{"rootpool": errLookup}
+
+		var out bytes.Buffer
+
+		if err := artifactsDisks(fx.ac, &out, false, true); err != nil {
+			t.Fatalf("error = %v, want none: a root disk's pool is informational\n%s", err, out.String())
+		}
+
+		var report artifactsDiskReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatalf("output is not JSON: %v", err)
+		}
+
+		root := report.Disks[0]
+		if root.Slot != "scsi0" || root.Verdict != verdictUnknownPool || !strings.Contains(root.Error, "storage lookup refused") {
+			t.Errorf("root = %+v, want unknown-pool with the lookup error", root)
+		}
+	})
+
+	t.Run("data pool", func(t *testing.T) {
+		t.Parallel()
+
+		disks := legacyBlocDisks()
+		correct(disks)
+		disks["102"].Disks[1] = thinDisk("scsi1", "datapool:vm-102-data,discard=on,serial=ocfpdata,size=64G", "on", "")
+
+		fx := newDiskTestFixture(t, disks)
+		fx.storage.poolErrs = map[string]error{"datapool": errLookup}
+
+		var out bytes.Buffer
+
+		err := artifactsDisks(fx.ac, &out, true, false)
+		if !errors.Is(err, ErrArtifactsDiskCheckFailed) {
+			t.Fatalf("error = %v, want ErrArtifactsDiskCheckFailed\n%s", err, out.String())
+		}
+
+		if !strings.Contains(out.String(), "storage lookup refused") || !strings.Contains(out.String(), "unknown-pool") {
+			t.Errorf("output does not show the data disk as unknown-pool with the error:\n%s", out.String())
+		}
+
+		if len(fx.storage.puts) != 0 {
+			t.Errorf("writes = %+v, want none", fx.storage.puts)
+		}
+	})
+
+	t.Run("unmanaged disk", func(t *testing.T) {
+		t.Parallel()
+
+		disks := legacyBlocDisks()
+		correct(disks)
+		disks["105"].Disks[2] = thinDisk("scsi2", "brokenpool:vm-105-scratch,size=8G", "", "")
+
+		fx := newDiskTestFixture(t, disks)
+		fx.storage.poolErrs = map[string]error{"brokenpool": errLookup}
+
+		var out bytes.Buffer
+
+		if err := artifactsDisks(fx.ac, &out, false, false); err != nil {
+			t.Fatalf("error = %v, want none: scsi2 is not managed\n%s", err, out.String())
+		}
+
+		for _, c := range fx.storage.classified {
+			if strings.HasPrefix(c, "scsi2:") {
+				t.Errorf("classified %v, want scsi2 left alone", fx.storage.classified)
+			}
+		}
+	})
 }

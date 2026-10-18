@@ -33,9 +33,11 @@ type VMDiskSlot struct {
 	VolumeID string
 	// Pool is the storage pool named in VolumeID.
 	Pool string
-	// PoolType is the pool's plugin type, such as lvmthin or nfs.
+	// PoolType is the pool's plugin type, such as lvmthin or nfs. It is empty
+	// until ClassifyDisk fills it in.
 	PoolType string
-	// Provisioning says whether the pool hands freed blocks back.
+	// Provisioning says whether the pool hands freed blocks back. It is empty
+	// until ClassifyDisk fills it in.
 	Provisioning StorageProvisioning
 	// Discard is the discard option of LiveValue, or empty when it has none.
 	Discard string
@@ -116,8 +118,9 @@ func (d *VMDisks) DataDisk(volumeID, serial string) (VMDiskSlot, bool) {
 	return VMDiskSlot{}, false
 }
 
-// VMDisks reads a VM's attached disks with each disk's pool type and any
-// change queued for it.
+// VMDisks reads a VM's attached disks with any change queued for each. It
+// does not look up pool types; ClassifyDisk does that for the disks that
+// matter.
 //
 // The config read alone is not enough. On a running VM a disk change is
 // queued until the next cold start, and GET .../config returns the config
@@ -161,11 +164,7 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 			live = entry.Value
 		}
 
-		disk, isVolume, err := m.describeDisk(ctx, key, value, live)
-		if err != nil {
-			return nil, fmt.Errorf("VM %d %s: %w", vmid, key, err)
-		}
-
+		disk, isVolume := describeDisk(key, value, live)
 		if !isVolume {
 			continue
 		}
@@ -182,11 +181,7 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 			continue
 		}
 
-		disk, isVolume, err := m.describeDisk(ctx, key, entry.Value, entry.Value)
-		if err != nil {
-			return nil, fmt.Errorf("VM %d %s: %w", vmid, key, err)
-		}
-
+		disk, isVolume := describeDisk(key, entry.Value, entry.Value)
 		if !isVolume {
 			continue
 		}
@@ -204,35 +199,28 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 // its live value. It reports false for a slot that is not a storage volume: a
 // cdrom (including the cloud-init drive) or a device path passed through from
 // the host.
-func (m *StorageManager) describeDisk(ctx context.Context, slot, value, live string) (VMDiskSlot, bool, error) {
+func describeDisk(slot, value, live string) (VMDiskSlot, bool) {
 	parsed := parseDiskSlotValue(value)
 
 	if media, _ := parsed.Option("media"); media == "cdrom" {
-		return VMDiskSlot{}, false, nil
+		return VMDiskSlot{}, false
 	}
 
 	pool := parsed.Pool()
 	if pool == "" {
-		return VMDiskSlot{}, false, nil
-	}
-
-	poolType, err := m.storageType(ctx, pool)
-	if err != nil {
-		return VMDiskSlot{}, false, err
+		return VMDiskSlot{}, false
 	}
 
 	discard, _ := parseDiskSlotValue(live).Option(discardOption)
 
 	return VMDiskSlot{
-		Slot:         slot,
-		Value:        value,
-		LiveValue:    live,
-		VolumeID:     parsed.VolumeID,
-		Pool:         pool,
-		PoolType:     poolType,
-		Provisioning: classifyStorageProvisioning(poolType, volumeFormatOf(parsed)),
-		Discard:      discard,
-	}, true, nil
+		Slot:      slot,
+		Value:     value,
+		LiveValue: live,
+		VolumeID:  parsed.VolumeID,
+		Pool:      pool,
+		Discard:   discard,
+	}, true
 }
 
 // pendingChange is one key's queued change from the pending list.
@@ -351,4 +339,25 @@ func pendingDeleteFlag(raw interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// ClassifyDisk returns the disk with its pool's plugin type and provisioning
+// class filled in. Each pool is looked up once per StorageManager.
+//
+// VMDisks leaves this out so a caller pays for, and can fail on, only the
+// disks it cares about. A failed lookup returns the disk as unknown together
+// with the error, and the caller decides whether that disk matters.
+func (m *StorageManager) ClassifyDisk(ctx context.Context, disk VMDiskSlot) (VMDiskSlot, error) {
+	poolType, err := m.storageType(ctx, disk.Pool)
+	if err != nil {
+		disk.PoolType = ""
+		disk.Provisioning = ProvisioningUnknown
+
+		return disk, fmt.Errorf("read type of pool %s: %w", disk.Pool, err)
+	}
+
+	disk.PoolType = poolType
+	disk.Provisioning = classifyStorageProvisioning(poolType, volumeFormatOf(parseDiskSlotValue(disk.Value)))
+
+	return disk, nil
 }
