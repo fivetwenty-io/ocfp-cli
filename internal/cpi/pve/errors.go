@@ -53,6 +53,7 @@ var (
 	ErrVolumeNotFoundOnVM       = errors.New("pve: volume not found on VM")
 	ErrUnexpectedTaskResponse   = errors.New("pve: unrecognized task response shape")
 	ErrArchiveStorageUnset      = errors.New("pve: an archive needs a backup-capable storage")
+	ErrInvalidDiskSlotValue     = errors.New("pve: disk slot value cannot be rewritten safely")
 
 	// Parse errors.
 	ErrInvalidVMID            = errors.New("pve: invalid VMID")
