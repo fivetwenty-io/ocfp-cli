@@ -54,6 +54,7 @@ var (
 	ErrUnexpectedTaskResponse   = errors.New("pve: unrecognized task response shape")
 	ErrArchiveStorageUnset      = errors.New("pve: an archive needs a backup-capable storage")
 	ErrInvalidDiskSlotValue     = errors.New("pve: disk slot value cannot be rewritten safely")
+	ErrConfigDigestMissing      = errors.New("pve: refusing a config write without the digest it was read under")
 
 	// Parse errors.
 	ErrInvalidVMID            = errors.New("pve: invalid VMID")
