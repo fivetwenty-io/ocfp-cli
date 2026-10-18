@@ -33,6 +33,7 @@ const (
 	verdictThickNotNeeded = "thick-not-needed"
 	verdictUnknownPool    = "unknown-pool"
 	verdictPendingRestart = "pending-restart"
+	verdictPendingDelete  = "pending-delete"
 )
 
 // Disk roles. Root disks are shown for information and never fail the check.
@@ -338,8 +339,14 @@ func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role, digest str
 
 // diskDiscardVerdict says whether a disk's pool gets freed blocks back.
 // discard=on matters only on thin storage. A change queued on a running VM
-// counts as pending-restart, because it does nothing until a cold start.
+// counts as pending-restart, because it does nothing until a cold start. A
+// slot whose removal is queued is pending-delete whatever its storage, and is
+// never fixed: writing to a slot on its way out would fight that change.
 func diskDiscardVerdict(disk pve.VMDiskSlot) string {
+	if disk.PendingDelete {
+		return verdictPendingDelete
+	}
+
 	switch disk.Provisioning {
 	case pve.ProvisioningThin:
 		switch {

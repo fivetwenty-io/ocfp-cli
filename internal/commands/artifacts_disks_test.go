@@ -785,3 +785,46 @@ func TestArtifactsDisks_ReRunAfterAFixReportsPendingRestart(t *testing.T) {
 		t.Errorf("a check wrote %d disk(s)", len(fx.storage.puts))
 	}
 }
+
+// TestArtifactsDisks_PendingDeleteIsReportedAndNeverFixed covers a managed
+// data disk whose removal is queued. It gets its own verdict, is shown in the
+// report, and --fix leaves it alone rather than writing to a slot that is on
+// its way out. It is not discard drift, so the command exits 0.
+func TestArtifactsDisks_PendingDeleteIsReportedAndNeverFixed(t *testing.T) {
+	t.Parallel()
+
+	disks := legacyBlocDisks()
+	disks["105"].Disks[1].PendingDelete = true
+
+	fx := newDiskTestFixture(t, disks)
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, true, true); err != nil {
+		t.Fatalf("artifactsDisks --fix = %v, want exit 0\n%s", err, out.String())
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if data.Slot != "scsi1" || data.Role != diskRoleData || data.Verdict != verdictPendingDelete || data.Fixed {
+		t.Errorf("data disk = %+v, want scsi1 data pending-delete, not fixed", data)
+	}
+
+	if len(fx.storage.puts) != 0 || report.Drift != 0 {
+		t.Errorf("writes %+v drift %d, want none and 0", fx.storage.puts, report.Drift)
+	}
+
+	out.Reset()
+
+	if err := artifactsDisks(fx.ac, &out, false, false); err != nil {
+		t.Fatalf("artifactsDisks = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "pending-delete") {
+		t.Errorf("table lacks the pending-delete verdict:\n%s", out.String())
+	}
+}
