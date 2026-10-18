@@ -58,6 +58,7 @@ blobstore for BOSH and Cloud Foundry deployments.
 Actions:
   lookup    Print the resolved VM ID, IP, endpoint, and credentials.
   status    Show VM power state and endpoint metadata.
+  disks     Check that managed data disks on thin storage carry discard=on.
   provision Install/configure RustFS on the VM and create buckets.
   ca        Print the bloc's internal CA certificate (internal-ca TLS mode).
   start     Power on the VM.
@@ -66,9 +67,21 @@ Actions:
   destroy   Delete the VM (requires --yes).
 
 All actions require --bloc. The ca action reads the CA already persisted at
-secret/ocfp/{bloc}/ca and never mints one unless --generate is passed.`,
+secret/ocfp/{bloc}/ca and never mints one unless --generate is passed.
+
+The disks action reads the artifacts VM and the bastion on PVE and prints
+one row per root and data disk with its pool, pool type, discard state, and
+a verdict (ok, missing-on-thin, thick-not-needed, unknown-pool, or
+pending-restart). It exits non-zero when a managed data disk on thin storage
+lacks discard=on. With --fix it adds discard=on to those data disks and
+keeps every other disk option. It never stops, starts, or reboots a VM, so
+the change takes effect only after a cold stop and start of the VM, and a
+guest reboot is not enough. The disk's data is untouched, and the guest
+still has to trim, which ocfp artifacts provision sets up with fstrim.timer.`,
 		Example: `  ocfp artifacts lookup --bloc dev
   ocfp artifacts status --bloc dev --json
+  ocfp artifacts disks --bloc dev
+  ocfp artifacts disks --bloc dev --fix
   ocfp artifacts provision --bloc dev
   ocfp artifacts ca --bloc dev > ca.pem
   ocfp artifacts ca --bloc dev --fingerprint
