@@ -165,6 +165,57 @@ func TestVMDisks_KeepsOtherQueuedChangesInTheValue(t *testing.T) {
 	}
 }
 
+// TestVMDisks_ReportsAPendingDelete covers a disk whose removal is queued on
+// a running VM. GET .../config already leaves the slot out, so the disk is
+// known only from the pending list, which still carries its live value and a
+// non-zero "delete". A delete flag of 0 is no delete, and a queued delete of a
+// key that is not a disk is ignored.
+func TestVMDisks_ReportsAPendingDelete(t *testing.T) {
+	t.Parallel()
+
+	live := "local-lvm-data:vm-105-data,size=500G"
+
+	config := legacyArtifactsConfig()
+	delete(config, "scsi1")
+
+	fake := &fakePVEClient{getResponses: map[string]interface{}{
+		"/nodes/pve1/qemu/105/config": config,
+		"/nodes/pve1/qemu/105/pending": []interface{}{
+			map[string]interface{}{"key": "scsi0", "value": "local-lvm-data:vm-105-disk-0,discard=on,size=32G,ssd=1", "delete": float64(0)},
+			map[string]interface{}{"key": "scsi1", "value": live, "delete": float64(1)},
+			map[string]interface{}{"key": "net1", "value": "virtio=AA:BB,bridge=vmbr1", "delete": float64(2)},
+		},
+		"/storage/local-lvm-data": map[string]interface{}{"type": "lvmthin"},
+	}}
+
+	disks, err := newDiskTestManager(fake).VMDisks(context.Background(), "105")
+	if err != nil {
+		t.Fatalf("VMDisks: %v", err)
+	}
+
+	data, ok := disks.Slot("scsi1")
+	if !ok {
+		t.Fatalf("scsi1 missing from %+v, want it listed with its queued delete", disks.Disks)
+	}
+
+	if !data.PendingDelete || data.LiveValue != live || data.VolumeID != "local-lvm-data:vm-105-data" {
+		t.Errorf("data = %+v, want a pending delete of %q", data, live)
+	}
+
+	if found, _ := disks.DataDisk("local-lvm-data:vm-105-data", ""); found.Slot != "scsi1" {
+		t.Errorf("DataDisk by volid = %q, want scsi1", found.Slot)
+	}
+
+	root, _ := disks.Slot("scsi0")
+	if root.PendingDelete {
+		t.Error("scsi0 reads as a pending delete with delete=0")
+	}
+
+	if len(disks.Disks) != 2 {
+		t.Errorf("disks = %+v, want scsi0 and scsi1 only", disks.Disks)
+	}
+}
+
 // TestVMDisks_ReadsEachPoolTypeOnce makes sure a VM with several disks on the
 // same pool asks for the pool's type once.
 func TestVMDisks_ReadsEachPoolTypeOnce(t *testing.T) {

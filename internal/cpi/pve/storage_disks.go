@@ -2,6 +2,7 @@ package pve
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -41,6 +42,10 @@ type VMDiskSlot struct {
 	// PendingValue is the value queued for the slot on the next cold start,
 	// or empty when nothing is queued.
 	PendingValue string
+	// PendingDelete reports that the slot's removal is queued. GET .../config
+	// already leaves such a slot out, so Value and LiveValue both hold the
+	// live value from the pending list.
+	PendingDelete bool
 }
 
 // DiscardOn reports whether the slot's current value carries discard=on.
@@ -166,6 +171,27 @@ func (m *StorageManager) VMDisks(ctx context.Context, instanceID string) (*VMDis
 		}
 
 		disk.PendingValue = pending[key].Pending
+		disk.PendingDelete = pending[key].Delete
+		disks.Disks = append(disks.Disks, disk)
+	}
+
+	// A slot whose removal is queued is already gone from the merged config,
+	// so the pending list is the only place it shows up.
+	for key, entry := range pending {
+		if _, inConfig := config[key]; inConfig || !entry.Delete || !hasAnyPrefix(key, diskBusPrefixes) {
+			continue
+		}
+
+		disk, isVolume, err := m.describeDisk(ctx, key, entry.Value, entry.Value)
+		if err != nil {
+			return nil, fmt.Errorf("VM %d %s: %w", vmid, key, err)
+		}
+
+		if !isVolume {
+			continue
+		}
+
+		disk.PendingDelete = true
 		disks.Disks = append(disks.Disks, disk)
 	}
 
@@ -213,16 +239,19 @@ func (m *StorageManager) describeDisk(ctx context.Context, slot, value, live str
 type pendingChange struct {
 	// Value is the live value, or empty when the key itself is new.
 	Value string
-	// Pending is the queued value.
+	// Pending is the queued value, or empty for a queued delete.
 	Pending string
+	// Delete reports that the key's removal is queued.
+	Delete bool
 }
 
 // pendingValues reads GET /nodes/{node}/qemu/{vmid}/pending and returns the
-// live and queued value of each key that has a change queued.
+// live and queued value of each key that has a change or a delete queued.
 //
 // The endpoint returns a list of {key, value, pending?, delete?}, where
-// "value" is the live value and "pending" the queued one. An entry without a
-// pending field is just the live value, which GET .../config already shows.
+// "value" is the live value and "pending" the queued one, and a "delete" that
+// is present and not 0 marks a queued removal (2 is a forced one). An entry
+// with neither is just the live value, which GET .../config already shows.
 func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid int) (map[string]pendingChange, error) {
 	resp, err := m.client.pveClient.GetCtx(ctx, buildPVEPathf(node, "qemu/%d/pending", vmid), nil)
 	if err != nil {
@@ -243,14 +272,15 @@ func (m *StorageManager) pendingValues(ctx context.Context, node string, vmid in
 		}
 
 		key, _ := entry["key"].(string)
-		queued, hasPending := entry["pending"].(string)
+		queued, _ := entry["pending"].(string)
+		deleting := pendingDeleteFlag(entry["delete"])
 
-		if key == "" || !hasPending || strings.TrimSpace(queued) == "" {
+		if key == "" || (strings.TrimSpace(queued) == "" && !deleting) {
 			continue
 		}
 
 		live, _ := entry["value"].(string)
-		pending[key] = pendingChange{Value: live, Pending: queued}
+		pending[key] = pendingChange{Value: live, Pending: queued, Delete: deleting}
 	}
 
 	return pending, nil
@@ -303,4 +333,22 @@ func (m *StorageManager) EnableDiskDiscard(ctx context.Context, instanceID, slot
 	}
 
 	return want, nil
+}
+
+// pendingDeleteFlag reads the pending list's "delete" field, which is an
+// integer that is 1 or 2 for a queued removal. JSON decoding hands it over as
+// a float64, but a string or a json.Number is read the same way.
+func pendingDeleteFlag(raw interface{}) bool {
+	switch v := raw.(type) {
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	case json.Number:
+		return v.String() != "0"
+	case string:
+		return v != "" && v != "0"
+	default:
+		return false
+	}
 }
