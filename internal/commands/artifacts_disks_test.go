@@ -828,3 +828,81 @@ func TestArtifactsDisks_PendingDeleteIsReportedAndNeverFixed(t *testing.T) {
 		t.Errorf("table lacks the pending-delete verdict:\n%s", out.String())
 	}
 }
+
+// TestArtifactsDisks_UnidentifiedDataDiskFailsTheCheck covers a managed VM
+// whose data disk cannot be found, whether the state's volid is stale or
+// empty and the disk has no serial, or nothing on the VM matches at all. The
+// check cannot vouch for a disk it never saw, so it reports the VM and fails
+// rather than passing quietly, and --fix writes nothing. A stale volid on a
+// disk that carries its serial is still found and passes.
+func TestArtifactsDisks_UnidentifiedDataDiskFailsTheCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*diskTestFixture)
+		wantErr error
+		wantVM  string
+	}{
+		{
+			name: "stale volid and no serial",
+			mutate: func(fx *diskTestFixture) {
+				fx.storage.disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-renamed,discard=on,size=500G", "on", "")
+			},
+			wantErr: ErrArtifactsDiskCheckFailed,
+			wantVM:  "dev-artifacts",
+		},
+		{
+			name: "empty volid and no serial",
+			mutate: func(fx *diskTestFixture) {
+				fx.ac.lookup.DataVolumeID = ""
+				fx.storage.disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+			},
+			wantErr: ErrArtifactsDiskCheckFailed,
+			wantVM:  "dev-artifacts",
+		},
+		{
+			name: "no matching volid or serial on the bastion",
+			mutate: func(fx *diskTestFixture) {
+				fx.storage.disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+				fx.storage.disks["102"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-102-other,discard=on,size=64G", "on", "")
+			},
+			wantErr: ErrArtifactsDiskCheckFailed,
+			wantVM:  "dev-bastion",
+		},
+		{
+			name: "stale volid found by serial",
+			mutate: func(fx *diskTestFixture) {
+				fx.storage.disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+				fx.storage.disks["102"].Disks[1] = thinDisk("scsi1",
+					"local-lvm-data:vm-102-renamed,discard=on,serial=ocfpdata,size=64G", "on", "")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, fix := range []bool{false, true} {
+				fx := newDiskTestFixture(t, legacyBlocDisks())
+				tc.mutate(fx)
+
+				var out bytes.Buffer
+
+				err := artifactsDisks(fx.ac, &out, fix, false)
+				if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+					t.Fatalf("fix=%v: error = %v, want %v\n%s", fix, err, tc.wantErr, out.String())
+				}
+
+				if tc.wantErr != nil && !strings.Contains(out.String(), tc.wantVM+" (") {
+					t.Errorf("fix=%v: output does not name %s:\n%s", fix, tc.wantVM, out.String())
+				}
+
+				if len(fx.storage.puts) != 0 {
+					t.Errorf("fix=%v: writes = %+v, want none", fix, fx.storage.puts)
+				}
+			}
+		})
+	}
+}
