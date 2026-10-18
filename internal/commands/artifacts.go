@@ -656,6 +656,10 @@ func artifactsStatus(ac *artifactsContext, asJSON bool) error {
 	expiry := buildArtifactsLeafExpiry(ac)
 	report := buildArtifactsStatusReport(ac.lookup, string(inst.State), version.Get(), expiry)
 
+	if w := artifactsDiskWarning(ac); w != "" {
+		report["disk_discard_warning"] = w
+	}
+
 	if asJSON {
 		out, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
@@ -685,6 +689,10 @@ func artifactsStatus(ac *artifactsContext, asJSON bool) error {
 	}
 
 	if w, ok := report["tls_fingerprint_drift_warning"]; ok {
+		fmt.Printf("WARNING:        %v\n", w)
+	}
+
+	if w, ok := report["disk_discard_warning"]; ok {
 		fmt.Printf("WARNING:        %v\n", w)
 	}
 

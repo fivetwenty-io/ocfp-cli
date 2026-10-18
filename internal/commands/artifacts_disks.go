@@ -12,6 +12,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -157,6 +158,58 @@ func artifactsDisks(ac *artifactsContext, out io.Writer, fix, asJSON bool) error
 	default:
 		return nil
 	}
+}
+
+// artifactsDiskWarning returns the one-line warning `artifacts status` shows
+// when a managed data disk on thin storage lacks discard=on, or has it only
+// queued for the next cold start. It is best effort: a provider with no disk
+// view or a failed read is logged at debug level and yields no warning, so it
+// never fails the status command.
+func artifactsDiskWarning(ac *artifactsContext) string {
+	reader, ok := ac.provider.StorageManager().(vmDiskReader)
+	if !ok {
+		logger.Debugf("artifacts status: provider has no disk view; skipping the discard check")
+
+		return ""
+	}
+
+	report := inspectManagedDisks(ac.parent, reader, ac.blocName, managedDiskVMs(ac))
+
+	for _, e := range report.Errors {
+		logger.Debugf("artifacts status: discard check: %s", e)
+	}
+
+	var missing, pending []string
+
+	for _, d := range report.Disks {
+		if d.Role != diskRoleData {
+			continue
+		}
+
+		switch d.Verdict {
+		case verdictMissingOnThin:
+			missing = append(missing, d.VM+" "+d.Slot)
+		case verdictPendingRestart:
+			pending = append(pending, d.VM+" "+d.Slot)
+		}
+	}
+
+	if len(missing) == 0 && len(pending) == 0 {
+		return ""
+	}
+
+	var parts []string
+
+	if len(missing) > 0 {
+		parts = append(parts, strings.Join(missing, ", ")+" on thin storage lack discard=on")
+	}
+
+	if len(pending) > 0 {
+		parts = append(parts, strings.Join(pending, ", ")+" have discard=on pending until a cold stop and start")
+	}
+
+	return fmt.Sprintf("data disk(s) %s; run `ocfp artifacts disks --bloc %s` for details",
+		strings.Join(parts, ", and "), ac.blocName)
 }
 
 // managedDiskVMs resolves the bloc's managed VMs from state: the artifacts VM

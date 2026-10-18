@@ -431,6 +431,134 @@ func TestArtifactsDisks_UnsupportedProvider(t *testing.T) {
 	}
 }
 
+// TestArtifactsDiskWarning covers the one-line warning `artifacts status`
+// shows. It names each managed data disk on thin storage without discard=on,
+// including one whose fix is only queued, and points at the disks action.
+func TestArtifactsDiskWarning(t *testing.T) {
+	t.Parallel()
+
+	pendingOnly := thinDisk("scsi1", "local-lvm-data:vm-102-data,serial=ocfpdata,size=64G", "",
+		"local-lvm-data:vm-102-data,serial=ocfpdata,size=64G,discard=on")
+
+	tests := []struct {
+		name     string
+		mutate   func(map[string]*pve.VMDisks)
+		wantWarn []string
+	}{
+		{
+			name:     "missing on thin",
+			mutate:   func(map[string]*pve.VMDisks) {},
+			wantWarn: []string{"dev-artifacts scsi1", "ocfp artifacts disks --bloc dev"},
+		},
+		{
+			name: "pending only",
+			mutate: func(d map[string]*pve.VMDisks) {
+				d["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+				d["102"].Disks[1] = pendingOnly
+			},
+			wantWarn: []string{"dev-bastion scsi1", "pending", "cold stop and start", "ocfp artifacts disks --bloc dev"},
+		},
+		{
+			name: "all correct",
+			mutate: func(d map[string]*pve.VMDisks) {
+				d["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+			},
+		},
+		{
+			name: "root disk alone lacks discard",
+			mutate: func(d map[string]*pve.VMDisks) {
+				d["105"].Disks[0] = thinDisk("scsi0", "local-lvm-data:vm-105-disk-0,size=32G", "", "")
+				d["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,discard=on,size=500G", "on", "")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			disks := legacyBlocDisks()
+			tc.mutate(disks)
+
+			fx := newDiskTestFixture(t, disks)
+
+			got := artifactsDiskWarning(fx.ac)
+
+			if len(tc.wantWarn) == 0 {
+				if got != "" {
+					t.Errorf("warning = %q, want none", got)
+				}
+
+				return
+			}
+
+			if strings.Contains(got, "\n") {
+				t.Errorf("warning spans several lines: %q", got)
+			}
+
+			for _, want := range tc.wantWarn {
+				if !strings.Contains(got, want) {
+					t.Errorf("warning %q lacks %q", got, want)
+				}
+			}
+
+			if len(fx.storage.puts) != 0 {
+				t.Errorf("the status read wrote %d disk(s)", len(fx.storage.puts))
+			}
+		})
+	}
+}
+
+// TestArtifactsDiskWarning_IsBestEffort makes sure a failed disk read or a
+// provider with no disk view yields no warning rather than an error.
+func TestArtifactsDiskWarning_IsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+	fx.storage.readErrs = map[string]error{"105": errors.New("pve unreachable"), "102": errors.New("pve unreachable")}
+
+	if got := artifactsDiskWarning(fx.ac); got != "" {
+		t.Errorf("warning = %q with every read failing, want none", got)
+	}
+
+	fx.ac.provider = &diskTestProvider{stubProvider: stubProvider{compute: fx.compute}}
+
+	if got := artifactsDiskWarning(fx.ac); got != "" {
+		t.Errorf("warning = %q with no disk view, want none", got)
+	}
+}
+
+// TestArtifactsStatus_ShowsTheDiskWarning checks the warning reaches the
+// status output, and that a failing disk read never fails the status
+// command. It swaps os.Stdout, so it does not run in parallel.
+//
+//nolint:paralleltest // captureStdout swaps the process-global os.Stdout
+func TestArtifactsStatus_ShowsTheDiskWarning(t *testing.T) {
+	fx := newDiskTestFixture(t, legacyBlocDisks())
+
+	var err error
+
+	out := captureStdout(t, func() { err = artifactsStatus(fx.ac, false) })
+	if err != nil {
+		t.Fatalf("artifactsStatus: %v", err)
+	}
+
+	if !strings.Contains(out, "WARNING:") || !strings.Contains(out, "ocfp artifacts disks --bloc dev") {
+		t.Errorf("status output lacks the disk warning:\n%s", out)
+	}
+
+	fx.storage.readErrs = map[string]error{"105": errors.New("pve unreachable"), "102": errors.New("pve unreachable")}
+
+	out = captureStdout(t, func() { err = artifactsStatus(fx.ac, true) })
+	if err != nil {
+		t.Fatalf("artifactsStatus with failing disk reads: %v", err)
+	}
+
+	if strings.Contains(out, "disk_discard_warning") {
+		t.Errorf("status JSON carries a disk warning although no disk could be read:\n%s", out)
+	}
+}
+
 // TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk pins what --fix may
 // touch. Of a root disk lacking discard, a thin data disk lacking it, and a
 // thick data disk lacking it, only the thin data disk is written, once, with
