@@ -70,14 +70,19 @@ All actions require --bloc. The ca action reads the CA already persisted at
 secret/ocfp/{bloc}/ca and never mints one unless --generate is passed.
 
 The disks action reads the artifacts VM and the bastion on PVE and prints
-one row per root and data disk with its pool, pool type, discard state, and
-a verdict (ok, missing-on-thin, thick-not-needed, unknown-pool, or
-pending-restart). It exits non-zero when a managed data disk on thin storage
-lacks discard=on. With --fix it adds discard=on to those data disks and
-keeps every other disk option. It never stops, starts, or reboots a VM, so
-the change takes effect only after a cold stop and start of the VM, and a
-guest reboot is not enough. The disk's data is untouched, and the guest
-still has to trim, which ocfp artifacts provision sets up with fstrim.timer.`,
+one row per root and data disk with its pool, pool type, live discard state,
+and a verdict (ok, missing-on-thin, pending-restart, pending-delete,
+thick-not-needed, or unknown-pool). It exits non-zero when a managed data
+disk on thin storage lacks discard=on, or when a VM's disks cannot be read
+or its data disk cannot be found or classified. A disk that is only
+pending-restart or pending-delete does not fail the check.
+
+With --fix it adds discard=on to each data disk that lacks it and keeps
+every other disk option. It never stops, starts, or reboots a VM. A stopped
+VM takes the change at once, while a running VM needs a cold stop and start,
+because a guest reboot is not enough; the output says which applies. The
+disk's data is untouched, and the guest still has to trim, which ocfp
+artifacts provision sets up with fstrim.timer.`,
 		Example: `  ocfp artifacts lookup --bloc dev
   ocfp artifacts status --bloc dev --json
   ocfp artifacts disks --bloc dev
