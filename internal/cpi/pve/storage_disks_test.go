@@ -76,24 +76,28 @@ func TestVMDisks_ReadsSlotsPoolTypesAndDigest(t *testing.T) {
 	}
 }
 
-// TestVMDisks_ReportsAQueuedDiscardChange covers the case the config read
-// alone gets wrong. On a running VM a disk change is queued, GET .../config
-// still shows the old value, and only GET .../pending carries the new one in
-// its "pending" field. Without this a re-run after --fix would look like the
-// fix never happened.
+// TestVMDisks_ReportsAQueuedDiscardChange covers how PVE reports a disk
+// change queued on a running VM. GET .../config returns the config with
+// pending changes already applied, so the slot there carries discard=on even
+// though the running VM does not use it yet. GET .../pending lists the live
+// value in "value" and the queued one in "pending". Read the merged value
+// alone and a re-run after --fix reports ok before the VM was ever cold
+// started.
 func TestVMDisks_ReportsAQueuedDiscardChange(t *testing.T) {
 	t.Parallel()
 
+	live := "local-lvm-data:vm-105-data,size=500G"
+	merged := "local-lvm-data:vm-105-data,size=500G,discard=on"
+
+	config := legacyArtifactsConfig()
+	config["scsi1"] = merged
+
 	fake := &fakePVEClient{getResponses: map[string]interface{}{
-		"/nodes/pve1/qemu/105/config": legacyArtifactsConfig(),
+		"/nodes/pve1/qemu/105/config": config,
 		"/nodes/pve1/qemu/105/pending": []interface{}{
 			map[string]interface{}{"key": "memory", "value": 8192},
 			map[string]interface{}{"key": "scsi0", "value": "local-lvm-data:vm-105-disk-0,discard=on,size=32G,ssd=1"},
-			map[string]interface{}{
-				"key":     "scsi1",
-				"value":   "local-lvm-data:vm-105-data,size=500G",
-				"pending": "local-lvm-data:vm-105-data,size=500G,discard=on",
-			},
+			map[string]interface{}{"key": "scsi1", "value": live, "pending": merged},
 		},
 		"/storage/local-lvm-data": map[string]interface{}{"type": "lvmthin"},
 	}}
@@ -108,17 +112,56 @@ func TestVMDisks_ReportsAQueuedDiscardChange(t *testing.T) {
 		t.Fatal("scsi1 missing from the disk list")
 	}
 
-	if data.DiscardOn() {
-		t.Error("current value reads as discard=on, want the config value, which lacks it")
+	if data.DiscardOn() || data.Discard != "" {
+		t.Errorf("live discard = %q, want absent: the running VM still uses %q", data.Discard, live)
 	}
 
-	if data.PendingValue != "local-lvm-data:vm-105-data,size=500G,discard=on" || !data.PendingDiscardOn() {
+	if data.LiveValue != live {
+		t.Errorf("live value = %q, want %q from the pending list", data.LiveValue, live)
+	}
+
+	if data.PendingValue != merged || !data.PendingDiscardOn() {
 		t.Errorf("pending = %q, want the queued value with discard=on", data.PendingValue)
 	}
 
+	if data.Value != merged {
+		t.Errorf("value = %q, want the merged config value %q, which a write builds on", data.Value, merged)
+	}
+
 	root, _ := disks.Slot("scsi0")
-	if root.PendingValue != "" {
-		t.Errorf("root pending = %q, want none: an entry with no pending field is not a queued change", root.PendingValue)
+	if root.PendingValue != "" || !root.DiscardOn() || root.LiveValue != root.Value {
+		t.Errorf("root = %+v, want discard on, no pending, and live equal to the config value", root)
+	}
+}
+
+// TestVMDisks_KeepsOtherQueuedChangesInTheValue makes sure a slot with some
+// other change queued keeps that change in Value, so a later discard write
+// built on Value does not throw the queued change away.
+func TestVMDisks_KeepsOtherQueuedChangesInTheValue(t *testing.T) {
+	t.Parallel()
+
+	live := "local-lvm-data:vm-105-data,size=500G"
+	merged := "local-lvm-data:vm-105-data,backup=0,size=500G"
+
+	config := legacyArtifactsConfig()
+	config["scsi1"] = merged
+
+	fake := &fakePVEClient{getResponses: map[string]interface{}{
+		"/nodes/pve1/qemu/105/config": config,
+		"/nodes/pve1/qemu/105/pending": []interface{}{
+			map[string]interface{}{"key": "scsi1", "value": live, "pending": merged},
+		},
+		"/storage/local-lvm-data": map[string]interface{}{"type": "lvmthin"},
+	}}
+
+	disks, err := newDiskTestManager(fake).VMDisks(context.Background(), "105")
+	if err != nil {
+		t.Fatalf("VMDisks: %v", err)
+	}
+
+	data, _ := disks.Slot("scsi1")
+	if data.Value != merged || data.LiveValue != live || data.PendingDiscardOn() || data.DiscardOn() {
+		t.Errorf("data = %+v, want value %q, live %q, and no discard either way", data, merged, live)
 	}
 }
 

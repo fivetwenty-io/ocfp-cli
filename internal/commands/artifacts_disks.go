@@ -72,6 +72,7 @@ type artifactsDiskRow struct {
 	Role         string `json:"role"`
 	Volume       string `json:"volume"`
 	Value        string `json:"value"`
+	LiveValue    string `json:"live_value"`
 	Pool         string `json:"pool"`
 	PoolType     string `json:"pool_type"`
 	Provisioning string `json:"provisioning"`
@@ -103,7 +104,9 @@ type artifactsDiskReport struct {
 // artifactsDisks implements `ocfp artifacts disks`. It reads the disks of the
 // bloc's managed VMs and reports, for each root and data disk, whether a thin
 // pool gets freed blocks back. It fails when a managed data disk on thin
-// storage lacks discard=on, or when a VM's disks could not be read.
+// storage lacks discard=on, or when a VM's disks could not be read. A disk
+// whose discard=on is queued for the next cold start reads as
+// pending-restart, which is not drift and exits 0.
 //
 // With fix, each managed data disk that is missing-on-thin gets discard=on
 // written into its config. Root disks and every other verdict are left
@@ -322,6 +325,7 @@ func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role, digest str
 		Role:         role,
 		Volume:       disk.VolumeID,
 		Value:        disk.Value,
+		LiveValue:    disk.LiveValue,
 		Pool:         disk.Pool,
 		PoolType:     disk.PoolType,
 		Provisioning: string(disk.Provisioning),

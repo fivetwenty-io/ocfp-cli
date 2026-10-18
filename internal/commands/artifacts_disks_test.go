@@ -109,10 +109,24 @@ func thinDisk(slot, value, discard, pending string) pve.VMDiskSlot {
 	pool, _, _ := strings.Cut(volume, ":")
 
 	return pve.VMDiskSlot{
-		Slot: slot, Value: value, VolumeID: volume, Pool: pool,
+		Slot: slot, Value: value, LiveValue: value, VolumeID: volume, Pool: pool,
 		PoolType: "lvmthin", Provisioning: pve.ProvisioningThin,
 		Discard: discard, PendingValue: pending,
 	}
+}
+
+// queuedDisk builds the view PVE gives of a thin disk with a change queued on
+// a running VM: the config value already carries the queued change, and the
+// live value comes from the pending list.
+func queuedDisk(slot, live, merged string) pve.VMDiskSlot {
+	disk := thinDisk(slot, merged, "", merged)
+	disk.LiveValue = live
+
+	if strings.Contains(live, "discard=on") {
+		disk.Discard = "on"
+	}
+
+	return disk
 }
 
 // diskTestFixture is a bloc with an artifacts VM (105) and a bastion (102)
@@ -437,7 +451,7 @@ func TestArtifactsDisks_UnsupportedProvider(t *testing.T) {
 func TestArtifactsDiskWarning(t *testing.T) {
 	t.Parallel()
 
-	pendingOnly := thinDisk("scsi1", "local-lvm-data:vm-102-data,serial=ocfpdata,size=64G", "",
+	pendingOnly := queuedDisk("scsi1", "local-lvm-data:vm-102-data,serial=ocfpdata,size=64G",
 		"local-lvm-data:vm-102-data,serial=ocfpdata,size=64G,discard=on")
 
 	tests := []struct {
@@ -652,7 +666,7 @@ func TestArtifactsDisks_FixLeavesEverythingElseAlone(t *testing.T) {
 	t.Parallel()
 
 	disks := legacyBlocDisks()
-	disks["105"].Disks[1] = thinDisk("scsi1", "local-lvm-data:vm-105-data,size=500G", "",
+	disks["105"].Disks[1] = queuedDisk("scsi1", "local-lvm-data:vm-105-data,size=500G",
 		"local-lvm-data:vm-105-data,size=500G,discard=on")
 	disks["102"].Disks[1] = pve.VMDiskSlot{
 		Slot: "scsi1", Value: "nfs-a:102/vm-102-data.raw,serial=ocfpdata,size=64G", VolumeID: "nfs-a:102/vm-102-data.raw",
@@ -707,5 +721,67 @@ func TestArtifactsDisks_FixReportsAFailedWrite(t *testing.T) {
 
 	if !strings.Contains(text, "missing-on-thin") {
 		t.Errorf("the disk whose write failed is not still shown as missing-on-thin:\n%s", text)
+	}
+}
+
+// TestArtifactsDisks_ReRunAfterAFixReportsPendingRestart is the run an
+// operator makes after --fix on a running VM. PVE's config read already
+// shows discard=on, but the running VM still uses the live value without it,
+// so the disk must read as pending-restart, not ok. pending-restart is not
+// drift: the command exits 0, and the status warning keeps naming the disk
+// until the VM is cold started.
+//
+//nolint:paralleltest // captureStdout swaps the process-global os.Stdout
+func TestArtifactsDisks_ReRunAfterAFixReportsPendingRestart(t *testing.T) {
+	live := "local-lvm-data:vm-105-data,backup=0,size=500G"
+	merged := "local-lvm-data:vm-105-data,backup=0,size=500G,discard=on"
+
+	disks := legacyBlocDisks()
+	disks["105"].Disks[1] = queuedDisk("scsi1", live, merged)
+
+	fx := newDiskTestFixture(t, disks)
+
+	var out bytes.Buffer
+
+	if err := artifactsDisks(fx.ac, &out, false, true); err != nil {
+		t.Fatalf("artifactsDisks after a fix = %v, want exit 0 for pending-restart\n%s", err, out.String())
+	}
+
+	var report artifactsDiskReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+
+	data := report.Disks[1]
+	if data.Verdict != verdictPendingRestart || data.Discard != "absent (on pending)" {
+		t.Errorf("data disk verdict %q discard %q, want pending-restart and absent (on pending)", data.Verdict, data.Discard)
+	}
+
+	if data.Value != merged || data.LiveValue != live {
+		t.Errorf("data disk value %q live %q, want %q and %q", data.Value, data.LiveValue, merged, live)
+	}
+
+	if report.Drift != 0 {
+		t.Errorf("drift = %d, want 0", report.Drift)
+	}
+
+	warning := artifactsDiskWarning(fx.ac)
+	if !strings.Contains(warning, "dev-artifacts scsi1") || !strings.Contains(warning, "pending") {
+		t.Errorf("warning = %q, want it to name dev-artifacts scsi1 as pending", warning)
+	}
+
+	var err error
+
+	status := captureStdout(t, func() { err = artifactsStatus(fx.ac, false) })
+	if err != nil {
+		t.Fatalf("artifactsStatus: %v", err)
+	}
+
+	if !strings.Contains(status, "WARNING:") || !strings.Contains(status, "cold stop and start") {
+		t.Errorf("status output lacks the pending warning:\n%s", status)
+	}
+
+	if len(fx.storage.puts) != 0 {
+		t.Errorf("a check wrote %d disk(s)", len(fx.storage.puts))
 	}
 }
