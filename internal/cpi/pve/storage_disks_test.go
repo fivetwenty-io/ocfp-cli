@@ -463,7 +463,7 @@ func TestEnableDiskDiscard_PutsTheFullCorrectedValueWithTheDigest(t *testing.T) 
 	fake := &fakePVEClient{}
 
 	got, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(),
-		"105", "scsi1", "local-lvm-data:vm-105-data,backup=0,size=500G", "3f1c0d9e")
+		"pve7", "105", "scsi1", "local-lvm-data:vm-105-data,backup=0,size=500G", "3f1c0d9e")
 	if err != nil {
 		t.Fatalf("EnableDiskDiscard: %v", err)
 	}
@@ -478,8 +478,8 @@ func TestEnableDiskDiscard_PutsTheFullCorrectedValueWithTheDigest(t *testing.T) 
 	}
 
 	put := fake.putParams[0]
-	if put.Path != "/nodes/pve1/qemu/105/config" {
-		t.Errorf("PUT path = %q, want /nodes/pve1/qemu/105/config", put.Path)
+	if put.Path != "/nodes/pve7/qemu/105/config" {
+		t.Errorf("PUT path = %q, want /nodes/pve7/qemu/105/config, the node the disks were read on", put.Path)
 	}
 
 	if len(put.Params) != 2 || put.Params["scsi1"] != want || put.Params["digest"] != "3f1c0d9e" {
@@ -501,7 +501,7 @@ func TestEnableDiskDiscard_SkipsAValueThatIsAlreadyCorrect(t *testing.T) {
 
 	current := "local-lvm-data:vm-105-data,discard=on,size=500G"
 
-	got, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), "105", "scsi1", current, "d")
+	got, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), "pve1", "105", "scsi1", current, "d")
 	if err != nil {
 		t.Fatalf("EnableDiskDiscard: %v", err)
 	}
@@ -512,24 +512,26 @@ func TestEnableDiskDiscard_SkipsAValueThatIsAlreadyCorrect(t *testing.T) {
 }
 
 // TestEnableDiskDiscard_RefusesUnsafeWrites covers the inputs that must fail
-// before any PUT: no digest to guard the write, a slot that is not an
-// attached disk, a malformed value, and a bad VMID.
+// before any PUT: no digest to guard the write, no node to write to, a slot
+// that is not an attached disk, a malformed value, and a bad VMID.
 func TestEnableDiskDiscard_RefusesUnsafeWrites(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
+		node    string
 		vmid    string
 		slot    string
 		value   string
 		digest  string
 		wantErr error
 	}{
-		{"no digest", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "", ErrConfigDigestMissing},
-		{"unused slot", "105", "unused0", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
-		{"non-disk key", "105", "net0", "virtio=AA:BB,bridge=vmbr0", "d", ErrInvalidDiskSlotValue},
-		{"malformed value", "105", "scsi1", "local-lvm-data:vm-105-data,,size=500G", "d", ErrInvalidDiskSlotValue},
-		{"bad vmid", "abc", "scsi1", "local-lvm-data:vm-105-data", "d", ErrInvalidVMID},
+		{"no digest", "pve1", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "", ErrConfigDigestMissing},
+		{"no node", "", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "d", ErrDiskNodeMissing},
+		{"unused slot", "pve1", "105", "unused0", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"non-disk key", "pve1", "105", "net0", "virtio=AA:BB,bridge=vmbr0", "d", ErrInvalidDiskSlotValue},
+		{"malformed value", "pve1", "105", "scsi1", "local-lvm-data:vm-105-data,,size=500G", "d", ErrInvalidDiskSlotValue},
+		{"bad vmid", "pve1", "abc", "scsi1", "local-lvm-data:vm-105-data", "d", ErrInvalidVMID},
 	}
 
 	for _, tc := range tests {
@@ -538,7 +540,7 @@ func TestEnableDiskDiscard_RefusesUnsafeWrites(t *testing.T) {
 
 			fake := &fakePVEClient{}
 
-			_, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), tc.vmid, tc.slot, tc.value, tc.digest)
+			_, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), tc.node, tc.vmid, tc.slot, tc.value, tc.digest)
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("error = %v, want %v", err, tc.wantErr)
 			}
@@ -560,7 +562,7 @@ func TestEnableDiskDiscard_ReturnsAFailedPut(t *testing.T) {
 	fake := &fakePVEClient{putErr: func(string, map[string]interface{}) error { return errDigest }}
 
 	_, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(),
-		"105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "stale")
+		"pve1", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "stale")
 	if !errors.Is(err, errDigest) {
 		t.Errorf("error = %v, want the PUT failure", err)
 	}

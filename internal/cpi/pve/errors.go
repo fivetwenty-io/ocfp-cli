@@ -55,6 +55,7 @@ var (
 	ErrArchiveStorageUnset      = errors.New("pve: an archive needs a backup-capable storage")
 	ErrInvalidDiskSlotValue     = errors.New("pve: disk slot value cannot be rewritten safely")
 	ErrConfigDigestMissing      = errors.New("pve: refusing a config write without the digest it was read under")
+	ErrDiskNodeMissing          = errors.New("pve: refusing a disk write without the node its config was read on")
 
 	// Parse errors.
 	ErrInvalidVMID            = errors.New("pve: invalid VMID")
