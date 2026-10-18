@@ -32,7 +32,7 @@ type fakeDiskStorage struct {
 
 // fakeDiskPut records one EnableDiskDiscard call.
 type fakeDiskPut struct {
-	VMID, Slot, Current, Digest, Wrote string
+	Node, VMID, Slot, Current, Digest, Wrote string
 }
 
 func (f *fakeDiskStorage) VMDisks(_ context.Context, instanceID string) (*pve.VMDisks, error) {
@@ -63,8 +63,8 @@ func (f *fakeDiskStorage) ClassifyDisk(_ context.Context, disk pve.VMDiskSlot) (
 	return disk, nil
 }
 
-func (f *fakeDiskStorage) EnableDiskDiscard(_ context.Context, instanceID, slot, current, digest string) (string, error) {
-	put := fakeDiskPut{VMID: instanceID, Slot: slot, Current: current, Digest: digest}
+func (f *fakeDiskStorage) EnableDiskDiscard(_ context.Context, node, instanceID, slot, current, digest string) (string, error) {
+	put := fakeDiskPut{Node: node, VMID: instanceID, Slot: slot, Current: current, Digest: digest}
 
 	if err := f.putErrs[instanceID]; err != nil {
 		f.puts = append(f.puts, put)
@@ -593,12 +593,14 @@ func TestArtifactsStatus_ShowsTheDiskWarning(t *testing.T) {
 // TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk pins what --fix may
 // touch. Of a root disk lacking discard, a thin data disk lacking it, and a
 // thick data disk lacking it, only the thin data disk is written, once, with
-// its full current value and the digest it was read under. No VM is stopped,
+// its full current value, the digest it was read under, and the node it was
+// read on. No VM is stopped,
 // started, rebooted, or even asked for its power state.
 func TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk(t *testing.T) {
 	t.Parallel()
 
 	disks := legacyBlocDisks()
+	disks["105"].Node = "pve2"
 	disks["105"].Disks[0] = thinDisk("scsi0", "local-lvm-data:vm-105-disk-0,size=32G,ssd=1", "", "")
 	disks["102"].Disks[1] = pve.VMDiskSlot{
 		Slot: "scsi1", Value: "thick:vm-102-data,serial=ocfpdata,size=64G", VolumeID: "thick:vm-102-data",
@@ -614,6 +616,7 @@ func TestArtifactsDisks_FixWritesOnlyTheDriftedDataDisk(t *testing.T) {
 	}
 
 	want := fakeDiskPut{
+		Node:    "pve2",
 		VMID:    "105",
 		Slot:    "scsi1",
 		Current: "local-lvm-data:vm-105-data,backup=0,size=500G",

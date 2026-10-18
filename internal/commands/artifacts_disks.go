@@ -57,7 +57,7 @@ type vmDiskReader interface {
 // vmDiskDiscardWriter is the optional write a provider's storage manager
 // offers to set discard=on on one disk slot under the config digest.
 type vmDiskDiscardWriter interface {
-	EnableDiskDiscard(ctx context.Context, instanceID, slot, currentValue, digest string) (string, error)
+	EnableDiskDiscard(ctx context.Context, node, instanceID, slot, currentValue, digest string) (string, error)
 }
 
 // managedDiskVM is a VM ocfp owns, with what identifies its data disk.
@@ -90,6 +90,8 @@ type artifactsDiskRow struct {
 	// digest is the config digest Value was read under. A fix sends it back
 	// so PVE refuses the write if the config changed in between.
 	digest string
+	// node is the PVE node the config was read on, where a fix writes it.
+	node string
 }
 
 // artifactsDiskReport is the whole result of `ocfp artifacts disks`.
@@ -291,7 +293,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 		if root, found := disks.Slot(rootDiskSlot); found {
 			root, err := reader.ClassifyDisk(ctx, root)
 
-			row := artifactsDiskRowFor(vm, root, diskRoleRoot, disks.Digest)
+			row := artifactsDiskRowFor(vm, root, diskRoleRoot, disks)
 			if err != nil {
 				row.Error = err.Error()
 			}
@@ -316,7 +318,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 		// that cannot be read fails it.
 		data, err = reader.ClassifyDisk(ctx, data)
 
-		row := artifactsDiskRowFor(vm, data, diskRoleData, disks.Digest)
+		row := artifactsDiskRowFor(vm, data, diskRoleData, disks)
 		if err != nil {
 			row.Error = err.Error()
 			report.Errors = append(report.Errors, fmt.Sprintf("%s (%s) %s: %v", vm.Name, vm.ID, data.Slot, err))
@@ -333,7 +335,7 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 }
 
 // artifactsDiskRowFor builds the report row for one disk.
-func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role, digest string) artifactsDiskRow {
+func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role string, disks *pve.VMDisks) artifactsDiskRow {
 	discard := disk.Discard
 	if discard == "" {
 		discard = "absent"
@@ -357,7 +359,8 @@ func artifactsDiskRowFor(vm managedDiskVM, disk pve.VMDiskSlot, role, digest str
 		Discard:      discard,
 		Pending:      disk.PendingValue,
 		Verdict:      diskDiscardVerdict(disk),
-		digest:       digest,
+		digest:       disks.Digest,
+		node:         disks.Node,
 	}
 }
 
@@ -402,7 +405,7 @@ func applyDiscardFixes(ctx context.Context, writer vmDiskDiscardWriter, report *
 			continue
 		}
 
-		wrote, err := writer.EnableDiskDiscard(ctx, row.VMID, row.Slot, row.Value, row.digest)
+		wrote, err := writer.EnableDiskDiscard(ctx, row.node, row.VMID, row.Slot, row.Value, row.digest)
 		if err != nil {
 			row.Error = err.Error()
 			report.FixFailed++
