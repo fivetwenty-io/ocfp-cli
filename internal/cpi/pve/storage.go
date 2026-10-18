@@ -818,8 +818,8 @@ func classifyStorageProvisioning(poolType, format string) StorageProvisioning {
 //
 // PVE rewrites the whole slot from the value we send, so a value we cannot
 // parse with confidence is refused rather than rewritten: an empty option, a
-// repeated discard option, or a volume id that does not name a pool and a
-// volume.
+// repeated discard option, a volume id that does not name a pool and a
+// volume, or a cdrom, which is not a disk discard applies to.
 func discardOnValue(value string) (string, error) {
 	parsed := parseDiskSlotValue(value)
 
@@ -835,7 +835,11 @@ func discardOnValue(value string) (string, error) {
 			return "", fmt.Errorf("%w: %q has an empty option", ErrInvalidDiskSlotValue, value)
 		}
 
-		key, _, _ := strings.Cut(opt, "=")
+		key, val, _ := strings.Cut(opt, "=")
+		if strings.EqualFold(key, "media") && strings.EqualFold(val, "cdrom") {
+			return "", fmt.Errorf("%w: %q is a cdrom, not a disk", ErrInvalidDiskSlotValue, value)
+		}
+
 		if key != discardOption {
 			continue
 		}
