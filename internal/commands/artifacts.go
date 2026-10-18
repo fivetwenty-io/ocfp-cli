@@ -136,6 +136,8 @@ func runArtifactsCmd(cmd *cobra.Command, args []string) error {
 		return artifactsLookup(ctx, asJSON)
 	case "status":
 		return artifactsStatus(ctx, asJSON)
+	case "disks":
+		return artifactsDisks(ctx, os.Stdout, asJSON)
 	case "provision":
 		return artifactsProvision(cmd, ctx, log)
 	case "start":
