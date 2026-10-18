@@ -306,3 +306,118 @@ func TestVMDisks_SkipsSlotsThatAreNotStorageVolumes(t *testing.T) {
 		t.Errorf("slots = %v, want [scsi0]", slots)
 	}
 }
+
+// TestEnableDiskDiscard_PutsTheFullCorrectedValueWithTheDigest pins the one
+// write the fix makes: a single PUT to the VM's config carrying the whole
+// corrected slot value, every other option intact, plus the digest the value
+// was read under so PVE refuses the write if the config changed in between.
+// Nothing else is touched, and in particular the VM is never stopped,
+// started, or rebooted.
+func TestEnableDiskDiscard_PutsTheFullCorrectedValueWithTheDigest(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakePVEClient{}
+
+	got, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(),
+		"105", "scsi1", "local-lvm-data:vm-105-data,backup=0,size=500G", "3f1c0d9e")
+	if err != nil {
+		t.Fatalf("EnableDiskDiscard: %v", err)
+	}
+
+	want := "local-lvm-data:vm-105-data,backup=0,size=500G,discard=on"
+	if got != want {
+		t.Errorf("returned value = %q, want %q", got, want)
+	}
+
+	if fake.putCalls != 1 || len(fake.putParams) != 1 {
+		t.Fatalf("PUT calls = %d, want exactly 1", fake.putCalls)
+	}
+
+	put := fake.putParams[0]
+	if put.Path != "/nodes/pve1/qemu/105/config" {
+		t.Errorf("PUT path = %q, want /nodes/pve1/qemu/105/config", put.Path)
+	}
+
+	if len(put.Params) != 2 || put.Params["scsi1"] != want || put.Params["digest"] != "3f1c0d9e" {
+		t.Errorf("PUT body = %v, want exactly scsi1=%q and digest=3f1c0d9e", put.Params, want)
+	}
+
+	if fake.getCalls != 0 || fake.postCalls != 0 || fake.deleteCalls != 0 {
+		t.Errorf("GET/POST/DELETE calls = %d/%d/%d, want none: no status, stop, start, or reboot",
+			fake.getCalls, fake.postCalls, fake.deleteCalls)
+	}
+}
+
+// TestEnableDiskDiscard_SkipsAValueThatIsAlreadyCorrect asserts a disk that
+// already carries discard=on is not rewritten.
+func TestEnableDiskDiscard_SkipsAValueThatIsAlreadyCorrect(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakePVEClient{}
+
+	current := "local-lvm-data:vm-105-data,discard=on,size=500G"
+
+	got, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), "105", "scsi1", current, "d")
+	if err != nil {
+		t.Fatalf("EnableDiskDiscard: %v", err)
+	}
+
+	if got != current || fake.putCalls != 0 {
+		t.Errorf("value %q with %d PUTs, want the value unchanged and no PUT", got, fake.putCalls)
+	}
+}
+
+// TestEnableDiskDiscard_RefusesUnsafeWrites covers the inputs that must fail
+// before any PUT: no digest to guard the write, a slot that is not an
+// attached disk, a malformed value, and a bad VMID.
+func TestEnableDiskDiscard_RefusesUnsafeWrites(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		vmid    string
+		slot    string
+		value   string
+		digest  string
+		wantErr error
+	}{
+		{"no digest", "105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "", ErrConfigDigestMissing},
+		{"unused slot", "105", "unused0", "local-lvm-data:vm-105-data", "d", ErrInvalidDiskSlotValue},
+		{"non-disk key", "105", "net0", "virtio=AA:BB,bridge=vmbr0", "d", ErrInvalidDiskSlotValue},
+		{"malformed value", "105", "scsi1", "local-lvm-data:vm-105-data,,size=500G", "d", ErrInvalidDiskSlotValue},
+		{"bad vmid", "abc", "scsi1", "local-lvm-data:vm-105-data", "d", ErrInvalidVMID},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakePVEClient{}
+
+			_, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(), tc.vmid, tc.slot, tc.value, tc.digest)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("error = %v, want %v", err, tc.wantErr)
+			}
+
+			if fake.putCalls != 0 {
+				t.Errorf("PUT calls = %d, want none", fake.putCalls)
+			}
+		})
+	}
+}
+
+// TestEnableDiskDiscard_ReturnsAFailedPut makes sure a refused write, such as
+// a digest mismatch, reaches the caller.
+func TestEnableDiskDiscard_ReturnsAFailedPut(t *testing.T) {
+	t.Parallel()
+
+	errDigest := errors.New("config file has been modified by another user")
+
+	fake := &fakePVEClient{putErr: func(string, map[string]interface{}) error { return errDigest }}
+
+	_, err := newDiskTestManager(fake).EnableDiskDiscard(context.Background(),
+		"105", "scsi1", "local-lvm-data:vm-105-data,size=500G", "stale")
+	if !errors.Is(err, errDigest) {
+		t.Errorf("error = %v, want the PUT failure", err)
+	}
+}
