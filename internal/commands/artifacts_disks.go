@@ -93,7 +93,6 @@ type artifactsDiskRow struct {
 type artifactsDiskReport struct {
 	Bloc      string             `json:"bloc"`
 	Disks     []artifactsDiskRow `json:"disks"`
-	Notes     []string           `json:"notes,omitempty"`
 	Errors    []string           `json:"errors,omitempty"`
 	Drift     int                `json:"drift"`
 	Fixed     int                `json:"fixed"`
@@ -271,8 +270,8 @@ func bastionDiskVM(sm *state.Manager, blocName string) (managedDiskVM, bool) {
 }
 
 // inspectManagedDisks reads each VM's disks and builds the report rows. A VM
-// whose disks cannot be read is recorded as an error and the rest are still
-// checked.
+// whose disks cannot be read, or whose data disk cannot be identified, is
+// recorded as an error and the rest are still checked.
 func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName string, vms []managedDiskVM) artifactsDiskReport {
 	report := artifactsDiskReport{Bloc: blocName, Disks: []artifactsDiskRow{}}
 
@@ -288,10 +287,14 @@ func inspectManagedDisks(ctx context.Context, reader vmDiskReader, blocName stri
 			report.Disks = append(report.Disks, artifactsDiskRowFor(vm, root, diskRoleRoot, disks.Digest))
 		}
 
+		// A data disk that cannot be identified fails the check: a stale or
+		// empty volid in state on a disk with no serial would otherwise pass
+		// a disk nobody looked at.
 		data, found := disks.DataDisk(vm.DataVolumeID, vm.DataSerial)
 		if !found || data.Slot == rootDiskSlot {
-			report.Notes = append(report.Notes, fmt.Sprintf(
-				"%s (%s): no data disk found (looked for volume %q or serial %q)",
+			report.Errors = append(report.Errors, fmt.Sprintf(
+				"%s (%s): no data disk found (looked for volume %q, then serial %q); "+
+					"check the volume recorded in state against the VM's config",
 				vm.Name, vm.ID, vm.DataVolumeID, vm.DataSerial))
 
 			continue
@@ -465,10 +468,6 @@ func renderArtifactsDiskReport(out io.Writer, report artifactsDiskReport, asJSON
 	err := tw.Flush()
 	if err != nil {
 		return fmt.Errorf("artifacts disks: writing report: %w", err)
-	}
-
-	for _, note := range report.Notes {
-		_, _ = fmt.Fprintf(out, "note: %s\n", note)
 	}
 
 	for _, e := range report.Errors {
