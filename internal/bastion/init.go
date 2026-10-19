@@ -2601,6 +2601,22 @@ func (m *Manager) createFilteredConfig(configFileData *config.ConfigFile, config
 	// ValidateIngress for blocs with ingress.provider: tailscale. Starting
 	// from the loaded file means new top-level sections are synced by
 	// default rather than by remembering to add them here.
+	// A workstation credential path is unusable on the bastion and takes
+	// precedence over its GOOGLE_APPLICATION_CREDENTIALS environment. Resolve
+	// it before transfer, including config-only sync, into the owner-only YAML.
+	// Copy the bloc so local paths and caller-owned config remain untouched.
+	if blocConfig.Provider == "gcp" {
+		raw, err := providers.NewGCPBastionInit(m.config).CredentialsJSON()
+		if err != nil {
+			return nil, fmt.Errorf("resolve GCP credentials for config sync: %w", err)
+		}
+
+		remoteBloc := *blocConfig
+		remoteBloc.ServiceAccountKeyPath = ""
+		remoteBloc.ServiceAccountJSON = raw
+		blocConfig = &remoteBloc
+	}
+
 	filtered := *configFileData
 	filtered.Blocs = map[string]*config.Config{
 		blocName: blocConfig,
