@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -158,61 +159,97 @@ func MapDiskStateToResourceState(gcpState string) cpi.ResourceState {
 
 // FormatZoneURL formats a zone name to a full resource URL.
 func FormatZoneURL(project, zone string) string {
+	if strings.Contains(zone, "/") {
+		return zone
+	}
 	return fmt.Sprintf("projects/%s/zones/%s", project, zone)
 }
 
 // FormatRegionURL formats a region name to a full resource URL.
 func FormatRegionURL(project, region string) string {
+	if strings.Contains(region, "/") {
+		return region
+	}
 	return fmt.Sprintf("projects/%s/regions/%s", project, region)
 }
 
 // FormatNetworkURL formats a network name to a full resource URL.
 func FormatNetworkURL(project, network string) string {
+	if strings.Contains(network, "/") {
+		return network
+	}
 	return fmt.Sprintf("projects/%s/global/networks/%s", project, network)
 }
 
 // FormatSubnetworkURL formats a subnetwork name to a full resource URL.
 func FormatSubnetworkURL(project, region, subnetwork string) string {
+	if strings.Contains(subnetwork, "/") {
+		return subnetwork
+	}
 	return fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, subnetwork)
 }
 
 // FormatFirewallURL formats a firewall name to a full resource URL.
 func FormatFirewallURL(project, firewall string) string {
+	if strings.Contains(firewall, "/") {
+		return firewall
+	}
 	return fmt.Sprintf("projects/%s/global/firewalls/%s", project, firewall)
 }
 
 // FormatInstanceURL formats an instance name to a full resource URL.
 func FormatInstanceURL(project, zone, instance string) string {
+	if strings.Contains(instance, "/") {
+		return instance
+	}
 	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, instance)
 }
 
 // FormatDiskURL formats a disk name to a full resource URL.
 func FormatDiskURL(project, zone, disk string) string {
+	if strings.Contains(disk, "/") {
+		return disk
+	}
 	return fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, disk)
 }
 
 // FormatImageURL formats an image name to a full resource URL.
 func FormatImageURL(project, image string) string {
+	if strings.Contains(image, "/") {
+		return image
+	}
 	return fmt.Sprintf("projects/%s/global/images/%s", project, image)
 }
 
 // FormatMachineTypeURL formats a machine type name to a full resource URL.
 func FormatMachineTypeURL(project, zone, machineType string) string {
+	if strings.Contains(machineType, "/") {
+		return machineType
+	}
 	return fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, machineType)
 }
 
 // FormatAddressURL formats a regional address name to a full resource URL.
 func FormatAddressURL(project, region, address string) string {
+	if strings.Contains(address, "/") {
+		return address
+	}
 	return fmt.Sprintf("projects/%s/regions/%s/addresses/%s", project, region, address)
 }
 
 // FormatGlobalAddressURL formats a global address name to a full resource URL.
 func FormatGlobalAddressURL(project, address string) string {
+	if strings.Contains(address, "/") {
+		return address
+	}
 	return fmt.Sprintf("projects/%s/global/addresses/%s", project, address)
 }
 
 // FormatRouterURL formats a router name to a full resource URL.
 func FormatRouterURL(project, region, router string) string {
+	if strings.Contains(router, "/") {
+		return router
+	}
 	return fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, router)
 }
 
@@ -318,4 +355,103 @@ func IsGlobalResource(resourceType string) bool {
 	}
 
 	return globalResources[resourceType]
+}
+
+// scopedResource retains zone/project identity across persisted CPI handles.
+func scopedResource(project, zone, kind, name string) string {
+	return fmt.Sprintf("projects/%s/zones/%s/%s/%s", project, zone, kind, ExtractNameFromURL(name))
+}
+func resourceScope(project, zone, id string) (string, string, string) {
+	parts := strings.Split(strings.TrimPrefix(id, "https://www.googleapis.com/compute/v1/"), "/")
+	for i, part := range parts {
+		if i+1 < len(parts) {
+			if part == "projects" {
+				project = parts[i+1]
+			}
+
+			if part == "zones" {
+				zone = parts[i+1]
+			}
+		}
+	}
+
+	return project, zone, ExtractNameFromURL(id)
+}
+func resourceIdentity(config *Config, zoneURL, kind, name string) string {
+	zone := ExtractZoneFromURL(zoneURL)
+	if zone == "" {
+		zone = config.Zone
+	}
+
+	project, _, _ := resourceScope(config.ProjectID, zone, zoneURL)
+
+	return scopedResource(project, zone, kind, name)
+}
+
+type resourceMetadata struct {
+	Managed     string            `json:"managed"`
+	Description string            `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags"`
+}
+
+func resourceDescription(description string, tags map[string]string) string {
+	b, _ := json.Marshal(resourceMetadata{Managed: "ocfp", Description: description, Tags: tags}) //nolint:errchkjson // Only strings and a string map; encoding cannot fail.
+
+	return string(b)
+}
+func resourceTags(description string) map[string]string {
+	var metadata resourceMetadata
+	if json.Unmarshal([]byte(description), &metadata) != nil || metadata.Managed != "ocfp" {
+		return nil
+	}
+
+	return metadata.Tags
+}
+func decodedLabels(labels map[string]string) map[string]string {
+	result := map[string]string{}
+	for key, value := range labels {
+		result[key] = value
+		if strings.HasPrefix(key, "ocfp-") {
+			result["ocfp:"+strings.TrimPrefix(key, "ocfp-")] = value
+		}
+	}
+
+	return result
+}
+
+func isNumericResource(id string) bool {
+	name := ExtractNameFromURL(id)
+	if name == "" {
+		return false
+	}
+
+	for _, r := range name {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func regionalScope(project, region, id string) (string, string, string) {
+	project, _, name := resourceScope(project, "", id)
+
+	parts := strings.Split(id, "/")
+	for i, part := range parts {
+		if part == "regions" && i+1 < len(parts) {
+			region = parts[i+1]
+		}
+	}
+
+	return project, region, name
+}
+func regionalIdentity(regionURL, kind, name string) string {
+	if regionURL == "" {
+		return name
+	}
+
+	project, region, _ := regionalScope("", "", regionURL)
+
+	return fmt.Sprintf("projects/%s/regions/%s/%s/%s", project, region, kind, name)
 }

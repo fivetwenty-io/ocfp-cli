@@ -178,24 +178,9 @@ func (c *Config) GetNetworkProject() string {
 
 // GetRegionFromZone extracts the region from a zone (e.g., "us-central1-a" -> "us-central1").
 func GetRegionFromZone(zone string) string {
-	if len(zone) < 2 { //nolint:mnd
-		return zone
+	if len(zone) > 2 && zone[len(zone)-2] == '-' && zone[len(zone)-1] >= 'a' && zone[len(zone)-1] <= 'z' {
+		return zone[:len(zone)-2]
 	}
-	// Find the last hyphen and take everything before it
-	lastHyphen := -1
-
-	for i := len(zone) - 1; i >= 0; i-- {
-		if zone[i] == '-' {
-			lastHyphen = i
-
-			break
-		}
-	}
-
-	if lastHyphen > 0 {
-		return zone[:lastHyphen]
-	}
-
 	return zone
 }
 

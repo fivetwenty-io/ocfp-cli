@@ -2,12 +2,12 @@ package gcp
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/iterator"
@@ -20,6 +20,18 @@ import (
 //
 //nolint:funlen // GCP instance creation with network, disk, and metadata configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+	if req == nil {
+		return nil, errors.New("instance request is required")
+	}
+
+	if req.VCPUsOverride != 0 || req.MemoryMiBOverride != 0 {
+		return nil, fmt.Errorf("%w: GCP compute sizing uses Flavor; select a custom machine type instead of PVE CPU/RAM overrides", ErrNotImplemented)
+	}
+
+	if req.CreateStopped {
+		return nil, fmt.Errorf("%w: GCP cannot atomically create a stopped instance; safe recycle requires staged identity handover", ErrNotImplemented)
+	}
+
 	err := m.client.ensureClientsLoaded(ctx)
 	if err != nil {
 		return nil, err
@@ -34,20 +46,66 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		zone = req.AvailabilityZone
 	}
 
+	// Resolve legacy numeric handles before constructing URLs and network tags.
+	request := *req
+	request.SecurityGroups = append([]string(nil), req.SecurityGroups...)
+	request.SecurityGroupIDs = append([]string(nil), req.SecurityGroupIDs...)
+
+	req = &request
+	for _, groups := range [][]string{req.SecurityGroups, req.SecurityGroupIDs} {
+		for i, id := range groups {
+			if isNumericResource(id) {
+				group, err := (&SecurityManager{client: m.client}).GetSecurityGroup(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+
+				groups[i] = group.ID
+			}
+		}
+	}
+
+	if isNumericResource(req.NetworkID) {
+		network, err := (&NetworkManager{client: m.client}).GetNetwork(ctx, req.NetworkID)
+		if err != nil {
+			return nil, err
+		}
+
+		req.NetworkID = network.ID
+	}
+
+	if isNumericResource(req.SubnetID) {
+		subnet, err := (&NetworkManager{client: m.client}).GetSubnet(ctx, req.SubnetID)
+		if err != nil {
+			return nil, err
+		}
+
+		req.SubnetID = subnet.ID
+	}
 	labels := BuildLabels(req.Name, req.Tags)
 	machineTypeURL := FormatMachineTypeURL(projectID, zone, req.Flavor)
 
 	// Build instance
 	instance := &computepb.Instance{
-		Name:              proto(req.Name),
-		MachineType:       proto(machineTypeURL),
-		NetworkInterfaces: m.buildNetworkInterfaces(config, req),
-		Disks:             m.buildBootDisks(zone, req),
-		Labels:            labels,
+		Name:               proto(req.Name),
+		MachineType:        proto(machineTypeURL),
+		NetworkInterfaces:  m.buildNetworkInterfaces(config, req),
+		Disks:              m.buildBootDisks(zone, req),
+		Labels:             labels,
+		DeletionProtection: proto(req.Protected),
+		CanIpForward:       proto(req.IPForwarding || req.Tailscale != nil || req.Ingress != nil),
 	}
 
 	m.buildSecurityTags(instance, req)
 	m.buildInstanceMetadata(instance, req)
+
+	fingerprint, err := json.Marshal(instance)
+	if err != nil {
+		return nil, fmt.Errorf("encode instance fingerprint: %w", err)
+	}
+
+	digest := sha256.Sum256(fingerprint)
+	instance.Labels["ocfp-request-sha256"] = hex.EncodeToString(digest[:31])
 
 	op, err := m.client.getInstancesClient().Insert(ctx, &computepb.InsertInstanceRequest{ //nolint:varnamelen
 		Project:          projectID,
@@ -55,12 +113,30 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		InstanceResource: instance,
 	})
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateInstance")
+		wrapped := WrapGCPError(err, "CreateInstance")
+		if !IsAlreadyExists(wrapped) {
+			return nil, wrapped
+		}
+
+		existing, getErr := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: projectID, Zone: zone, Instance: req.Name})
+		if getErr != nil {
+			return nil, WrapGCPError(getErr, "CreateInstance.Reconcile")
+		}
+
+		if !instanceMatchesRequest(existing, instance, req) {
+			return nil, fmt.Errorf("existing instance %s does not match requested ownership/configuration", req.Name)
+		}
+
+		if existing.GetStatus() != "RUNNING" {
+			return m.convertInstance(existing), fmt.Errorf("existing instance %s is not running", req.Name)
+		}
+
+		return m.convertInstance(existing), nil
 	}
 
 	err = op.Wait(ctx)
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateInstance.Wait")
+		return &cpi.Instance{ID: scopedResource(projectID, zone, "instances", req.Name), Name: req.Name}, WrapGCPError(err, "CreateInstance.Wait")
 	}
 
 	logger.Debugw("Created instance", "name", req.Name, "zone", zone, "machineType", req.Flavor)
@@ -68,8 +144,8 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	// Wait for instance to be running
 	waiter := DefaultResourceWaiter()
 
-	err = waiter.WaitForState(ctx, req.Name, []string{"RUNNING"}, func(ctx context.Context) (string, error) {
-		inst, err := m.GetInstance(ctx, req.Name)
+	err = waiter.WaitForState(ctx, req.Name, []string{string(cpi.ResourceStateActive)}, func(ctx context.Context) (string, error) {
+		inst, err := m.GetInstance(ctx, scopedResource(projectID, zone, "instances", req.Name))
 		if err != nil {
 			return "", err
 		}
@@ -77,10 +153,10 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return string(inst.State), nil
 	})
 	if err != nil {
-		logger.Warnw("Instance created but not running yet", "name", req.Name, "error", err)
+		return &cpi.Instance{ID: scopedResource(projectID, zone, "instances", req.Name), Name: req.Name}, fmt.Errorf("instance %s created but readiness failed: %w", req.Name, err)
 	}
 
-	return m.GetInstance(ctx, req.Name)
+	return m.GetInstance(ctx, scopedResource(projectID, zone, "instances", req.Name))
 }
 
 // buildNetworkInterfaces constructs network interface configuration for a new instance.
@@ -91,10 +167,11 @@ func (m *ComputeManager) buildNetworkInterfaces(config *Config, req *cpi.Instanc
 		subnetURL := FormatSubnetworkURL(networkProject, config.Region, req.SubnetID)
 		ni := &computepb.NetworkInterface{ //nolint:varnamelen
 			Subnetwork: proto(subnetURL),
+			NetworkIP:  proto(req.StaticPrivateIP),
 		}
 
 		// Add access config for external IP if in public subnet
-		if req.Tags != nil && req.Tags["public"] == "true" {
+		if (req.PublicIP != nil && *req.PublicIP) || (req.PublicIP == nil && req.Tags["public"] == "true") {
 			ni.AccessConfigs = []*computepb.AccessConfig{
 				{
 					Name:        proto("External NAT"),
@@ -110,9 +187,12 @@ func (m *ComputeManager) buildNetworkInterfaces(config *Config, req *cpi.Instanc
 	if req.NetworkID != "" {
 		networkURL := FormatNetworkURL(networkProject, req.NetworkID)
 
-		return []*computepb.NetworkInterface{
-			{Network: proto(networkURL)},
+		nic := &computepb.NetworkInterface{Network: proto(networkURL), NetworkIP: proto(req.StaticPrivateIP)}
+		if (req.PublicIP != nil && *req.PublicIP) || (req.PublicIP == nil && req.Tags["public"] == "true") {
+			nic.AccessConfigs = []*computepb.AccessConfig{{Name: proto("External NAT"), Type: proto("ONE_TO_ONE_NAT"), NetworkTier: proto("PREMIUM")}}
 		}
+
+		return []*computepb.NetworkInterface{nic}
 	}
 
 	return nil
@@ -149,11 +229,11 @@ func (m *ComputeManager) buildSecurityTags(instance *computepb.Instance, req *cp
 	tags := make([]string, 0, len(req.SecurityGroups)+len(req.SecurityGroupIDs))
 
 	for _, sg := range req.SecurityGroups {
-		tags = append(tags, FormatNetworkTag(sg))
+		tags = append(tags, FormatNetworkTag(ExtractNameFromURL(sg)))
 	}
 
 	for _, sg := range req.SecurityGroupIDs {
-		tags = append(tags, FormatNetworkTag(sg))
+		tags = append(tags, FormatNetworkTag(ExtractNameFromURL(sg)))
 	}
 
 	instance.Tags = &computepb.Tags{
@@ -163,26 +243,26 @@ func (m *ComputeManager) buildSecurityTags(instance *computepb.Instance, req *cp
 
 // buildInstanceMetadata adds SSH key and user data metadata to an instance.
 func (m *ComputeManager) buildInstanceMetadata(instance *computepb.Instance, req *cpi.InstanceRequest) {
-	// Add SSH key from keypair
-	if req.KeyPair != "" || req.KeyPairName != "" {
-		instance.Metadata = &computepb.Metadata{
-			Items: []*computepb.Items{},
+	instance.Metadata = &computepb.Metadata{}
+
+	if req.PublicKey != "" {
+		username := req.DefaultUsername
+		if username == "" {
+			username = "vcap"
 		}
+
+		instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{Key: proto("ssh-keys"), Value: proto(username + ":" + strings.TrimSpace(req.PublicKey))}, &computepb.Items{Key: proto("block-project-ssh-keys"), Value: proto("true")})
 	}
 
-	// Add user data as startup script
-	if req.UserData == "" {
-		return
+	if req.UserData != "" {
+		key := "startup-script"
+		if strings.HasPrefix(strings.TrimSpace(req.UserData), "#cloud-config") || strings.HasPrefix(strings.TrimSpace(req.UserData), "Content-Type: multipart/") {
+			key = "user-data"
+		}
+
+		instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{Key: proto(key), Value: proto(req.UserData)})
 	}
 
-	if instance.GetMetadata() == nil {
-		instance.Metadata = &computepb.Metadata{}
-	}
-
-	instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{
-		Key:   proto("startup-script"),
-		Value: proto(req.UserData),
-	})
 }
 
 // GetInstance retrieves an instance by name or ID.
@@ -194,7 +274,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	instance, err := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{
 		Project:  projectID,
@@ -210,38 +290,27 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 
 // ListInstances lists instances with optional filters.
 func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
 		return nil, err
 	}
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	var instances []*cpi.Instance
-
-	it := m.client.getInstancesClient().List(ctx, &computepb.ListInstancesRequest{ //nolint:varnamelen
-		Project: projectID,
-		Zone:    zone,
-	})
-
+	it := m.client.getInstancesClient().AggregatedList(ctx, &computepb.AggregatedListInstancesRequest{Project: m.client.getConfig().ProjectID})
+	instances := []*cpi.Instance{}
 	for {
-		instance, err := it.Next()
+		pair, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
 		}
-
 		if err != nil {
 			return nil, WrapGCPError(err, "ListInstances")
 		}
 
-		// Apply label filters
-		if matchesLabelFilters(instance.GetLabels(), filters) {
-			instances = append(instances, m.convertInstance(instance))
+		for _, instance := range pair.Value.GetInstances() {
+			if matchesLabelFilters(instance.GetLabels(), filters) {
+				instances = append(instances, m.convertInstance(instance))
+			}
 		}
 	}
-
 	return instances, nil
 }
 
@@ -254,7 +323,7 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error { /
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	op, err := m.client.getInstancesClient().Start(ctx, &computepb.StartInstanceRequest{ //nolint:varnamelen
 		Project:  projectID,
@@ -284,7 +353,7 @@ func (m *ComputeManager) StopInstance(ctx context.Context, id string) error { //
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	op, err := m.client.getInstancesClient().Stop(ctx, &computepb.StopInstanceRequest{ //nolint:varnamelen
 		Project:  projectID,
@@ -314,7 +383,7 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { 
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	op, err := m.client.getInstancesClient().Reset(ctx, &computepb.ResetInstanceRequest{ //nolint:varnamelen
 		Project:  projectID,
@@ -344,8 +413,25 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
+	// ocfp deletion is an explicit lifecycle operation; clear the console guard
+	// only after locating this exact instance and preserve lookup/permission errors.
+	vm, lookupErr := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: projectID, Zone: zone, Instance: id})
+	if lookupErr != nil {
+		wrapped := WrapGCPError(lookupErr, "DeleteInstance.Get")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
+	}
+
+	if vm.GetDeletionProtection() {
+		if clearErr := m.EnsureGuestOptions(ctx, scopedResource(projectID, zone, "instances", id), cpi.GuestOptions{}); clearErr != nil {
+			return clearErr
+		}
+	}
 	op, err := m.client.getInstancesClient().Delete(ctx, &computepb.DeleteInstanceRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Zone:     zone,
@@ -366,192 +452,47 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 }
 
 // CreateKeyPair creates a new SSH key pair (stored in project metadata).
-func (m *ComputeManager) CreateKeyPair(_ctx context.Context, req *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
-	// GCP doesn't have a native key pair concept like AWS
-	// SSH keys are managed via project or instance metadata
-	// We'll return a placeholder that indicates manual key management
-	return &cpi.KeyPair{
-		Name:      req.Name,
-		CreatedAt: time.Now(),
-	}, nil
+func (m *ComputeManager) CreateKeyPair(_ context.Context, _ *cpi.KeyPairRequest) (*cpi.KeyPair, error) {
+	return nil, fmt.Errorf("%w: GCP uses locally managed keys injected per instance", ErrNotImplemented)
 }
-
-// ImportKeyPair imports a public key (adds to project metadata).
-func (m *ComputeManager) ImportKeyPair(_ctx context.Context, name string, _publicKey string) error {
-	// In a full implementation, this would update project metadata
-	// with the SSH key in format: username:ssh-rsa AAAA...
-	logger.Debugw("ImportKeyPair called - SSH keys managed via project/instance metadata", "name", name)
-
+func (m *ComputeManager) ImportKeyPair(_ context.Context, _ string, publicKey string) error {
+	if strings.TrimSpace(publicKey) == "" {
+		return errors.New("public key is required")
+	}
 	return nil
 }
-
-// GetKeyPair retrieves a key pair.
-func (m *ComputeManager) GetKeyPair(_ctx context.Context, name string) (*cpi.KeyPair, error) {
-	// GCP SSH keys are stored in project metadata
-	// Return a placeholder
-	return &cpi.KeyPair{
-		Name: name,
-	}, nil
+func (m *ComputeManager) GetKeyPair(_ context.Context, name string) (*cpi.KeyPair, error) {
+	return nil, &cpi.ProviderError{Provider: "gcp", Code: "NotFound", Message: "GCP keys are managed locally: " + name}
 }
-
-// ListKeyPairs lists key pairs.
-func (m *ComputeManager) ListKeyPairs(_ctx context.Context) ([]*cpi.KeyPair, error) {
-	// Would need to parse project metadata for SSH keys
+func (m *ComputeManager) ListKeyPairs(_ context.Context) ([]*cpi.KeyPair, error) {
 	return []*cpi.KeyPair{}, nil
 }
-
-// DeleteKeyPair deletes a key pair.
-func (m *ComputeManager) DeleteKeyPair(_ctx context.Context, name string) error {
-	// Would need to update project metadata to remove the key
-	logger.Debugw("DeleteKeyPair called - SSH keys managed via project/instance metadata", "name", name)
-
-	return nil
-}
+func (m *ComputeManager) DeleteKeyPair(_ context.Context, _ string) error { return nil }
 
 // CreateVolume creates a persistent disk.
 //
 //nolint:dupl // intentionally similar CPI implementation
 func (m *ComputeManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return (&StorageManager{client: m.client}).CreateVolume(ctx, req)
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	if req.AvailabilityZone != "" {
-		zone = req.AvailabilityZone
-	}
-
-	labels := BuildLabels(req.Name, req.Tags)
-
-	size := int64(req.Size)
-	if req.SizeGB > 0 {
-		size = int64(req.SizeGB)
-	}
-
-	diskType := "pd-balanced"
-	if req.Type != "" {
-		diskType = req.Type
-	} else if req.VolumeType != "" {
-		diskType = req.VolumeType
-	}
-
-	disk := &computepb.Disk{
-		Name:   proto(req.Name),
-		SizeGb: proto(size),
-		Type:   proto(fmt.Sprintf("zones/%s/diskTypes/%s", zone, diskType)),
-		Labels: labels,
-	}
-
-	op, err := m.client.getDisksClient().Insert(ctx, &computepb.InsertDiskRequest{ //nolint:varnamelen
-		Project:      projectID,
-		Zone:         zone,
-		DiskResource: disk,
-	})
-	if err != nil {
-		return nil, WrapGCPError(err, "CreateVolume")
-	}
-
-	err = op.Wait(ctx)
-	if err != nil {
-		return nil, WrapGCPError(err, "CreateVolume.Wait")
-	}
-
-	logger.Debugw("Created persistent disk", "name", req.Name, "size", size, "zone", zone)
-
-	return m.GetVolume(ctx, req.Name)
 }
 
 // GetVolume retrieves a persistent disk by name.
-func (m *ComputeManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) { //nolint:varnamelen
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (m *ComputeManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
+	return (&StorageManager{client: m.client}).GetVolume(ctx, id)
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	disk, err := m.client.getDisksClient().Get(ctx, &computepb.GetDiskRequest{
-		Project: projectID,
-		Zone:    zone,
-		Disk:    id,
-	})
-	if err != nil {
-		return nil, WrapGCPError(err, "GetVolume")
-	}
-
-	return m.convertDisk(disk), nil
 }
 
 // ListVolumes lists persistent disks.
 func (m *ComputeManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return (&StorageManager{client: m.client}).ListVolumes(ctx, filters)
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	var volumes []*cpi.Volume
-
-	it := m.client.getDisksClient().List(ctx, &computepb.ListDisksRequest{ //nolint:varnamelen
-		Project: projectID,
-		Zone:    zone,
-	})
-
-	for {
-		disk, err := it.Next()
-		if errors.Is(err, iterator.Done) {
-			break
-		}
-
-		if err != nil {
-			return nil, WrapGCPError(err, "ListVolumes")
-		}
-
-		if matchesLabelFilters(disk.GetLabels(), filters) {
-			volumes = append(volumes, m.convertDisk(disk))
-		}
-	}
-
-	return volumes, nil
 }
 
 // DeleteVolume deletes a persistent disk.
-func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error { //nolint:varnamelen
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return err
-	}
+func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
+	return (&StorageManager{client: m.client}).DeleteVolume(ctx, id)
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	op, err := m.client.getDisksClient().Delete(ctx, &computepb.DeleteDiskRequest{ //nolint:varnamelen
-		Project: projectID,
-		Zone:    zone,
-		Disk:    id,
-	})
-	if err != nil {
-		return WrapGCPError(err, "DeleteVolume")
-	}
-
-	err = op.Wait(ctx)
-	if err != nil {
-		return WrapGCPError(err, "DeleteVolume.Wait")
-	}
-
-	logger.Debugw("Deleted persistent disk", "name", id, "zone", zone)
-
-	return nil
 }
 
 // ListImages lists available images.
@@ -610,37 +551,47 @@ func (m *ComputeManager) ListImages(ctx context.Context, _filters map[string]str
 }
 
 // GetImage retrieves an image by name or ID.
-func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) { //nolint:varnamelen
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
+func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, error) {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
 		return nil, err
 	}
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
+	project, _, name := resourceScope(m.client.getConfig().ProjectID, "", id)
+	scoped := strings.Contains(id, "projects/")
+	lookup := func(project string) (*cpi.Image, error) {
+		var (
+			image *computepb.Image
+			err   error
+		)
+		if strings.Contains(id, "/images/family/") {
+			image, err = m.client.getImagesClient().GetFromFamily(ctx, &computepb.GetFromFamilyImageRequest{Project: project, Family: name})
+		} else {
+			image, err = m.client.getImagesClient().Get(ctx, &computepb.GetImageRequest{Project: project, Image: name})
+		}
 
-	// Try to get from project first
-	image, err := m.client.getImagesClient().Get(ctx, &computepb.GetImageRequest{
-		Project: projectID,
-		Image:   id,
-	})
-	if err == nil {
+		if err != nil {
+			return nil, WrapGCPError(err, "GetImage")
+		}
+
+		if image.GetSelfLink() == "" {
+			image.SelfLink = proto(fmt.Sprintf("projects/%s/global/images/%s", project, image.GetName()))
+		}
 		return m.convertImage(image), nil
 	}
 
-	// Try common public projects
-	publicProjects := []string{"debian-cloud", "ubuntu-os-cloud", "centos-cloud", "cos-cloud"}
-	for _, project := range publicProjects {
-		image, err := m.client.getImagesClient().Get(ctx, &computepb.GetImageRequest{
-			Project: project,
-			Image:   id,
-		})
-		if err == nil {
-			return m.convertImage(image), nil
+	image, err := lookup(project)
+	if err == nil || scoped || !IsNotFound(err) {
+		return image, err
+	}
+
+	for _, publicProject := range []string{"debian-cloud", "ubuntu-os-cloud", "centos-cloud", "cos-cloud"} {
+		image, err = lookup(publicProject)
+		if err == nil || !IsNotFound(err) {
+			return image, err
 		}
 	}
 
-	return nil, WrapGCPError(err, "GetImage")
+	return nil, err
 }
 
 // ListFlavors lists available machine types.
@@ -687,6 +638,7 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor,
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	zone := config.Zone
+	projectID, zone, id = resourceScope(projectID, zone, id)
 
 	mt, err := m.client.getMachineTypesClient().Get(ctx, &computepb.GetMachineTypeRequest{ //nolint:varnamelen
 		Project:     projectID,
@@ -704,6 +656,7 @@ func (m *ComputeManager) GetFlavor(ctx context.Context, id string) (*cpi.Flavor,
 
 func (m *ComputeManager) convertInstance(instance *computepb.Instance) *cpi.Instance {
 	var (
+		networkID, subnetID string
 		privateIP, publicIP string
 		securityGroups      []string
 	)
@@ -711,6 +664,10 @@ func (m *ComputeManager) convertInstance(instance *computepb.Instance) *cpi.Inst
 	// Extract IPs from network interfaces
 
 	for _, ni := range instance.GetNetworkInterfaces() {
+		if networkID == "" {
+			networkID = ExtractNameFromURL(ni.GetNetwork())
+			subnetID = ExtractNameFromURL(ni.GetSubnetwork())
+		}
 		if ni.GetNetworkIP() != "" {
 			privateIP = ni.GetNetworkIP()
 		}
@@ -741,36 +698,24 @@ func (m *ComputeManager) convertInstance(instance *computepb.Instance) *cpi.Inst
 	}
 
 	return &cpi.Instance{
-		ID:               strconv.FormatUint(instance.GetId(), 10),
-		Name:             instance.GetName(),
-		State:            MapGCPStateToResourceState(instance.GetStatus()),
-		Flavor:           ExtractNameFromURL(instance.GetMachineType()),
-		PrivateIP:        privateIP,
+		ID:        resourceIdentity(m.client.getConfig(), instance.GetZone(), "instances", instance.GetName()),
+		Name:      instance.GetName(),
+		State:     MapGCPStateToResourceState(instance.GetStatus()),
+		Flavor:    ExtractNameFromURL(instance.GetMachineType()),
+		PrivateIP: privateIP,
+		NetworkID: networkID, SubnetID: subnetID,
+		SecurityGroupIDs: securityGroups,
 		PublicIP:         publicIP,
 		SecurityGroups:   securityGroups,
 		AvailabilityZone: ExtractZoneFromURL(instance.GetZone()),
-		Tags:             instance.GetLabels(),
+		Tags:             decodedLabels(instance.GetLabels()),
 		Volumes:          volumes,
 		CreatedAt:        ParseTimestamp(instance.GetCreationTimestamp()),
 	}
 }
 
 func (m *ComputeManager) convertDisk(disk *computepb.Disk) *cpi.Volume {
-	var attachedTo string
-	if len(disk.GetUsers()) > 0 {
-		attachedTo = ExtractNameFromURL(disk.GetUsers()[0])
-	}
-
-	return &cpi.Volume{
-		ID:         strconv.FormatUint(disk.GetId(), 10),
-		Name:       disk.GetName(),
-		Size:       int(disk.GetSizeGb()),
-		Type:       ExtractNameFromURL(disk.GetType()),
-		State:      MapDiskStateToResourceState(disk.GetStatus()),
-		AttachedTo: attachedTo,
-		Tags:       disk.GetLabels(),
-		CreatedAt:  ParseTimestamp(disk.GetCreationTimestamp()),
-	}
+	return (&StorageManager{client: m.client}).convertDisk(disk)
 }
 
 func (m *ComputeManager) convertImage(image *computepb.Image) *cpi.Image {
@@ -781,7 +726,7 @@ func (m *ComputeManager) convertImage(image *computepb.Image) *cpi.Image {
 	}
 
 	return &cpi.Image{
-		ID:          strconv.FormatUint(image.GetId(), 10),
+		ID:          image.GetSelfLink(),
 		Name:        image.GetName(),
 		Description: image.GetDescription(),
 		Size:        image.GetDiskSizeGb() * 1024 * 1024 * 1024, //nolint:mnd // Convert to bytes
@@ -795,7 +740,7 @@ func (m *ComputeManager) convertImage(image *computepb.Image) *cpi.Image {
 
 func (m *ComputeManager) convertMachineType(mt *computepb.MachineType) *cpi.Flavor { //nolint:varnamelen
 	return &cpi.Flavor{
-		ID:          strconv.FormatUint(mt.GetId(), 10),
+		ID:          mt.GetName(),
 		Name:        mt.GetName(),
 		VCPUs:       int(mt.GetGuestCpus()),
 		RAM:         int(mt.GetMemoryMb()),
@@ -809,8 +754,8 @@ func matchesLabelFilters(labels map[string]string, filters map[string]string) bo
 	}
 
 	for k, v := range filters {
-		cleanKey := stripLabelPrefix(k)
-		if labels[cleanKey] != v {
+		cleanKey := SanitizeLabel(stripLabelPrefix(k))
+		if labels[cleanKey] != SanitizeLabel(v) {
 			return false
 		}
 	}
@@ -818,5 +763,108 @@ func matchesLabelFilters(labels map[string]string, filters map[string]string) bo
 	return true
 }
 
-// Ensure base64 import is used.
-var _ = base64.StdEncoding
+// EnsureGuestOptions converges native deletion protection. GCE already restarts
+// ordinary instances after infrastructure failures; StartOnBoot is PVE-specific.
+func (m *ComputeManager) EnsureGuestOptions(ctx context.Context, id string, options cpi.GuestOptions) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+		return err
+	}
+
+	cfg := m.client.getConfig()
+	project, zone, name := resourceScope(cfg.ProjectID, cfg.Zone, id)
+
+	op, err := m.client.getInstancesClient().SetDeletionProtection(ctx, &computepb.SetDeletionProtectionInstanceRequest{Project: project, Zone: zone, Resource: name, DeletionProtection: proto(options.Protected)})
+	if err != nil {
+		return WrapGCPError(err, "EnsureGuestOptions")
+	}
+
+	return WrapGCPError(op.Wait(ctx), "EnsureGuestOptions.Wait")
+}
+
+// Adoption is deliberately conservative: ownership and each requested native
+// setting must agree; a conflict never authorizes changing a running guest.
+func instanceMatchesRequest(existing, desired *computepb.Instance, req *cpi.InstanceRequest) bool {
+	if len(req.Tags) == 0 || !matchesLabelFilters(existing.GetLabels(), req.Tags) || ExtractNameFromURL(existing.GetMachineType()) != req.Flavor || existing.GetDeletionProtection() != desired.GetDeletionProtection() || existing.GetCanIpForward() != desired.GetCanIpForward() {
+		return false
+	}
+
+	if !instanceNetworksMatch(existing.GetNetworkInterfaces(), desired.GetNetworkInterfaces()) {
+		return false
+	}
+
+	metadata := map[string]string{}
+	for _, item := range existing.GetMetadata().GetItems() {
+		metadata[item.GetKey()] = item.GetValue()
+	}
+
+	for _, item := range desired.GetMetadata().GetItems() {
+		if metadata[item.GetKey()] != item.GetValue() {
+			return false
+		}
+	}
+
+	if !sameStringSet(existing.GetTags().GetItems(), desired.GetTags().GetItems()) {
+		return false
+	}
+	// The creation fingerprint binds immutable image and disk requests even
+	// though the read API omits boot-disk initialize parameters.
+	if req.Image != "" || req.BootVolumeSize > 0 {
+		if existing.GetLabels()["ocfp-request-sha256"] != desired.GetLabels()["ocfp-request-sha256"] {
+			return false
+		}
+	}
+
+	return true
+}
+func canonicalURL(value string) string {
+	return strings.TrimPrefix(value, "https://www.googleapis.com/compute/v1/")
+}
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	counts := map[string]int{}
+	for _, v := range a {
+		counts[v]++
+	}
+
+	for _, v := range b {
+		counts[v]--
+	}
+
+	for _, v := range counts {
+		if v != 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func instanceNetworksMatch(existing, desired []*computepb.NetworkInterface) bool {
+	if len(existing) != len(desired) {
+		return false
+	}
+
+	for i, nic := range desired {
+		actual := existing[i]
+		if nic.GetSubnetwork() != "" && canonicalURL(actual.GetSubnetwork()) != canonicalURL(nic.GetSubnetwork()) {
+			return false
+		}
+
+		if nic.GetNetwork() != "" && canonicalURL(actual.GetNetwork()) != canonicalURL(nic.GetNetwork()) {
+			return false
+		}
+
+		if nic.GetNetworkIP() != "" && actual.GetNetworkIP() != nic.GetNetworkIP() {
+			return false
+		}
+
+		if len(actual.GetAccessConfigs()) != len(nic.GetAccessConfigs()) {
+			return false
+		}
+	}
+
+	return true
+}
