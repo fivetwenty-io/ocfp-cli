@@ -243,9 +243,11 @@ type Config struct {
 	// PVE-specific; ignored by other providers.
 	Nodes []string `json:"nodes" mapstructure:"nodes" yaml:"nodes,omitempty"`
 	// Prefer snake_case to match README and user configs
-	ProjectID string `json:"project_id" mapstructure:"project_id" yaml:"project_id,omitempty"`
-	OrgID     string `json:"org_id"     mapstructure:"org_id"     yaml:"org_id,omitempty"`
-	AuthToken string `json:"auth_token" mapstructure:"auth_token" yaml:"auth_token,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
+	EnableSharedVPC bool   `json:"enable_shared_vpc,omitempty" mapstructure:"enable_shared_vpc" yaml:"enable_shared_vpc,omitempty"`
+	HostProjectID   string `json:"host_project_id,omitempty"   mapstructure:"host_project_id"   yaml:"host_project_id,omitempty"`
+	ProjectID       string `json:"project_id"                  mapstructure:"project_id"        yaml:"project_id,omitempty"`
+	OrgID           string `json:"org_id"                      mapstructure:"org_id"            yaml:"org_id,omitempty"`
+	AuthToken       string `json:"auth_token"                  mapstructure:"auth_token"        yaml:"auth_token,omitempty"` // #nosec -- field name is descriptive, not a hardcoded secret
 	// TokenSecret holds the PVE API token secret for API token auth. Distinct from
 	// Password, which is used only for username/password auth. When AuthToken is set,
 	// TokenSecret must also be set; Password is ignored for auth purposes in that mode.
@@ -648,6 +650,7 @@ type BucketSettings struct {
 
 // NetworkConfig represents network configuration.
 type NetworkConfig struct {
+	CloudEgress    string   `json:"cloudEgress,omitempty"    mapstructure:"cloudEgress"    yaml:"cloudEgress,omitempty"`
 	ID             string   `json:"id,omitempty"             mapstructure:"id"             yaml:"id,omitempty"`
 	Name           string   `json:"name,omitempty"           mapstructure:"name"           yaml:"name,omitempty"`
 	CIDR           string   `json:"cidr,omitempty"           mapstructure:"cidr"           yaml:"cidr,omitempty"`
@@ -743,6 +746,7 @@ func (n *NetworkConfig) normalizeDNS() {
 // field.
 func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	type rawNetwork struct {
+		CloudEgress    string   `yaml:"cloudEgress,omitempty"`
 		ID             string   `yaml:"id,omitempty"`
 		Name           string   `yaml:"name,omitempty"`
 		CIDR           string   `yaml:"cidr,omitempty"`
@@ -787,6 +791,7 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		return fmt.Errorf("decoding network config: %w", err)
 	}
 
+	n.CloudEgress = raw.CloudEgress
 	n.ID = raw.ID
 	n.Name = raw.Name
 	n.CIDR = firstSetString(raw.CIDR, raw.NetworkCIDR, raw.NetworkCIDRSC)
@@ -899,6 +904,7 @@ func mergePVEDefaults(bloc *Config, defaults *PVEDefaults) {
 
 // Subnet configuration.
 type Subnet struct {
+	ID               string `json:"id,omitempty"               mapstructure:"id"               yaml:"id,omitempty"`
 	Name             string `json:"name,omitempty"             mapstructure:"name"             yaml:"name,omitempty"`
 	CIDR             string `json:"cidr,omitempty"             mapstructure:"cidr"             yaml:"cidr,omitempty"`
 	AvailabilityZone string `json:"availabilityZone,omitempty" mapstructure:"availabilityZone" yaml:"availabilityZone,omitempty"`
@@ -2297,6 +2303,10 @@ func validate(cfg *Config) error {
 
 	if !providerValid {
 		return ErrInvalidProvider(cfg.Provider)
+	}
+
+	if err := cfg.ValidateCloudEgress(); err != nil {
+		return err
 	}
 
 	// Validate bloc-scoped blobstore config (mode/endpoint/credentials).

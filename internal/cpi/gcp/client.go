@@ -354,6 +354,9 @@ func (c *Client) parseConfig(config interface{}) (*Config, error) {
 	case *Config:
 		return configValue, nil
 	case *ocfpconfig.Config:
+		if err := configValue.ValidateCloudEgress(); err != nil {
+			return nil, err
+		}
 		return c.convertOCFPConfig(configValue), nil
 	case map[string]interface{}:
 		return c.handleMapConfig()
@@ -365,6 +368,10 @@ func (c *Client) parseConfig(config interface{}) (*Config, error) {
 // convertOCFPConfig converts OCFP config to GCP config.
 func (c *Client) convertOCFPConfig(configValue *ocfpconfig.Config) *Config {
 	cfg := DefaultConfig()
+
+	cfg.EnableSharedVPC = configValue.EnableSharedVPC
+	cfg.HostProjectID = configValue.HostProjectID
+	cfg.NetworkName = configValue.Network.Name
 
 	// Map OCFP config fields to GCP config
 	if configValue.ProjectID != "" {

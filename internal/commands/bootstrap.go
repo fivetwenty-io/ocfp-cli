@@ -455,6 +455,11 @@ func buildProviderConfig(cfg *config.Config, region string) map[string]interface
 		providerConfig["session_token"] = cfg.SessionToken
 	}
 
+	if cfg.Provider == "gcp" {
+		providerConfig["enable_shared_vpc"] = cfg.EnableSharedVPC
+		providerConfig["host_project_id"] = cfg.HostProjectID
+		providerConfig["network_name"] = cfg.Network.Name
+	}
 	addServiceAccountConfig(providerConfig, cfg)
 	addAPIEndpointConfig(providerConfig, cfg)
 	addPVEProviderConfig(providerConfig, cfg)

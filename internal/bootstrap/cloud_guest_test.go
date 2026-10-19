@@ -54,3 +54,16 @@ func TestCloudBootstrapPackagesUseSupportedNames(t *testing.T) {
 		t.Fatal("obsolete zlibc package prevents supported Ubuntu bootstrap")
 	}
 }
+
+func TestPrivateCloudBastionHasNoPublicIP(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp"} {
+		m := &Manager{config: &config.Config{Provider: provider, Network: config.NetworkConfig{CloudEgress: "existing-private", ID: "external", Subnets: []config.Subnet{{ID: "subnet", Name: "work", CIDR: "10.0.4.0/22", AvailabilityZone: "us-central1-b"}}}}, options: &Options{Provider: provider}}
+		req := &cpi.InstanceRequest{}
+		if err := m.prepareCloudBastion(req); err != nil {
+			t.Fatal(err)
+		}
+		if req.PublicIP == nil || *req.PublicIP {
+			t.Fatal("private topology requested a public address")
+		}
+	}
+}
