@@ -774,6 +774,9 @@ func cloudflareSafe() vault.SafeInterface {
 
 // DeleteResource deletes a single resource.
 func (m *TeardownManager) DeleteResource(ctx context.Context, resource *ResourceToDelete) error {
+	if m.isImportedNetworkResource(resource) {
+		return fmt.Errorf("refusing to delete imported network resource %s", resource.ID)
+	}
 	switch resource.Type {
 	case ResourceInstance, ResourceArtifacts:
 		return m.deleteComputeResource(ctx, resource)
@@ -2135,6 +2138,9 @@ func (m *TeardownManager) isSelectiveModeActive() bool {
 
 // shouldIncludeResource checks if a resource should be included based on all filters.
 func (m *TeardownManager) shouldIncludeResource(resource *ResourceToDelete, bastionName string) bool {
+	if m.isImportedNetworkResource(resource) {
+		return false
+	}
 	selectiveModeActive := m.isSelectiveModeActive()
 
 	if selectiveModeActive {

@@ -13,7 +13,11 @@ func (m *Manager) prepareCloudBastion(req *cpi.InstanceRequest) error {
 	}
 	// Public access supplies outbound package/bootstrap connectivity. Inbound
 	// access remains controlled by the bloc's security group rules.
-	public := true
+	if err := m.config.ValidateCloudEgress(); err != nil {
+		return err
+	}
+
+	public := m.config.CloudPublicIP()
 	req.PublicIP = &public
 	req.IPForwarding = req.Ingress != nil || req.Tailscale != nil
 
