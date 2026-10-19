@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
 )
 
@@ -191,7 +192,7 @@ func (f FQDNFilter) validateKeys(selected []string, records map[string]map[strin
 // The filter narrows the plan itself, so the dry run, the write, and the
 // printed summary all see the same keys. The filter is checked before any
 // read of vault, and a bad plane or key fails the whole plan.
-func (p *PVEVaultProvider) PlanFQDNs(force bool, filter FQDNFilter) ([]FQDNPlaneChanges, error) {
+func (p *fqdnPlanner) PlanFQDNs(force bool, filter FQDNFilter) ([]FQDNPlaneChanges, error) {
 	selected, err := filter.selectedPlanes()
 	if err != nil {
 		return nil, err
@@ -230,7 +231,7 @@ func (p *PVEVaultProvider) PlanFQDNs(force bool, filter FQDNFilter) ([]FQDNPlane
 }
 
 // planFQDNPlane diffs one plane's derived record against what vault holds.
-func (p *PVEVaultProvider) planFQDNPlane(envType string, record map[string]any, force bool, filter FQDNFilter) (FQDNPlaneChanges, error) {
+func (p *fqdnPlanner) planFQDNPlane(envType string, record map[string]any, force bool, filter FQDNFilter) (FQDNPlaneChanges, error) {
 	path := p.PathBuilder.GetFQDNsPath(envType)
 
 	existing, err := p.Safe.GetAll(path)
@@ -276,7 +277,7 @@ func (p *PVEVaultProvider) ConfigureMissingFQDNs(force bool, reporter providers.
 
 // ConfigureFQDNsScoped is ConfigureMissingFQDNs limited to the planes and keys
 // the filter selects.
-func (p *PVEVaultProvider) ConfigureFQDNsScoped(force bool, filter FQDNFilter, reporter providers.ProgressReporter) error {
+func (p *fqdnPlanner) ConfigureFQDNsScoped(force bool, filter FQDNFilter, reporter providers.ProgressReporter) error {
 	phaseStart := time.Now()
 
 	if reporter != nil {
@@ -344,7 +345,7 @@ func (m *Manager) populateFQDNsPhase(opts *PopulateOptions, w io.Writer) error {
 // populateFQDNsDryRun prints what the fqdns phase would write and writes
 // nothing. The provider handed in was built over a recording safe.
 func (m *Manager) populateFQDNsDryRun(provider providers.VaultProvider, force bool, filter FQDNFilter, target string, w io.Writer) error {
-	pveProvider, ok := provider.(*PVEVaultProvider)
+	pveProvider, ok := provider.(fqdnProvider)
 	if !ok {
 		return fmt.Errorf("%w: got %q", ErrFQDNsRequiresPVE, m.config.Provider)
 	}
@@ -360,13 +361,13 @@ func (m *Manager) populateFQDNsDryRun(provider providers.VaultProvider, force bo
 }
 
 // fqdnsProvider builds the PVE provider over safe, or names the limitation.
-func (m *Manager) fqdnsProvider(safe SafeInterface) (*PVEVaultProvider, error) {
+func (m *Manager) fqdnsProvider(safe SafeInterface) (fqdnProvider, error) {
 	provider, err := m.createVaultProviderWith(safe)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
-	pveProvider, ok := provider.(*PVEVaultProvider)
+	pveProvider, ok := provider.(fqdnProvider)
 	if !ok {
 		return nil, fmt.Errorf("%w: got %q", ErrFQDNsRequiresPVE, m.config.Provider)
 	}
@@ -449,4 +450,45 @@ func sortedKeys(m map[string]string) []string {
 	sort.Strings(keys)
 
 	return keys
+}
+
+type fqdnProvider interface {
+	PlanFQDNs(force bool, filter FQDNFilter) ([]FQDNPlaneChanges, error)
+	ConfigureFQDNsScoped(force bool, filter FQDNFilter, reporter providers.ProgressReporter) error
+}
+type fqdnPlanner struct {
+	Config            *config.Config
+	Safe              SafeInterface
+	PathBuilder       *PathBuilder
+	derivedFQDNRecord func(string) map[string]any
+}
+
+func (p *PVEVaultProvider) fqdnPlanner() *fqdnPlanner {
+	return &fqdnPlanner{p.Config, p.Safe, p.PathBuilder, p.derivedFQDNRecord}
+}
+func (p *PVEVaultProvider) PlanFQDNs(force bool, f FQDNFilter) ([]FQDNPlaneChanges, error) {
+	return p.fqdnPlanner().PlanFQDNs(force, f)
+}
+func (p *PVEVaultProvider) ConfigureFQDNsScoped(force bool, f FQDNFilter, r providers.ProgressReporter) error {
+	return p.fqdnPlanner().ConfigureFQDNsScoped(force, f, r)
+}
+func cloudFQDNPlanner(cfg *config.Config, safe SafeInterface, pb *PathBuilder) *fqdnPlanner {
+	cfgCopy := *cfg
+	if cfgCopy.FQDNs == nil && cfgCopy.DomainName != "" {
+		cfgCopy.FQDNs = &config.FQDNConfig{Base: cfgCopy.DomainName}
+	}
+
+	return &fqdnPlanner{&cfgCopy, safe, pb, func(env string) map[string]any { return cloudFQDNRecord(&cfgCopy, env) }}
+}
+func (a *AWSVaultProvider) PlanFQDNs(force bool, f FQDNFilter) ([]FQDNPlaneChanges, error) {
+	return cloudFQDNPlanner(a.Config, a.Safe, a.PathBuilder).PlanFQDNs(force, f)
+}
+func (a *AWSVaultProvider) ConfigureFQDNsScoped(force bool, f FQDNFilter, r providers.ProgressReporter) error {
+	return cloudFQDNPlanner(a.Config, a.Safe, a.PathBuilder).ConfigureFQDNsScoped(force, f, r)
+}
+func (g *GCPVaultProvider) PlanFQDNs(force bool, f FQDNFilter) ([]FQDNPlaneChanges, error) {
+	return cloudFQDNPlanner(g.Config, g.Safe, g.PathBuilder).PlanFQDNs(force, f)
+}
+func (g *GCPVaultProvider) ConfigureFQDNsScoped(force bool, f FQDNFilter, r providers.ProgressReporter) error {
+	return cloudFQDNPlanner(g.Config, g.Safe, g.PathBuilder).ConfigureFQDNsScoped(force, f, r)
 }

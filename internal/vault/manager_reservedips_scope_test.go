@@ -183,7 +183,7 @@ func TestPopulate_PhaseReservedIPs_NonPVEProvider_ReturnsNamedError(t *testing.T
 	safe := newFakeSafe()
 
 	cfg := &config.Config{ //nolint:exhaustruct
-		Provider: "aws",
+		Provider: "stackit",
 		Region:   "us-east-1",
 	}
 	mgr := newReservedIPsScopeTestManager(cfg, safe)
@@ -260,7 +260,7 @@ func TestReservedIPs_NonPVEProvider_ReturnsNamedError(t *testing.T) {
 	safe := newFakeSafe()
 
 	cfg := &config.Config{ //nolint:exhaustruct
-		Provider: "gcp",
+		Provider: "stackit",
 		Region:   "us-central1",
 	}
 	mgr := newReservedIPsScopeTestManager(cfg, safe)

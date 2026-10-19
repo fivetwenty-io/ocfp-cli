@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -21,6 +22,7 @@ import (
 
 // GCPVaultProvider implements vault operations for GCP.
 type GCPVaultProvider struct {
+	blobstoreOptions *PopulateOptions
 	*providers.BaseVaultProvider
 
 	Safe        SafeInterface
@@ -40,6 +42,10 @@ func NewGCPVaultProvider(cfg *config.Config, safe SafeInterface, blocName string
 
 // Configure performs full vault configuration for GCP.
 func (g *GCPVaultProvider) Configure(reporter providers.ProgressReporter) error {
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
+	}
+
 	g.logger.Infow("Starting GCP vault configuration", "bloc", g.BlocName)
 
 	// Track phase numbers across entire configuration
@@ -82,6 +88,10 @@ func (g *GCPVaultProvider) Configure(reporter providers.ProgressReporter) error 
 
 // ConfigureIAAS configures GCP-specific IAAS settings.
 func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter providers.ProgressReporter, phaseNum *int, totalPhases int) error {
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
+	}
+
 	currentPhase := 0
 	if phaseNum != nil {
 		currentPhase = *phaseNum
@@ -96,18 +106,26 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 
 	g.logger.Infow("Configuring GCP IAAS", "env_type", envType)
 
+	credentials, err := g.credentialsJSON()
+	if err != nil {
+		return err
+	}
 	// Configure GCP CPI settings
 	cpiPath := fmt.Sprintf("secret/config/%s/%s/cpi/gcp", g.BlocName, envType)
 
 	cpiConfig := map[string]interface{}{
 		"project":                 g.Config.ProjectID,
 		"zone":                    g.Config.Region, // GCP uses zone for compute
-		"json_key":                g.Config.ServiceAccountJSON,
+		"json_key":                credentials,
 		"default_key_name":        g.BlocName + "-bastion",
 		"default_security_groups": fmt.Sprintf(`["%s-default","%s-ocfp"]`, g.BlocName, g.BlocName),
 	}
 
-	err := g.Safe.SetMultiple(cpiPath, cpiConfig)
+	if credentials == "" {
+		delete(cpiConfig, "json_key")
+	}
+
+	err = g.Safe.SetMultiple(cpiPath, cpiConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set CPI config: %w", err)
 	}
@@ -115,9 +133,10 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 	// Configure VPC network
 	networkPath := g.PathBuilder.GetNetPath(envType)
 	networkConfig := map[string]interface{}{
-		"name":   fmt.Sprintf("%s-%s-network", g.BlocName, envType),
+		"name":   g.Config.Network.Name,
 		"region": gcpcpi.GetRegionFromZone(g.Config.Region),
 		"zone":   g.Config.Region,
+		"id":     g.awsStateReader().getVPCID(),
 	}
 
 	err = g.Safe.SetMultiple(networkPath, networkConfig)
@@ -134,6 +153,16 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 
 // ConfigureBlobstores configures Cloud Storage bucket settings.
 func (g *GCPVaultProvider) ConfigureBlobstores(_envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
+	}
+
+	if external, err := g.externalBlobstore(); err != nil {
+		return err
+	} else if external != nil {
+		return external.ConfigureBlobstores(_envPath, envType, nil, 1, 1)
+	}
+
 	currentPhase := phaseNum
 	phaseName := "blobstores-" + envType
 	phaseStart := time.Now()
@@ -187,37 +216,16 @@ func (g *GCPVaultProvider) ConfigureBlobstores(_envPath, envType string, reporte
 
 // ConfigureDatabases configures Cloud SQL settings.
 func (g *GCPVaultProvider) ConfigureDatabases(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := "databases-" + envType
-	phaseStart := time.Now()
-
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
 	}
 
-	g.logger.Infow("Configuring databases (Cloud SQL)", "env_type", envType)
+	defer cloudPhase(reporter, "databases-"+envType, phaseNum, totalPhases)()
 
-	if reporter != nil {
-		reporter.ReportSubtaskProgress(phaseName, 1, 1, "Writing database configuration")
-	}
-
-	dbPath := envPath + "/databases/postgres"
-	region := gcpcpi.GetRegionFromZone(g.Config.Region)
-
-	dbConfig := map[string]interface{}{
-		"hostname": fmt.Sprintf("%s-%s-postgres.%s.sql.gcloud.com", g.BlocName, envType, region),
-		"port":     5432, //nolint:mnd
-		"type":     "postgres",
-		"region":   region,
-	}
-
-	err := g.Safe.SetMultiple(dbPath, dbConfig)
-	if err != nil {
-		return fmt.Errorf("failed to set database config: %w", err)
-	}
-
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+	for name, data := range cloudDatabases(g.awsStateReader().loadStateManager(), envType) {
+		if err := g.Safe.SetMultiple(g.PathBuilder.GetDatabasePath(envType, name), data); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -225,43 +233,13 @@ func (g *GCPVaultProvider) ConfigureDatabases(envPath, envType string, reporter 
 
 // ConfigureLoadBalancers configures Cloud Load Balancing settings.
 func (g *GCPVaultProvider) ConfigureLoadBalancers(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := "load-balancers-" + envType
-	phaseStart := time.Now()
-
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
 	}
 
-	g.logger.Infow("Configuring load balancers", "env_type", envType)
+	defer cloudPhase(reporter, "load-balancers-"+envType, phaseNum, totalPhases)()
 
-	// Define load balancers based on environment type
-	loadBalancers := g.getLoadBalancersForEnv(envType)
-
-	for i, lb := range loadBalancers { //nolint:varnamelen // lb is clear in context
-		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, i+1, len(loadBalancers), "Writing "+lb.name)
-		}
-
-		lbPath := fmt.Sprintf("%s/load-balancers/%s", envPath, lb.name)
-		lbConfig := map[string]interface{}{
-			"name":    fmt.Sprintf("%s-%s-%s", g.BlocName, envType, lb.name),
-			"type":    lb.lbType,
-			"port":    lb.port,
-			"backend": lb.backend,
-		}
-
-		err := g.Safe.SetMultiple(lbPath, lbConfig)
-		if err != nil {
-			return fmt.Errorf("failed to set load balancer %s: %w", lb.name, err)
-		}
-	}
-
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
-	}
-
-	return nil
+	return writeCloudLoadBalancers(g.Safe, g.PathBuilder, g.awsStateReader().loadStateManager(), envType)
 }
 
 type loadBalancerConfig struct {
@@ -273,41 +251,18 @@ type loadBalancerConfig struct {
 
 // ConfigureFQDNs configures DNS domain names.
 func (g *GCPVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := "fqdns-" + envType
-	phaseStart := time.Now()
-
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
 	}
 
-	g.logger.Infow("Configuring FQDNs", "env_type", envType)
+	defer cloudPhase(reporter, "fqdns-"+envType, phaseNum, totalPhases)()
 
-	// Get FQDNs for this environment
-	fqdns := g.getFQDNsForEnv(envType)
-
-	for i, fqdn := range fqdns {
-		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, i+1, len(fqdns), "Writing "+fqdn.name)
-		}
-
-		fqdnPath := fmt.Sprintf("%s/fqdns/%s", envPath, fqdn.name)
-		fqdnConfig := map[string]interface{}{
-			"fqdn":   fqdn.fqdn,
-			"system": fqdn.system,
-		}
-
-		err := g.Safe.SetMultiple(fqdnPath, fqdnConfig)
-		if err != nil {
-			return fmt.Errorf("failed to set FQDN %s: %w", fqdn.name, err)
-		}
+	record := cloudFQDNRecord(g.Config, envType)
+	if len(record) == 0 {
+		return nil
 	}
 
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
-	}
-
-	return nil
+	return g.Safe.SetMultiple(g.PathBuilder.GetFQDNsPath(envType), record)
 }
 
 type fqdnConfig struct {
@@ -318,6 +273,10 @@ type fqdnConfig struct {
 
 // ConfigureCertificates configures TLS certificates.
 func (g *GCPVaultProvider) ConfigureCertificates(_envPath, _envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
+	}
+
 	currentPhase := phaseNum
 	phaseName := PhaseCertificates
 	phaseStart := time.Now()
@@ -353,42 +312,18 @@ func (g *GCPVaultProvider) ConfigureCertificates(_envPath, _envType string, repo
 
 // ConfigurePublicIPs configures external IP addresses.
 func (g *GCPVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := PhasePublicIPs
-	phaseStart := time.Now()
-
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
+	if err := validateCloudState(g.BlocName); err != nil {
+		return err
 	}
 
-	g.logger.Info("Configuring public IPs")
+	defer cloudPhase(reporter, PhasePublicIPs, phaseNum, totalPhases)()
 
-	// Get public IPs from the state or configuration
-	publicIPs := g.getPublicIPs()
-
-	for i, ip := range publicIPs { //nolint:varnamelen // ip is clear in context
-		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, i+1, len(publicIPs), fmt.Sprintf("Writing %s IP", ip.job))
-		}
-
-		ipPath := fmt.Sprintf("secret/config/%s/public-ips/%s", g.BlocName, ip.job)
-		ipConfig := map[string]interface{}{
-			"ip":    ip.address,
-			"job":   ip.job,
-			"index": ip.index,
-		}
-
-		err := g.Safe.SetMultiple(ipPath, ipConfig)
-		if err != nil {
-			return fmt.Errorf("failed to set public IP %s: %w", ip.job, err)
-		}
+	data := g.awsStateReader().getPublicIPsFromState()
+	if len(data) == 0 {
+		return nil
 	}
 
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
-	}
-
-	return nil
+	return g.Safe.SetMultiple(g.PathBuilder.GetPublicIPsPath(), data)
 }
 
 type publicIPConfig struct {
@@ -527,47 +462,41 @@ func (g *GCPVaultProvider) configureEnvironment(envType string, reporter provide
 
 // configureSubnets configures subnet settings.
 func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := "subnets-" + envType
-	phaseStart := time.Now()
+	defer cloudPhase(reporter, "subnets-"+envType, phaseNum, totalPhases)()
 
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
+	subnets, err := cloudSubnets(g.Config, g.awsStateReader().loadStateManager())
+	if err != nil {
+		return err
 	}
 
-	g.logger.Infow("Configuring subnets", "env_type", envType)
-
-	// Standard subnet configuration for GCP
-	subnets := []struct {
-		name string
-		cidr string
-	}{
-		{"compilation", "10.0.0.0/24"},
-		{"core", "10.0.1.0/24"},
-		{"edge", "10.0.2.0/24"},
+	if len(subnets) == 0 {
+		return errors.New("GCP subnet configuration requires bootstrap state or configured subnets")
 	}
 
-	for i, subnet := range subnets {
-		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, i+1, len(subnets), fmt.Sprintf("Writing %s subnet", subnet.name))
-		}
+	if err := writeCloudAZs(g.Safe, g.PathBuilder, g.Config, envType, subnets); err != nil {
+		return err
+	}
 
-		subnetPath := fmt.Sprintf("%s/subnets/%s", envPath, subnet.name)
-		subnetConfig := map[string]interface{}{
-			"name":                  fmt.Sprintf("%s-%s-%s", g.BlocName, envType, subnet.name),
-			"cidr":                  subnet.cidr,
-			"region":                gcpcpi.GetRegionFromZone(g.Config.Region),
-			"private_google_access": true,
-		}
-
-		err := g.Safe.SetMultiple(subnetPath, subnetConfig)
+	for _, sub := range subnets {
+		info, err := g.awsStateReader().parseSubnetCIDR(sub.CIDR)
 		if err != nil {
-			return fmt.Errorf("failed to set subnet %s: %w", subnet.name, err)
+			return err
 		}
-	}
 
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
+		data := map[string]interface{}{"name": sub.Name, "cidr_block": sub.CIDR, "subnet_cidr": sub.CIDR, "gateway": info.gateway, "ip_0": info.network, "ip_n": info.lastHost, "az": cloudAZKey(g.Config, sub.AvailabilityZone), "region": gcpcpi.GetRegionFromZone(g.Config.Region), "provider": "gcp", "type": sub.Type, "subnet_num": sub.Index, "dns": pveFirstNonEmpty(pveFirstDNS(g.Config.DNS), DefaultDNSServer)}
+		if sub.ID != "" {
+			data["id"] = sub.ID
+		}
+
+		if err := g.Safe.SetMultiple(g.PathBuilder.GetSubnetPath(envType, sub.Type, sub.Index), data); err != nil {
+			return err
+		}
+
+		if sub.Type == DefaultSubnetType {
+			if err := g.awsStateReader().configureSubnetReservedIPs(sub.CIDR, sub.Type, sub.Index, envType); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -575,56 +504,9 @@ func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter pr
 
 // configureSecurityGroups configures firewall rules.
 func (g *GCPVaultProvider) configureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
-	currentPhase := phaseNum
-	phaseName := "security-groups-" + envType
-	phaseStart := time.Now()
+	defer cloudPhase(reporter, "security-groups-"+envType, phaseNum, totalPhases)()
 
-	if reporter != nil {
-		reporter.ReportPhaseStart(phaseName, currentPhase, totalPhases)
-	}
-
-	g.logger.Infow("Configuring security groups (firewall rules)", "env_type", envType)
-
-	// GCP uses firewall rules with network tags
-	securityGroups := []struct {
-		name        string
-		description string
-	}{
-		{"default", "Default firewall rules"},
-		{"ocfp", "OCFP management firewall rules"},
-		{"bosh", "BOSH director firewall rules"},
-	}
-
-	if envType == OCFEnvType {
-		securityGroups = append(securityGroups, struct {
-			name        string
-			description string
-		}{"cf", "Cloud Foundry firewall rules"})
-	}
-
-	for i, sg := range securityGroups { //nolint:varnamelen // sg is clear in context
-		if reporter != nil {
-			reporter.ReportSubtaskProgress(phaseName, i+1, len(securityGroups), "Writing "+sg.name)
-		}
-
-		sgPath := fmt.Sprintf("%s/security-groups/%s", envPath, sg.name)
-		sgConfig := map[string]interface{}{
-			"name":        fmt.Sprintf("%s-%s", g.BlocName, sg.name),
-			"description": sg.description,
-			"network_tag": fmt.Sprintf("sg-%s-%s", g.BlocName, sg.name),
-		}
-
-		err := g.Safe.SetMultiple(sgPath, sgConfig)
-		if err != nil {
-			return fmt.Errorf("failed to set security group %s: %w", sg.name, err)
-		}
-	}
-
-	if reporter != nil {
-		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
-	}
-
-	return nil
+	return writeCloudSecurityGroups(g.Safe, g.PathBuilder, g.awsStateReader().loadStateManager(), g.BlocName, envType, true)
 }
 
 // getBlobstoresForSystem returns blobstore configuration for a system.
@@ -634,16 +516,22 @@ func (g *GCPVaultProvider) getBlobstoresForSystem(system, envType string) map[st
 
 	switch system {
 	case "bosh":
+		blobstores["bosh"] = map[string]interface{}{"bucket_name": fmt.Sprintf("%s-%s-bosh", g.BlocName, envType), "region": region, "storage_class": "STANDARD", "type": "gcs"}
 		blobstores["artifacts"] = map[string]interface{}{
-			"bucket_name":   fmt.Sprintf("%s-%s-bosh-artifacts", g.BlocName, envType),
+			"bucket_name":   fmt.Sprintf("%s-%s-artifacts", g.BlocName, envType),
 			"region":        region,
 			"storage_class": "STANDARD",
 		}
 	case "cf":
 		cfBlobstores := []string{"buildpacks", "droplets", "packages", "resources"}
 		for _, name := range cfBlobstores {
+			bucketName := name
+			if name == "resources" {
+				bucketName = "resource-pool"
+			}
+
 			blobstores[name] = map[string]interface{}{
-				"bucket_name":   fmt.Sprintf("%s-%s-cf-%s", g.BlocName, envType, name),
+				"bucket_name":   fmt.Sprintf("%s-%s-cf-%s", g.BlocName, envType, bucketName),
 				"region":        region,
 				"storage_class": "STANDARD",
 			}
@@ -739,3 +627,41 @@ var (
 	_ = io.EOF
 	_ = cpi.ResourceStateActive
 )
+
+// awsStateReader shares the provider-independent state and reservation readers.
+func (g *GCPVaultProvider) awsStateReader() *AWSVaultProvider {
+	return NewAWSVaultProvider(g.Config, g.Safe, g.BlocName)
+}
+func (g *GCPVaultProvider) credentialsJSON() (string, error) {
+	source := pveFirstNonEmpty(g.Config.ServiceAccountJSON, g.Config.ServiceAccountKeyPath)
+	if source == "" {
+		return "", nil
+	}
+
+	cfg := gcpcpi.Config{ServiceAccountJSON: source}
+
+	data, err := cfg.GetServiceAccountCredentials()
+	if err != nil {
+		return "", fmt.Errorf("resolve GCP CPI credentials: %w", err)
+	}
+
+	if !json.Valid(data) {
+		return "", errors.New("GCP credential file does not contain valid JSON")
+	}
+
+	return string(data), nil
+}
+
+func cloudPhase(reporter providers.ProgressReporter, name string, number, total int) func() {
+	start := time.Now()
+
+	if reporter != nil {
+		reporter.ReportPhaseStart(name, number, total)
+	}
+
+	return func() {
+		if reporter != nil {
+			reporter.ReportPhaseComplete(name, time.Since(start))
+		}
+	}
+}
