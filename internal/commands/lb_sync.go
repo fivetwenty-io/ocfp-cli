@@ -293,27 +293,18 @@ func removeUnusedBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, 
 	}
 }
 
-func executeSyncLBSync(ctx context.Context, config *syncLBConfig, lbMgr cpi.LoadBalancerManager, netMgr cpi.NetworkManager) error {
-	loadBalancer, err := ensureLoadBalancerByName(ctx, lbMgr, config.name)
+func executeSyncLBSync(ctx context.Context, cfg *syncLBConfig, lbMgr cpi.LoadBalancerManager, netMgr cpi.NetworkManager) error {
+	desired, err := resolveLBTargets(cfg.blocName, cfg.spec.Targets)
 	if err != nil {
 		return err
 	}
 
-	// Build desired IPs
-	desired := buildSyncLBDesiredIPs(config)
-
-	// Get existing members
-	existing := getExistingBackendMembers(ctx, netMgr, loadBalancer.ID)
-
-	// Add missing members
-	addMissingBackendMembers(ctx, netMgr, loadBalancer.ID, desired, existing, config.spec.Port)
-
-	// Remove unused members
-	if config.removeUnused {
-		removeUnusedBackendMembers(ctx, netMgr, loadBalancer.ID, desired)
+	lb, err := ensureLoadBalancerByName(ctx, lbMgr, cfg.name, cfg.spec.Protocol, cfg.spec.Port)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	return reconcileNativeLBMembers(ctx, netMgr, lb.ID, desired, cfg.spec.Port, cfg.removeUnused)
 }
 
 // newLBSyncCmd syncs an LB's backend pool from bloc config under lbs:<name>.

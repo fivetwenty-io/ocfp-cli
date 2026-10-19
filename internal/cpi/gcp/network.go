@@ -849,56 +849,6 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //
 	return nil
 }
 
-// CreateLoadBalancer creates a load balancer (delegates to LoadBalancerManager).
-func (m *NetworkManager) CreateLoadBalancer(_ctx context.Context, _config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
-	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// GetLoadBalancer retrieves a load balancer.
-func (m *NetworkManager) GetLoadBalancer(_ctx context.Context, _nameOrID string) (*cpi.LoadBalancer, error) {
-	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// ListLoadBalancers lists load balancers.
-func (m *NetworkManager) ListLoadBalancers(_ctx context.Context, _filters map[string]string) ([]*cpi.LoadBalancer, error) {
-	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// UpdateLoadBalancer updates a load balancer.
-func (m *NetworkManager) UpdateLoadBalancer(_ctx context.Context, _lb *cpi.LoadBalancer) error {
-	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// DeleteLoadBalancer deletes a load balancer.
-func (m *NetworkManager) DeleteLoadBalancer(_ctx context.Context, _id string) error {
-	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// GetBackendPools retrieves backend pools for a load balancer.
-func (m *NetworkManager) GetBackendPools(_ctx context.Context, _lbID string) ([]*cpi.BackendPool, error) {
-	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// AddBackendMember adds a member to a backend pool.
-func (m *NetworkManager) AddBackendMember(_ctx context.Context, _lbID string, _member *cpi.BackendMember) error {
-	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// RemoveBackendMember removes a member from a backend pool.
-func (m *NetworkManager) RemoveBackendMember(_ctx context.Context, _lbID string, _memberIP string) error {
-	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// ConfigureHealthCheck configures a health check for a load balancer.
-func (m *NetworkManager) ConfigureHealthCheck(_ctx context.Context, _lbID string, _check *cpi.HealthCheck) error {
-	return fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
-// GetLoadBalancerHealth retrieves health status for a load balancer.
-func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID string) (*cpi.HealthStatus, error) {
-	return nil, fmt.Errorf("%w: use LoadBalancerManager", ErrNotImplemented)
-}
-
 // Helper functions
 
 func (m *NetworkManager) convertNetwork(network *computepb.Network) *cpi.Network {
