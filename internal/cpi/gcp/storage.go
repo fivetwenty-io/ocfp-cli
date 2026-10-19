@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
@@ -583,7 +584,7 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 	}
 
 	bucket := m.client.getStorageClient().Bucket(name)
-	it := bucket.Objects(ctx, nil)
+	it := bucket.Objects(ctx, &storage.Query{Versions: true})
 
 	for {
 		attrs, err := it.Next()
@@ -595,8 +596,8 @@ func (m *StorageManager) EmptyBucket(ctx context.Context, name string) error {
 			return WrapGCPError(err, "EmptyBucket.List")
 		}
 
-		err = bucket.Object(attrs.Name).Delete(ctx)
-		if err != nil {
+		err = bucket.Object(attrs.Name).Generation(attrs.Generation).Delete(ctx)
+		if err != nil && !errors.Is(err, storage.ErrObjectNotExist) {
 			return WrapGCPError(err, "EmptyBucket.DeleteObject")
 		}
 	}
@@ -614,7 +615,7 @@ func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, 
 	}
 
 	bucket := m.client.getStorageClient().Bucket(name)
-	it := bucket.Objects(ctx, &storage.Query{Prefix: ""})
+	it := bucket.Objects(ctx, &storage.Query{Versions: true})
 
 	_, err = it.Next()
 	if errors.Is(err, iterator.Done) {
@@ -698,6 +699,52 @@ func diskState(disk *computepb.Disk) cpi.ResourceState {
 	}
 
 	return MapDiskStateToResourceState(disk.GetStatus())
+}
+
+func (m *StorageManager) SetBucketVersioning(ctx context.Context, name string, enabled bool) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+		return err
+	}
+
+	_, err := m.client.getStorageClient().Bucket(name).Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: enabled})
+
+	return WrapGCPError(err, "SetBucketVersioning")
+}
+func (m *StorageManager) SetBucketLifecycle(ctx context.Context, name string, noncurrentDays int) error {
+	if noncurrentDays < 1 {
+		return errors.New("noncurrent retention days must be positive")
+	}
+
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+		return err
+	}
+
+	bucket := m.client.getStorageClient().Bucket(name)
+
+	attrs, err := bucket.Attrs(ctx)
+	if err != nil {
+		return WrapGCPError(err, "SetBucketLifecycle.Get")
+	}
+
+	rules := attrs.Lifecycle.Rules
+	replacement := storage.LifecycleRule{Action: storage.LifecycleAction{Type: storage.DeleteAction}, Condition: storage.LifecycleCondition{DaysSinceNoncurrentTime: int64(noncurrentDays), Liveness: storage.Archived}}
+	// Preserve unrelated lifecycle rules; replace only our noncurrent expiry rule.
+	kept := make([]storage.LifecycleRule, 0, len(rules)+1)
+	for _, rule := range rules {
+		condition := rule.Condition
+
+		condition.DaysSinceNoncurrentTime = 0
+		if rule.Action.Type == storage.DeleteAction && rule.Condition.DaysSinceNoncurrentTime > 0 && reflect.DeepEqual(condition, storage.LifecycleCondition{Liveness: storage.Archived}) {
+			continue
+		}
+
+		kept = append(kept, rule)
+	}
+
+	kept = append(kept, replacement)
+	_, err = bucket.If(storage.BucketConditions{MetagenerationMatch: attrs.MetaGeneration}).Update(ctx, storage.BucketAttrsToUpdate{Lifecycle: &storage.Lifecycle{Rules: kept}})
+
+	return WrapGCPError(err, "SetBucketLifecycle")
 }
 
 func snapshotState(status string) cpi.ResourceState {
