@@ -110,15 +110,21 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 	if err != nil {
 		return err
 	}
+
+	region, zone, tags, err := g.cloudLocationAndTags()
+	if err != nil {
+		return err
+	}
 	// Configure GCP CPI settings
 	cpiPath := fmt.Sprintf("secret/config/%s/%s/cpi/gcp", g.BlocName, envType)
 
 	cpiConfig := map[string]interface{}{
 		"project":                 g.Config.ProjectID,
-		"zone":                    g.Config.Region, // GCP uses zone for compute
+		"zone":                    zone,
+		"region":                  region,
 		"json_key":                credentials,
 		"default_key_name":        g.BlocName + "-bastion",
-		"default_security_groups": fmt.Sprintf(`["%s-default","%s-ocfp"]`, g.BlocName, g.BlocName),
+		"default_security_groups": tags,
 	}
 
 	if credentials == "" {
@@ -133,10 +139,12 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 	// Configure VPC network
 	networkPath := g.PathBuilder.GetNetPath(envType)
 	networkConfig := map[string]interface{}{
-		"name":   g.Config.Network.Name,
-		"region": gcpcpi.GetRegionFromZone(g.Config.Region),
-		"zone":   g.Config.Region,
-		"id":     g.awsStateReader().getVPCID(),
+		"name":    g.networkName(),
+		"project": g.networkProject(),
+		"region":  region,
+		"zone":    zone,
+		"dns":     pveFirstNonEmpty(pveFirstDNS(g.Config.Network.DNS), pveFirstDNS(g.Config.DNS), DefaultDNSServer),
+		"id":      g.awsStateReader().getVPCID(),
 	}
 
 	err = g.Safe.SetMultiple(networkPath, networkConfig)
@@ -144,6 +152,9 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 		return fmt.Errorf("failed to set network config: %w", err)
 	}
 
+	if err := g.awsStateReader().configureKeys(envType); err != nil {
+		return err
+	}
 	if reporter != nil {
 		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
 	}
@@ -483,7 +494,7 @@ func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter pr
 			return err
 		}
 
-		data := map[string]interface{}{"name": sub.Name, "cidr_block": sub.CIDR, "subnet_cidr": sub.CIDR, "gateway": info.gateway, "ip_0": info.network, "ip_n": info.lastHost, "az": cloudAZKey(g.Config, sub.AvailabilityZone), "region": gcpcpi.GetRegionFromZone(g.Config.Region), "provider": "gcp", "type": sub.Type, "subnet_num": sub.Index, "dns": pveFirstNonEmpty(pveFirstDNS(g.Config.DNS), DefaultDNSServer)}
+		data := map[string]interface{}{"name": sub.Name, "cloud_name": cloudResourceName(pveFirstNonEmpty(sub.ID, sub.Name)), "cidr_block": sub.CIDR, "subnet_cidr": sub.CIDR, "gateway": info.gateway, "ip_0": info.network, "ip_n": info.lastHost, "az": cloudAZKey(g.Config, sub.AvailabilityZone), "region": gcpcpi.GetRegionFromZone(g.Config.Region), "provider": "gcp", "type": sub.Type, "subnet_num": sub.Index, "dns": pveFirstNonEmpty(pveFirstDNS(g.Config.Network.DNS), pveFirstDNS(g.Config.DNS), DefaultDNSServer)}
 		if sub.ID != "" {
 			data["id"] = sub.ID
 		}
@@ -538,6 +549,10 @@ func (g *GCPVaultProvider) getBlobstoresForSystem(system, envType string) map[st
 		}
 	}
 
+	for _, blob := range blobstores {
+		blob["name"] = blob["bucket_name"]
+		blob["type"] = "gcs"
+	}
 	return blobstores
 }
 func (g *GCPVaultProvider) getLoadBalancersForEnv(envType string) []loadBalancerConfig {
