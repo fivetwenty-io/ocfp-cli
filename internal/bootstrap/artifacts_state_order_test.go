@@ -9,7 +9,9 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"path/filepath"
 )
 
 // cancelOnAttachStorage cancels the run's context the moment the data volume
@@ -35,7 +37,8 @@ func (s *cancelOnAttachStorage) AttachVolume(ctx context.Context, volumeID, inst
 // file the way a later `ocfp teardown` would.
 func newArtifactsOrderManager(
 	t *testing.T,
-	st *cancelOnAttachStorage,
+	st cpi.StorageManager,
+	override ...cpi.ComputeManager,
 ) (*bootstrap.Manager, *fakeComputeEnhanced, string) {
 	t.Helper()
 
@@ -86,6 +89,9 @@ func newArtifactsOrderManager(
 
 	compute := newFakeComputeEnhanced()
 	prov := &fakeProvWithStorage{c: compute, s: st}
+	if len(override) > 0 {
+		prov.c = override[0]
+	}
 
 	manager := bootstrap.NewManager(cfg, prov, stateManager, &bootstrap.Options{
 		BlocName: "prod", Provider: "fake", Region: "eu01", Yes: true,
@@ -249,10 +255,27 @@ func TestCreateArtifacts_StateSaveFailureIsFatalAndKeepsVM(t *testing.T) {
 	// interrupted-wait error rather than polling for the full readiness
 	// timeout.
 	st.cancel = func() {
+		if err := filepath.Walk(stateDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				return os.Chmod(path, 0o400)
+			}
+			return nil
+		}); err != nil {
+			t.Errorf("chmod state files: %v", err)
+		}
 		if err := os.Chmod(stateDir, 0o500); err != nil {
 			t.Errorf("chmod state dir: %v", err)
 		}
 
+		entries, _ := os.ReadDir(stateDir)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				_ = os.Chmod(filepath.Join(stateDir, entry.Name()), 0o400)
+			}
+		}
 		cancel()
 	}
 
@@ -269,5 +292,110 @@ func TestCreateArtifacts_StateSaveFailureIsFatalAndKeepsVM(t *testing.T) {
 
 	if _, ok := compute.instances["inst-prod-artifacts"]; !ok {
 		t.Error("the artifacts VM was deleted after a state save failure")
+	}
+}
+
+type partialArtifactsCompute struct{ *fakeComputeEnhanced }
+
+func (f *partialArtifactsCompute) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+	inst, err := f.fakeComputeEnhanced.CreateInstance(ctx, req)
+	if err != nil {
+		return inst, err
+	}
+	return inst, errors.New("instance wait failed")
+}
+
+type partialArtifactsStorage struct{ dataVolStorage }
+
+func (s *partialArtifactsStorage) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
+	vol, err := s.dataVolStorage.CreateVolume(ctx, req)
+	if err != nil {
+		return vol, err
+	}
+	return vol, errors.New("volume wait failed")
+}
+func TestCreateArtifacts_PreservesPartialInstance(t *testing.T) {
+	st := &dataVolStorage{}
+	comp := &partialArtifactsCompute{newFakeComputeEnhanced()}
+	m, _, dir := newArtifactsOrderManager(t, st, comp)
+	if err := m.CreateArtifacts(context.Background()); err == nil {
+		t.Fatal("expected create failure")
+	}
+	resource, err := reopenState(t, dir).GetResource("artifacts", "prod-artifacts")
+	if err != nil || resource == nil || resource.Properties["vm_id"] != "inst-prod-artifacts" || resource.Properties["attachment_pending"] != true {
+		t.Fatalf("missing recoverable VM: %+v, %v", resource, err)
+	}
+	if st.called("CreateVolume") {
+		t.Fatal("created disk after instance creation failure")
+	}
+}
+func TestCreateArtifacts_PreservesPartialVolumeAndRetriesAttachment(t *testing.T) {
+	st := &partialArtifactsStorage{}
+	m, _, dir := newArtifactsOrderManager(t, st)
+	if err := m.CreateArtifacts(context.Background()); err == nil {
+		t.Fatal("expected create failure")
+	}
+	disk, err := reopenState(t, dir).GetResource(state.ResourceTypeVolume, "prod-artifacts-data")
+	if err != nil || disk == nil {
+		t.Fatalf("lost created disk: %+v %v", disk, err)
+	}
+	if st.called("AttachVolume") {
+		t.Fatal("attached disk after readiness failure")
+	}
+	st.calls = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = m.CreateArtifacts(ctx)
+	if st.called("CreateVolume") || !st.called("AttachVolume") {
+		t.Fatalf("retry must reuse disk: %v", st.calls)
+	}
+}
+
+func TestCreateArtifacts_RetriesPendingAttachmentWithoutDuplicateDisk(t *testing.T) {
+	st := &dataVolStorage{attachErr: errors.New("attach response lost")}
+	m, _, dir := newArtifactsOrderManager(t, st)
+	if err := m.CreateArtifacts(context.Background()); err == nil {
+		t.Fatal("expected attach failure")
+	}
+	resource, err := reopenState(t, dir).GetResource("artifacts", "prod-artifacts")
+	if err != nil || resource == nil || resource.Properties["attachment_pending"] != true {
+		t.Fatalf("missing pending guest: %+v %v", resource, err)
+	}
+	st.attachErr = nil
+	st.calls = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.CreateArtifacts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st.called("CreateVolume") || !st.called("AttachVolume") {
+		t.Fatalf("retry should attach existing disk: %v", st.calls)
+	}
+	resource, err = reopenState(t, dir).GetResource("artifacts", "prod-artifacts")
+	if err != nil || resource.Properties["attachment_pending"] != nil {
+		t.Fatalf("pending flag retained: %+v %v", resource, err)
+	}
+}
+
+type inspectArtifactsStorage struct {
+	dataVolStorage
+	inspect func()
+}
+
+func (s *inspectArtifactsStorage) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
+	s.inspect()
+	return nil, errors.New("cancel during allocation")
+}
+func TestArtifactsRecordsVMBeforeDiskAllocation(t *testing.T) {
+	st := &inspectArtifactsStorage{}
+	m, _, dir := newArtifactsOrderManager(t, st)
+	st.inspect = func() {
+		res, err := reopenState(t, dir).GetResource("artifacts", "prod-artifacts")
+		if err != nil || res == nil || res.Properties["attachment_pending"] != true {
+			t.Error("VM not journaled before disk allocation")
+		}
+	}
+	if err := m.CreateArtifacts(context.Background()); err == nil {
+		t.Fatal("expected allocation error")
 	}
 }

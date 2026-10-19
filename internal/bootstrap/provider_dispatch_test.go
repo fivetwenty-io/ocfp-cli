@@ -127,7 +127,7 @@ func TestProviderUsesLocalKeypairs(t *testing.T) {
 		{name: "pve needs local keys (cloud-init)", provider: "pve", want: true},
 		{name: "PVE uppercase", provider: "PVE", want: true},
 		{name: "aws has native CreateKeyPair", provider: "aws", want: false},
-		{name: "gcp has native CreateKeyPair", provider: "gcp", want: false},
+		{name: "gcp uses local metadata keypairs", provider: "gcp", want: true},
 		{name: "empty provider falls through", provider: "", want: false},
 		{name: "unknown provider falls through", provider: "vsphere", want: false},
 	}

@@ -9,6 +9,10 @@ import (
 
 // ArtifactsCloudInitInputs holds the data needed to render the artifacts VM user-data.
 type ArtifactsCloudInitInputs struct {
+	Username    string // Cloud SSH account; defaults to ubuntu.
+	PublicKey   string // Per-instance authorized SSH public key.
+	Hostname    string // Cloud OS hostname or FQDN.
+	Provider    string // Cloud disk transport (aws or gcp); empty retains PVE delivery.
 	AccessKey   string
 	SecretKey   string
 	DownloadURL string
@@ -241,6 +245,10 @@ runcmd:
 // optional — a clean no-op when empty). An error is returned when any
 // required field is empty or zero.
 func RenderArtifactsCloudInit(in ArtifactsCloudInitInputs) (string, error) {
+	if in.Provider == "aws" || in.Provider == "gcp" {
+		return renderCloudArtifacts(in)
+	}
+
 	err := in.validate()
 	if err != nil {
 		return "", err

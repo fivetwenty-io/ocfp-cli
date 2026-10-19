@@ -93,7 +93,7 @@ func (d *dataVolStorage) called(name string) bool {
 // state, which is the situation the data-volume step always runs in: it is a
 // separate step precisely because CreateBastion returns early when a bastion
 // already exists.
-func newDataVolManager(t *testing.T, st *dataVolStorage) (*bootstrap.Manager, *state.Manager) {
+func newDataVolManager(t *testing.T, st cpi.StorageManager) (*bootstrap.Manager, *state.Manager) {
 	t.Helper()
 
 	return newDataVolManagerWithData(t, st, config.BastionDataConfig{
@@ -107,7 +107,7 @@ func newDataVolManager(t *testing.T, st *dataVolStorage) (*bootstrap.Manager, *s
 
 func newDataVolManagerWithData(
 	t *testing.T,
-	st *dataVolStorage,
+	st cpi.StorageManager,
 	data config.BastionDataConfig,
 ) (*bootstrap.Manager, *state.Manager) {
 	t.Helper()
@@ -117,7 +117,7 @@ func newDataVolManagerWithData(
 
 func newDataVolManagerWithOptions(
 	t *testing.T,
-	st *dataVolStorage,
+	st cpi.StorageManager,
 	opts bootstrap.Options,
 ) (*bootstrap.Manager, *state.Manager) {
 	t.Helper()
@@ -133,7 +133,7 @@ func newDataVolManagerWithOptions(
 
 func newDataVolManagerFull(
 	t *testing.T,
-	st *dataVolStorage,
+	st cpi.StorageManager,
 	data config.BastionDataConfig,
 	opts bootstrap.Options,
 ) (*bootstrap.Manager, *state.Manager) {
@@ -288,13 +288,8 @@ func TestEnsureBastionDataVolume_AdoptsOrphan(t *testing.T) {
 	}
 }
 
-// TestEnsureBastionDataVolume_AttachFailureDeletesVolumeNotInstance is the one
-// place this deliberately diverges from the artifacts path. Artifacts deletes
-// the VM when the attach fails, which is right for a machine with no purpose
-// without its disk. A bastion whose data disk failed to attach is still a
-// working bastion holding an operator's deployment trees, so we clean up the
-// orphaned volume and leave the guest alone.
-func TestEnsureBastionDataVolume_AttachFailureDeletesVolumeNotInstance(t *testing.T) {
+// An attach error may follow a successful provider-side attach; retain the disk.
+func TestEnsureBastionDataVolume_AttachFailurePreservesVolumeAndInstance(t *testing.T) {
 	t.Parallel()
 
 	st := &dataVolStorage{attachErr: errors.New("attach refused")}
@@ -305,12 +300,8 @@ func TestEnsureBastionDataVolume_AttachFailureDeletesVolumeNotInstance(t *testin
 		t.Fatal("expected an error when the attach fails")
 	}
 
-	if !st.called("DeleteVolume") {
-		t.Error("the orphaned volume was not deleted after the attach failed")
-	}
-
-	if st.deletedID != "local-lvm-data:vm-100-data" {
-		t.Errorf("deleted %q, want the volume that was just created", st.deletedID)
+	if st.called("DeleteVolume") {
+		t.Error("ambiguous attach error must preserve the disk")
 	}
 
 	inst, _ := stateManager.GetResource(state.ResourceTypeInstance, "prod-bastion")

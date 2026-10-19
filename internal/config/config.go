@@ -1851,6 +1851,7 @@ func applyDefaults(cfg *Config, provider string) error {
 
 	applyGenesisDefaults(cfg)
 	applyBastionGenesisDefaults(cfg)
+	cfg.Artifacts.CloudDefaults(provider, cfg.Bastion.Image)
 	cfg.Artifacts.Defaults()
 	applyBastionDataDefaults(cfg, provider)
 

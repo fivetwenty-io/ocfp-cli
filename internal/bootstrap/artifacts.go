@@ -56,8 +56,8 @@ var ErrArtifactsVaultUnavailable = errors.New("vault access unavailable for this
 //  1. Resolve networking from the bastion subnet (same infra subnet).
 //  2. Resolve credentials + TLS material.
 //  3. Render cloud-init.
-//  4. Create the VM. On failure, no state recorded.
-//  5. Create + attach the data volume. On failure, delete the VM.
+//  4. Create the VM and preserve any returned handle on failure.
+//  5. Create + attach the data volume; retain both resources for recovery.
 //  6. Record the VM and data volume in state and save it to disk, before
 //     any long wait, so a killed run never leaves a VM that teardown cannot
 //     see.
@@ -81,6 +81,29 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; converging\n", vmName)
 		logger.Infof("Artifacts VM %s already recorded; converging", vmName)
 
+		if pending, _ := existing.Properties["creation_pending"].(bool); pending {
+			return fmt.Errorf("artifacts VM %s was created but provider initialization failed; inspect the recorded VM and reconcile creation_pending before retry", vmName)
+		}
+
+		if pending, _ := existing.Properties["attachment_pending"].(bool); pending {
+			vmID, _ := existing.Properties["vm_id"].(string)
+
+			vol, err := m.attachArtifactsDataVolume(ctx, vmID, vmName)
+			if err != nil {
+				return fmt.Errorf("converge artifacts disk: %w", err)
+			}
+
+			existing.Properties["data_volume_id"] = vol.ID
+			delete(existing.Properties, "attachment_pending")
+
+			if err := m.stateManager.UpdateResource(existing); err != nil {
+				return err
+			}
+
+			if err := m.stateManager.Save(); err != nil {
+				return err
+			}
+		}
 		m.convergeExistingArtifacts(ctx, existing)
 
 		return nil
@@ -164,6 +187,10 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	}
 
 	ciInputs := provision.ArtifactsCloudInitInputs{
+		Username:    m.bastionDefaultUsername(),
+		PublicKey:   m.bastionPublicKey(),
+		Hostname:    vmName,
+		Provider:    strings.ToLower(m.options.Provider),
 		AccessKey:   creds.AccessKey,
 		SecretKey:   creds.SecretKey,
 		DownloadURL: m.config.Artifacts.ResolvedDownloadURL(),
@@ -226,16 +253,79 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		StartOnBoot:           true,
 	}
 
+	if m.options.Provider == "aws" || m.options.Provider == "gcp" {
+		public := true
+		req.PublicIP = &public
+	}
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)
 	if err != nil {
+		if inst != nil && inst.ID != "" {
+			ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+			if recordErr := m.recordArtifactsState(vmName, inst, &cpi.Volume{}, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
+				return fmt.Errorf("artifacts create: %w; record recovery state: %w", err, recordErr)
+			}
+
+			r, getErr := m.stateManager.GetResource(artifactsResourceType, vmName)
+			if getErr != nil {
+				return errors.Join(err, getErr)
+			}
+
+			r.Properties["attachment_pending"] = true
+
+			r.Properties["creation_pending"] = true
+			if updateErr := m.stateManager.UpdateResource(r); updateErr != nil {
+				return errors.Join(err, updateErr)
+			}
+
+			if saveErr := m.stateManager.Save(); saveErr != nil {
+				return fmt.Errorf("artifacts create: %w; save recovery state: %w", err, saveErr)
+			}
+		}
 		return fmt.Errorf("artifacts: create instance: %w", err)
+	}
+
+	// Journal the VM before disk allocation or attachment can block. A process
+	// interrupted here must converge the same guest, never create a duplicate.
+	pendingEndpoint := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+	if err := m.recordArtifactsState(vmName, inst, &cpi.Volume{}, ip, creds, pendingEndpoint, tlsMat, leafNotAfterRFC3339(tlsMat)); err != nil {
+		return fmt.Errorf("artifacts: record VM before disk allocation: %w", err)
+	}
+
+	pendingVM, err := m.stateManager.GetResource(artifactsResourceType, vmName)
+	if err != nil {
+		return err
+	}
+
+	pendingVM.Properties["attachment_pending"] = true
+	if err := m.stateManager.UpdateResource(pendingVM); err != nil {
+		return err
+	}
+
+	if err := m.stateManager.Save(); err != nil {
+		return fmt.Errorf("artifacts: save state before disk allocation: %w", err)
 	}
 
 	vol, attachErr := m.attachArtifactsDataVolume(ctx, inst.ID, vmName)
 	if attachErr != nil {
-		m.cleanupOrphanArtifactsVM(ctx, inst.ID, vmName)
+		// An attach response can be lost after the disk is attached. Keep the
+		// guest and disk recorded for retry; deleting either risks data loss.
+		pending := &cpi.Volume{ID: m.preservedArtifactsVolume(vmName)}
 
-		return fmt.Errorf("artifacts: attach data volume: %w", attachErr)
+		ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+		if recordErr := m.recordArtifactsState(vmName, inst, pending, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
+			return fmt.Errorf("artifacts attach: %w; record recovery state: %w", attachErr, recordErr)
+		}
+
+		if r, _ := m.stateManager.GetResource(artifactsResourceType, vmName); r != nil {
+			r.Properties["attachment_pending"] = true
+			_ = m.stateManager.UpdateResource(r)
+		}
+
+		if saveErr := m.stateManager.Save(); saveErr != nil {
+			return fmt.Errorf("artifacts attach: %w; save recovery state: %w", attachErr, saveErr)
+		}
+
+		return fmt.Errorf("artifacts: attach data volume (resources preserved): %w", attachErr)
 	}
 
 	// Record the VM and its data volume, and save to disk, before the
@@ -381,6 +471,12 @@ func (m *Manager) artifactsDataAttachSpec() string {
 		return "scsi1,discard=on,serial=" + config.ArtifactsDataDiskSerial
 	}
 
+	switch strings.ToLower(m.options.Provider) {
+	case "aws":
+		return "/dev/sdf"
+	case "gcp":
+		return "ocfp-artifacts-data"
+	}
 	return artifactsDataDeviceHint
 }
 
@@ -417,31 +513,30 @@ func (m *Manager) attachArtifactsDataVolume(ctx context.Context, instanceID, vmN
 			"ocfp:bloc": m.options.BlocName,
 		},
 	})
-	if err != nil {
+	if err != nil && (vol == nil || vol.ID == "") {
 		return nil, fmt.Errorf("create data volume: %w", err)
+	}
+
+	createErr := err
+
+	if err := m.stateManager.AddResource(artifactsDataVolumeResource(m.options.BlocName, m.options.Provider, vmName, instanceID, vol.ID, m.config.Artifacts.Data.DiskSizeGiB, m.config.Artifacts.Data.StoragePool, m.config.Artifacts.ResolvedFilesystem(), m.config.Artifacts.Data.Mountpoint)); err != nil {
+		return nil, fmt.Errorf("record artifacts disk: %w", err)
+	}
+
+	if err := m.stateManager.Save(); err != nil {
+		return nil, fmt.Errorf("save artifacts disk: %w", err)
+	}
+
+	if createErr != nil {
+		return vol, fmt.Errorf("create data volume %s (preserved for retry): %w", vol.ID, createErr)
 	}
 
 	err = m.provider.StorageManager().AttachVolume(ctx, vol.ID, instanceID, m.artifactsDataAttachSpec())
 	if err != nil {
-		// Volume created but not attached — clean it up to avoid orphans.
-		_ = m.provider.StorageManager().DeleteVolume(ctx, vol.ID)
-
-		return nil, fmt.Errorf("attach data volume: %w", err)
+		return nil, fmt.Errorf("attach data volume %s (preserved for retry): %w", vol.ID, err)
 	}
 
 	return vol, nil
-}
-
-// cleanupOrphanArtifactsVM is best-effort: a VM whose attach failed cannot
-// fulfill its purpose and the operator will re-run bootstrap. Leaving it
-// running burns resources and confuses lookups.
-func (m *Manager) cleanupOrphanArtifactsVM(ctx context.Context, vmID, vmName string) {
-	logger.Warnf("Cleaning up orphan artifacts VM %s (%s) after attach failure", vmName, vmID)
-
-	err := m.provider.ComputeManager().DeleteInstance(ctx, vmID)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: orphan VM %s could not be deleted: %v\n", vmID, err)
-	}
 }
 
 // waitArtifactsReady polls the RustFS S3 endpoint until ListBuckets succeeds
@@ -731,19 +826,21 @@ func (m *Manager) recordArtifactsState(
 	// guard, so the disk would be destroyed with the guest — and it holds
 	// every compiled release and cached stemcell for the bloc, which is the
 	// expensive thing to lose, not the OS beside it.
-	err = m.stateManager.AddResource(artifactsDataVolumeResource(
-		m.options.BlocName,
-		m.options.Provider,
-		vmName,
-		inst.ID,
-		vol.ID,
-		m.config.Artifacts.Data.DiskSizeGiB,
-		m.config.Artifacts.Data.StoragePool,
-		m.config.Artifacts.ResolvedFilesystem(),
-		m.config.Artifacts.Data.Mountpoint,
-	))
-	if err != nil {
-		return err
+	if vol.ID != "" {
+		err = m.stateManager.AddResource(artifactsDataVolumeResource(
+			m.options.BlocName,
+			m.options.Provider,
+			vmName,
+			inst.ID,
+			vol.ID,
+			m.config.Artifacts.Data.DiskSizeGiB,
+			m.config.Artifacts.Data.StoragePool,
+			m.config.Artifacts.ResolvedFilesystem(),
+			m.config.Artifacts.Data.Mountpoint,
+		))
+		if err != nil {
+			return err
+		}
 	}
 
 	_ = m.stateManager.SetOutput("artifacts_ip", ip.String())

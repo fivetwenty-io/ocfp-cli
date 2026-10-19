@@ -110,8 +110,15 @@ func TestAttachArtifactsDataVolume_OtherProvidersKeepDevicePath(t *testing.T) {
 				t.Fatalf("%s: AttachArtifactsDataVolume: %v", provider, err)
 			}
 
-			if st.attachDev != "/dev/sdb" {
-				t.Errorf("%s (preserved=%v): attach device = %q, want /dev/sdb", provider, preserved, st.attachDev)
+			want := "/dev/sdb"
+			if provider == "aws" {
+				want = "/dev/sdf"
+			}
+			if provider == "gcp" {
+				want = "ocfp-artifacts-data"
+			}
+			if st.attachDev != want {
+				t.Errorf("%s (preserved=%v): attach device = %q, want %s", provider, preserved, st.attachDev, want)
 			}
 		}
 	}

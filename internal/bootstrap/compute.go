@@ -77,7 +77,12 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 	bastionName := m.options.BlocName + "-bastion"
 
 	// Check if bastion already exists
-	if m.bastionAlreadyExists(ctx, bastionName) {
+	exists, err := m.bastionAlreadyExists(ctx, bastionName)
+	if err != nil {
+		return fmt.Errorf("discover bastion: %w", err)
+	}
+
+	if exists {
 		_, _ = fmt.Fprintf(os.Stdout, "    • Bastion %s already exists, skipping\n", bastionName)
 		logger.Infof("Bastion %s already exists, skipping creation", bastionName)
 
@@ -101,6 +106,25 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 	// Create bastion instance
 	instance, err := m.createBastionInstance(ctx, bastionName, networkID, subnetInfo.ID, subnetInfo.AvailabilityZone, sgID)
 	if err != nil {
+		if instance != nil && instance.ID != "" {
+			if saveErr := m.saveBastionToState(instance, bastionName); saveErr != nil {
+				return fmt.Errorf("bastion creation: %w; record recovery: %w", err, saveErr)
+			}
+
+			res, getErr := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
+			if getErr != nil {
+				return fmt.Errorf("bastion creation: %w; recovery state: %w", err, getErr)
+			}
+
+			res.Properties["creation_pending"] = true
+			if saveErr := m.stateManager.UpdateResource(res); saveErr != nil {
+				return fmt.Errorf("bastion creation: %w; recovery state: %w", err, saveErr)
+			}
+
+			if saveErr := m.stateManager.Save(); saveErr != nil {
+				return fmt.Errorf("bastion creation: %w; save recovery: %w", err, saveErr)
+			}
+		}
 		return fmt.Errorf("failed to create bastion instance: %w", err)
 	}
 
@@ -136,48 +160,43 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) bool {
-	// First check state file (fast path)
-	existingBastion, _ := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
-	if existingBastion != nil {
-		return true
-	}
-
-	// Check cloud provider to catch orphaned resources from failed bootstraps
-	// This prevents creating duplicate bastions when state is lost/corrupted
-	logger.Debugf("Bastion not found in state, checking cloud provider for %s", bastionName)
-
-	computeMgr := m.provider.ComputeManager()
-
-	// List instances with OCFP tags to find potential orphaned bastions
-	instances, err := computeMgr.ListInstances(ctx, map[string]string{
-		"bloc":       m.options.BlocName,
-		"managed-by": "ocfp",
-	})
-	if err != nil {
-		logger.Warnf("Failed to list instances from cloud provider: %v", err)
-		// Continue anyway - better to potentially create duplicate than fail bootstrap
-		return false
-	}
-
-	// Check if any instance matches the bastion name
-	for _, inst := range instances {
-		if inst.Name == bastionName {
-			logger.Warnf("Found existing bastion in cloud but not in state: %s (ID: %s)", bastionName, inst.ID)
-			logger.Warnf("This may be from a previous failed bootstrap. Importing to state to prevent duplicate creation.")
-
-			// Import the orphaned bastion to state
-			err = m.importBastionToState(inst, bastionName)
-			if err != nil {
-				logger.Errorf("Failed to import orphaned bastion to state: %v", err)
-				// Still return true to prevent duplicate creation
-			}
-
-			return true
+func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) (bool, error) {
+	existing, _ := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
+	if existing != nil {
+		if pending, _ := existing.Properties["creation_pending"].(bool); pending {
+			return false, fmt.Errorf("bastion %s was created but provider initialization failed; inspect recorded instance %s and reconcile creation_pending before retry", bastionName, existing.ID)
 		}
+
+		return true, nil
 	}
 
-	return false
+	instances, err := m.provider.ComputeManager().ListInstances(ctx, map[string]string{"bloc": m.options.BlocName, "managed-by": "ocfp"})
+	if err != nil {
+		return false, err
+	}
+
+	var match *cpi.Instance
+	for _, inst := range instances {
+		if inst == nil || inst.Name != bastionName {
+			continue
+		}
+
+		if match != nil && match.ID != inst.ID {
+			return false, fmt.Errorf("multiple instances named %s; refusing to select one", bastionName)
+		}
+
+		match = inst
+	}
+
+	if match == nil {
+		return false, nil
+	}
+
+	if err := m.importBastionToState(match, bastionName); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (m *Manager) importBastionToState(instance *cpi.Instance, bastionName string) error {
@@ -191,6 +210,7 @@ func (m *Manager) importBastionToState(instance *cpi.Instance, bastionName strin
 		Provider: m.options.Provider,
 		State:    string(cpi.ResourceStateActive),
 		Properties: map[string]interface{}{
+			"adopted":         true,
 			"flavor":          instance.Flavor,
 			"image":           instance.Image,
 			"private_ip":      instance.PrivateIP,
@@ -470,7 +490,7 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 			logger.Warnf("Failed to calculate bastion static IP from CIDR %s offset %d: %v", subnetInfo.CIDR, offset, err)
 			logger.Warnf("Falling back to DHCP for IP assignment")
 		} else {
-			bastionIP = calculatedIP
+			bastionIP = cloudBastionIP(m.options.Provider, subnetInfo.CIDR, calculatedIP)
 			logger.Infof("Calculated bastion static IP: %s (CIDR: %s, offset: %d)", bastionIP, subnetInfo.CIDR, offset)
 		}
 	} else {
@@ -512,9 +532,13 @@ func (m *Manager) createBastionInstance(ctx context.Context, bastionName, networ
 
 	req.Tags["role"] = "bastion"
 
+	if err := m.prepareCloudBastion(req); err != nil {
+		return nil, err
+	}
+
 	instance, err := computeMgr.CreateInstance(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create bastion instance %s: %w", bastionName, err)
+		return instance, fmt.Errorf("failed to create bastion instance %s: %w", bastionName, err)
 	}
 
 	return instance, nil
@@ -560,7 +584,7 @@ func (m *Manager) createBastionInstanceStopped(
 		if ipErr != nil {
 			logger.Warnf("Failed to calculate bastion static IP from %s offset %d: %v", subnetInfo.CIDR, offset, ipErr)
 		} else {
-			bastionIP = calculated
+			bastionIP = cloudBastionIP(m.options.Provider, subnetInfo.CIDR, calculated)
 		}
 	}
 
@@ -594,6 +618,10 @@ func (m *Manager) createBastionInstanceStopped(
 	}
 
 	req.Tags["role"] = "bastion"
+
+	if err := m.prepareCloudBastion(req); err != nil {
+		return nil, err
+	}
 
 	instance, err := computeMgr.CreateInstance(ctx, req)
 	if err != nil {
@@ -2016,7 +2044,7 @@ func (m *Manager) createKeypairWithProvider(ctx context.Context, keypairName str
 // (rather than calling the provider's CreateKeyPair to mint a new pair).
 func (m *Manager) providerUsesLocalKeypairs() bool {
 	switch strings.ToLower(m.options.Provider) {
-	case "stackit", "pve":
+	case "stackit", "pve", "gcp":
 		return true
 	}
 
@@ -2232,7 +2260,7 @@ func generateBastionUserData(_cfg *config.Config) string {
 	return `#!/bin/bash
 # Bootstrap bastion instance
 apt-get update
-apt-get install -y build-essential zlibc zlib1g-dev ruby ruby-dev openssl libxslt1-dev libxml2-dev libssl-dev libreadline-dev libyaml-dev libsqlite3-dev sqlite3
+apt-get install -y build-essential zlib1g-dev ruby ruby-dev openssl libxslt1-dev libxml2-dev libssl-dev libreadline-dev libyaml-dev libsqlite3-dev sqlite3
 `
 }
 
