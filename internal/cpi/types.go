@@ -203,13 +203,13 @@ type Backend struct {
 
 // HealthCheck represents a health check configuration.
 type HealthCheck struct {
-	Protocol           string // http, https, tcp
-	Port               int
-	Path               string
-	Interval           int // seconds
-	Timeout            int // seconds
-	HealthyThreshold   int
-	UnhealthyThreshold int
+	Protocol           string `json:"Protocol"` // http, https, tcp
+	Port               int    `json:"Port"`
+	Path               string `json:"Path"`
+	Interval           int    `json:"Interval"` // seconds
+	Timeout            int    `json:"Timeout"`  // seconds
+	HealthyThreshold   int    `json:"HealthyThreshold"`
+	UnhealthyThreshold int    `json:"UnhealthyThreshold"`
 }
 
 // BackendPool represents a load balancer backend pool.
@@ -594,13 +594,18 @@ type CreateRouterRequest struct {
 
 // CreateLoadBalancerRequest for creating a load balancer.
 type CreateLoadBalancerRequest struct {
-	Name           string
-	Type           string // application, network
-	Scheme         string // internet-facing, internal
-	NetworkID      string
-	SubnetIDs      []string
-	SecurityGroups []string
-	Tags           map[string]string
+	Protocol       string            `json:"Protocol"`   // http or tcp; https requires an explicit certificate contract
+	Port           int               `json:"Port"`       // Frontend listener port
+	TargetPort     int               `json:"TargetPort"` // Backend port; zero inherits Port
+	Algorithm      string            `json:"Algorithm"`
+	HealthCheck    *HealthCheck      `json:"HealthCheck"`
+	Name           string            `json:"Name"`
+	Type           string            `json:"Type"`   // application, network
+	Scheme         string            `json:"Scheme"` // internet-facing, internal
+	NetworkID      string            `json:"NetworkID"`
+	SubnetIDs      []string          `json:"SubnetIDs"`
+	SecurityGroups []string          `json:"SecurityGroups"`
+	Tags           map[string]string `json:"Tags"`
 }
 
 // UpdateLoadBalancerRequest for updating a load balancer.

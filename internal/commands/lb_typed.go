@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -262,60 +263,11 @@ func buildOpsLBDesiredIPs(config *opsLBConfig) map[string]bool {
 }
 
 // addOpsBackendMembers adds missing backend members for ops LB.
-func addOpsBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired, existing map[string]bool, port int) {
-	log := logger.Get()
-
-	for memberIP := range desired {
-		if existing[memberIP] {
-			log.Infow("Backend exists", "ip", memberIP)
-
-			continue
-		}
-
-		member := &cpi.BackendMember{
-			ID:         "",
-			IPAddress:  memberIP,
-			Port:       port,
-			TargetPort: DefaultMemberPort,
-			Weight:     DefaultWeight,
-			Status:     "",
-		}
-
-		err := netMgr.AddBackendMember(ctx, lbID, member)
-		if err != nil {
-			log.Warnw("failed adding backend", "ip", memberIP, "err", err)
-		} else {
-			log.Infow("Added backend", "ip", memberIP)
-		}
-	}
-}
-
-// removeOpsUnusedMembers removes unused backend members for ops LB.
-func removeOpsUnusedMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired map[string]bool) {
-	log := logger.Get()
-
-	pools, err := netMgr.GetBackendPools(ctx, lbID)
-	if err == nil {
-		for _, p := range pools {
-			for _, member := range p.Members {
-				if !desired[member.IPAddress] {
-					err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
-					if err != nil {
-						log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
-					} else {
-						log.Infow("Removed backend", "ip", member.IPAddress)
-					}
-				}
-			}
-		}
-	}
-}
-
 func executeOpsLBSync(ctx context.Context, config *opsLBConfig, lbMgr cpi.LoadBalancerManager, netMgr cpi.NetworkManager) error {
 	log := logger.Get()
 
 	// Ensure LB
-	loadBalancer, err := ensureLoadBalancerByName(ctx, lbMgr, config.name)
+	loadBalancer, err := ensureConfiguredLB(ctx, lbMgr, config.name, config.protocol, config.port, config.cfg)
 	if err != nil {
 		return err
 	}
@@ -333,19 +285,7 @@ func executeOpsLBSync(ctx context.Context, config *opsLBConfig, lbMgr cpi.LoadBa
 		return nil
 	}
 
-	// Fallback: derive from reserved IPs
-	desired := buildOpsLBDesiredIPs(config)
-	existing := getExistingBackendMembers(ctx, netMgr, loadBalancer.ID)
-
-	// Add missing members
-	addOpsBackendMembers(ctx, netMgr, loadBalancer.ID, desired, existing, config.port)
-
-	// Remove unused members
-	if config.removeUnused {
-		removeOpsUnusedMembers(ctx, netMgr, loadBalancer.ID, desired)
-	}
-
-	return nil
+	return reconcileNativeLBMembers(ctx, netMgr, loadBalancer.ID, buildOpsLBDesiredIPs(config), config.port, config.removeUnused)
 }
 
 // LBs: ops.
@@ -598,7 +538,7 @@ func renderRoutersLBDryRunPlan(ctx context.Context, config *routersLBConfig, net
 func ensureRouterLB(ctx context.Context, config *routersLBConfig, lbMgr cpi.LoadBalancerManager, netMgr cpi.NetworkManager, name, protocol string, port int) error {
 	log := logger.Get()
 
-	loadBalancer, err := ensureLoadBalancerByName(ctx, lbMgr, name)
+	loadBalancer, err := ensureConfiguredLB(ctx, lbMgr, name, protocol, port, config.cfg)
 	if err != nil {
 		return err
 	}
@@ -1157,152 +1097,94 @@ func newLBCFSSHCmd() *cobra.Command {
 }
 
 // ensureLoadBalancerByName tries to find LB by name; creates it if not found.
-func ensureLoadBalancerByName(ctx context.Context, net cpi.LoadBalancerManager, name string) (*cpi.LoadBalancer, error) {
-	// Try get by name, else list and match
-	loadBalancer, err := net.GetLoadBalancer(ctx, name)
-	if err == nil && loadBalancer != nil && loadBalancer.ID != "" {
-		return loadBalancer, nil
-	}
+func ensureConfiguredLB(ctx context.Context, manager cpi.LoadBalancerManager, name, protocol string, port int, cfg *config.Config) (*cpi.LoadBalancer, error) {
+	if spec, ok := cfg.LBs[name]; ok {
+		if spec.Protocol != "" {
+			protocol = spec.Protocol
+		}
 
-	lbs, err := net.ListLoadBalancers(ctx, nil)
-	if err == nil {
-		for _, existingLB := range lbs {
-			if existingLB.Name == name {
-				return existingLB, nil
-			}
+		if spec.Port != 0 {
+			port = spec.Port
 		}
 	}
-	// Create
-	req := &cpi.CreateLoadBalancerRequest{
-		Name:           name,
-		Type:           "application",
-		Scheme:         "internet-facing",
-		NetworkID:      "",
-		SubnetIDs:      nil,
-		SecurityGroups: nil,
-		Tags:           nil,
+
+	return ensureLoadBalancerByName(ctx, manager, name, protocol, port)
+}
+func ensureLoadBalancerByName(ctx context.Context, manager cpi.LoadBalancerManager, name, protocol string, port int) (*cpi.LoadBalancer, error) {
+	existing, err := manager.GetLoadBalancer(ctx, name)
+	if err == nil {
+		if existing == nil || existing.ID == "" {
+			return nil, fmt.Errorf("load balancer %s returned no identity", name)
+		}
+
+		if existing.Protocol != protocol || existing.Port != port {
+			return nil, fmt.Errorf("existing load balancer %s listener differs: expected %s/%d", name, protocol, port)
+		}
+
+		return existing, nil
 	}
 
-	lb, err := net.CreateLoadBalancer(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create load balancer: %w", err)
+	if !cpi.IsNotFound(err) {
+		return nil, fmt.Errorf("lookup load balancer %s: %w", name, err)
 	}
 
-	return lb, nil
+	lbType := "network"
+	if protocol == "http" || protocol == "https" {
+		lbType = "application"
+	}
+
+	return manager.CreateLoadBalancer(ctx, &cpi.CreateLoadBalancerRequest{Name: name, Type: lbType, Scheme: "internet-facing", Protocol: protocol, Port: port, TargetPort: port})
 }
 
 // reconcileLBFromSpec ensures LB pool members match the given spec (adds missing, optionally removes unused).
-func reconcileLBFromSpec(ctx context.Context, netMgr cpi.NetworkManager, loadBalancer *cpi.LoadBalancer, blocName string, spec config.LBService, removeUnused bool) error {
-	log := logger.Get()
-
-	desired := buildDesiredTargets(blocName, spec.Targets, log)
-	existing := getExistingBackends(ctx, netMgr, loadBalancer.ID)
-
-	addMissingBackends(ctx, netMgr, loadBalancer.ID, desired, existing, spec.Port, log)
-
-	if removeUnused {
-		removeUnusedBackends(ctx, netMgr, loadBalancer.ID, desired, log)
-	}
-
-	return nil
-}
-
-func buildDesiredTargets(blocName string, targets []string, log logger.Logger) map[string]bool {
-	desired := make(map[string]bool)
-
-	for _, t := range targets {
-		targetIP := t
-		if len(t) >= 9 && t[:9] == "reserved:" {
-			resolvedIP, err := ResolveReservedIP(blocName, t)
-			if err != nil {
-				log.Warnw("reserved unresolved", "token", t, "err", err)
-
-				continue
-			}
-
-			targetIP = resolvedIP
-		}
-
-		desired[targetIP] = true
-	}
-
-	return desired
-}
-
-func getExistingBackends(ctx context.Context, netMgr cpi.NetworkManager, lbID string) map[string]bool {
-	existing := make(map[string]bool)
-
-	pools, err := netMgr.GetBackendPools(ctx, lbID)
+func reconcileLBFromSpec(ctx context.Context, netMgr cpi.NetworkManager, lb *cpi.LoadBalancer, blocName string, spec config.LBService, removeUnused bool) error {
+	desired, err := resolveLBTargets(blocName, spec.Targets)
 	if err != nil {
-		return existing
+		return err
 	}
 
-	for _, p := range pools {
-		for _, m := range p.Members {
-			existing[m.IPAddress] = true
+	return reconcileNativeLBMembers(ctx, netMgr, lb.ID, desired, spec.Port, removeUnused)
+}
+
+func reconcileLBIPs(ctx context.Context, netMgr cpi.NetworkManager, lb *cpi.LoadBalancer, ips []string, port int, removeUnused bool) error {
+	return reconcileNativeLBMembers(ctx, netMgr, lb.ID, buildDesiredIPSet(ips), port, removeUnused)
+}
+func reconcileNativeLBMembers(ctx context.Context, manager cpi.NetworkManager, id string, desired map[string]bool, port int, removeUnused bool) error {
+	pools, err := manager.GetBackendPools(ctx, id)
+	if err != nil {
+		return fmt.Errorf("list load-balancer backends: %w", err)
+	}
+
+	existing := map[string]*cpi.BackendMember{}
+
+	for _, pool := range pools {
+		for _, member := range pool.Members {
+			existing[member.IPAddress] = member
 		}
 	}
 
-	return existing
-}
-
-func addMissingBackends(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired, existing map[string]bool, port int, log logger.Logger) {
-	for ipAddress := range desired {
-		if existing[ipAddress] {
+	for ip := range desired {
+		if member, ok := existing[ip]; ok {
+			if member.Port != port && member.TargetPort != port {
+				return fmt.Errorf("backend %s has a conflicting port", ip)
+			}
 			continue
 		}
 
-		member := &cpi.BackendMember{
-			ID:         "",
-			IPAddress:  ipAddress,
-			Port:       port,
-			TargetPort: DefaultMemberPort,
-			Weight:     DefaultWeight,
-			Status:     "",
-		}
-
-		err := netMgr.AddBackendMember(ctx, lbID, member)
-		if err != nil {
-			log.Warnw("failed add backend", "ip", ipAddress, "err", err)
-		} else {
-			log.Infow("added backend", "ip", ipAddress)
+		if err := manager.AddBackendMember(ctx, id, &cpi.BackendMember{IPAddress: ip, Port: port, TargetPort: port, Weight: DefaultWeight}); err != nil {
+			return fmt.Errorf("add backend %s: %w", ip, err)
 		}
 	}
-}
 
-func removeUnusedBackends(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired map[string]bool, log logger.Logger) {
-	pools, err := netMgr.GetBackendPools(ctx, lbID)
-	if err != nil {
-		return
-	}
-
-	for _, p := range pools {
-		for _, member := range p.Members {
-			if !desired[member.IPAddress] {
-				err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
-				if err != nil {
-					log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
-				} else {
-					log.Infow("removed backend", "ip", member.IPAddress)
+	if removeUnused {
+		for ip := range existing {
+			if !desired[ip] {
+				if err := manager.RemoveBackendMember(ctx, id, ip); err != nil {
+					return fmt.Errorf("remove backend %s: %w", ip, err)
 				}
 			}
 		}
 	}
-}
-
-// reconcileLBIPs reconciles LB members to the provided list of IPs.
-func reconcileLBIPs(ctx context.Context, netMgr cpi.NetworkManager, loadBalancer *cpi.LoadBalancer, ips []string, port int, removeUnused bool) error {
-	log := logger.Get()
-
-	desired := buildDesiredIPSet(ips)
-	existing := getExistingBackends(ctx, netMgr, loadBalancer.ID)
-
-	addMissingBackends(ctx, netMgr, loadBalancer.ID, desired, existing, port, log)
-
-	if removeUnused {
-		removeUnusedBackends(ctx, netMgr, loadBalancer.ID, desired, log)
-	}
-
 	return nil
 }
 
@@ -1330,7 +1212,7 @@ func ensureAndSyncTCPLB(
 ) error {
 	log := logger.Get()
 
-	loadBalancer, err := ensureLoadBalancerByName(ctx, lbMgr, name)
+	loadBalancer, err := ensureConfiguredLB(ctx, lbMgr, name, ProtocolTCP, port, cfg)
 	if err != nil {
 		return err
 	}
@@ -1417,4 +1299,27 @@ func getStatePublicIPsByJob(blocName, job string) []string {
 	}
 
 	return out
+}
+
+func resolveLBTargets(blocName string, targets []string) (map[string]bool, error) {
+	desired := map[string]bool{}
+
+	for _, target := range targets {
+		if isToken(target) {
+			resolved, err := ResolveTargetIP(blocName, target)
+			if err != nil {
+				return nil, fmt.Errorf("resolve backend %s: %w", target, err)
+			}
+
+			target = resolved
+		}
+
+		if net.ParseIP(target) == nil {
+			return nil, fmt.Errorf("invalid backend IP %s", target)
+		}
+
+		desired[target] = true
+	}
+
+	return desired, nil
 }

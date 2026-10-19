@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	compute "cloud.google.com/go/compute/apiv1"
@@ -47,6 +48,13 @@ type Client struct {
 	addressesClient    *compute.AddressesClient
 	routersClient      *compute.RoutersClient
 	storageClient      *storage.Client
+
+	globalForwardingRulesClient *compute.GlobalForwardingRulesClient
+	globalAddressesClient       *compute.GlobalAddressesClient
+	targetHttpProxiesClient     *compute.TargetHttpProxiesClient
+	targetTcpProxiesClient      *compute.TargetTcpProxiesClient
+	urlMapsClient               *compute.UrlMapsClient
+	networkEndpointGroupsClient *compute.NetworkEndpointGroupsClient
 
 	// Load balancing clients
 	forwardingRulesClient    *compute.ForwardingRulesClient
@@ -195,7 +203,7 @@ type closeable interface {
 
 // closeClient closes a client and appends any error to the slice.
 func closeClient(c closeable, errs *[]error) {
-	if c == nil {
+	if c == nil || reflect.ValueOf(c).IsNil() {
 		return
 	}
 
@@ -261,6 +269,19 @@ func (c *Client) Cleanup(_ctx context.Context) error {
 
 	closeClient(c.regionHealthChecksClient, &errs)
 	c.regionHealthChecksClient = nil
+
+	closeClient(c.globalForwardingRulesClient, &errs)
+	c.globalForwardingRulesClient = nil
+	closeClient(c.globalAddressesClient, &errs)
+	c.globalAddressesClient = nil
+	closeClient(c.targetHttpProxiesClient, &errs)
+	c.targetHttpProxiesClient = nil
+	closeClient(c.targetTcpProxiesClient, &errs)
+	c.targetTcpProxiesClient = nil
+	closeClient(c.urlMapsClient, &errs)
+	c.urlMapsClient = nil
+	closeClient(c.networkEndpointGroupsClient, &errs)
+	c.networkEndpointGroupsClient = nil
 
 	c.clientsLoaded = false
 
@@ -562,7 +583,7 @@ func (c *Client) initLoadBalancingClients(ctx context.Context, opts []option.Cli
 		return fmt.Errorf("failed to create region health checks client: %w", err)
 	}
 
-	return nil
+	return c.initNativeLBClients(ctx, opts)
 }
 
 // initStorageClient initializes the GCP storage SDK client.
@@ -596,4 +617,40 @@ func (c *Client) getConfig() *Config {
 // Helper function to create pointer to value.
 func proto[T any](v T) *T {
 	return &v
+}
+
+func (c *Client) initNativeLBClients(ctx context.Context, opts []option.ClientOption) error {
+	var err error
+
+	c.globalForwardingRulesClient, err = compute.NewGlobalForwardingRulesRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create globalForwardingRules client: %w", err)
+	}
+
+	c.globalAddressesClient, err = compute.NewGlobalAddressesRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create globalAddresses client: %w", err)
+	}
+
+	c.targetHttpProxiesClient, err = compute.NewTargetHttpProxiesRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create targetHttpProxies client: %w", err)
+	}
+
+	c.targetTcpProxiesClient, err = compute.NewTargetTcpProxiesRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create targetTcpProxies client: %w", err)
+	}
+
+	c.urlMapsClient, err = compute.NewUrlMapsRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create urlMaps client: %w", err)
+	}
+
+	c.networkEndpointGroupsClient, err = compute.NewNetworkEndpointGroupsRESTClient(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("create networkEndpointGroups client: %w", err)
+	}
+
+	return nil
 }
