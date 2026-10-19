@@ -180,14 +180,23 @@ func (m *SecurityManager) ListSecurityGroups(ctx context.Context, filters map[st
 		input.Filters = awsFilters
 	}
 
-	resp, err := ec2Client.DescribeSecurityGroups(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "describe security groups")
-	}
+	var result []*cpi.SecurityGroup
 
-	result := make([]*cpi.SecurityGroup, 0, len(resp.SecurityGroups))
-	for i := range resp.SecurityGroups {
-		result = append(result, m.convertSecurityGroup(&resp.SecurityGroups[i]))
+	for {
+		resp, err := ec2Client.DescribeSecurityGroups(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "ListSecurityGroups")
+		}
+
+		for i := range resp.SecurityGroups {
+			result = append(result, m.convertSecurityGroup(&resp.SecurityGroups[i]))
+		}
+
+		if aws.ToString(resp.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = resp.NextToken
 	}
 
 	return result, nil
