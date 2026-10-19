@@ -309,25 +309,21 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //
 //nolint:dupl // intentionally similar CPI implementation
 func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
 	return (&SecurityManager{client: m.client}).CreateSecurityGroup(ctx, req)
-
 }
 
 // GetSecurityGroup retrieves a firewall rule by name.
 func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
 	return (&SecurityManager{client: m.client}).GetSecurityGroup(ctx, id)
-
 }
 
 // ListSecurityGroups lists firewall rules.
 func (m *NetworkManager) ListSecurityGroups(ctx context.Context, _filters map[string]string) ([]*cpi.SecurityGroup, error) {
 	return (&SecurityManager{client: m.client}).ListSecurityGroups(ctx, _filters)
-
 }
 
 // DeleteSecurityGroup deletes a firewall rule.
 func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
 	return (&SecurityManager{client: m.client}).DeleteSecurityGroup(ctx, id)
-
 }
 
 // CreatePublicIP reserves a static external IP address.

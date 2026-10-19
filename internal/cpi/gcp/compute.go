@@ -82,6 +82,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 		req.SubnetID = subnet.ID
 	}
+
 	labels := BuildLabels(req.Name, req.Tags)
 	machineTypeURL := FormatMachineTypeURL(projectID, zone, req.Flavor)
 
@@ -262,7 +263,6 @@ func (m *ComputeManager) buildInstanceMetadata(instance *computepb.Instance, req
 
 		instance.Metadata.Items = append(instance.Metadata.Items, &computepb.Items{Key: proto(key), Value: proto(req.UserData)})
 	}
-
 }
 
 // GetInstance retrieves an instance by name or ID.
@@ -296,11 +296,13 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 
 	it := m.client.getInstancesClient().AggregatedList(ctx, &computepb.AggregatedListInstancesRequest{Project: m.client.getConfig().ProjectID})
 	instances := []*cpi.Instance{}
+
 	for {
 		pair, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListInstances")
 		}
@@ -311,6 +313,7 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 			}
 		}
 	}
+
 	return instances, nil
 }
 
@@ -432,6 +435,7 @@ func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { 
 			return clearErr
 		}
 	}
+
 	op, err := m.client.getInstancesClient().Delete(ctx, &computepb.DeleteInstanceRequest{ //nolint:varnamelen
 		Project:  projectID,
 		Zone:     zone,
@@ -459,6 +463,7 @@ func (m *ComputeManager) ImportKeyPair(_ context.Context, _ string, publicKey st
 	if strings.TrimSpace(publicKey) == "" {
 		return errors.New("public key is required")
 	}
+
 	return nil
 }
 func (m *ComputeManager) GetKeyPair(_ context.Context, name string) (*cpi.KeyPair, error) {
@@ -474,25 +479,21 @@ func (m *ComputeManager) DeleteKeyPair(_ context.Context, _ string) error { retu
 //nolint:dupl // intentionally similar CPI implementation
 func (m *ComputeManager) CreateVolume(ctx context.Context, req *cpi.VolumeRequest) (*cpi.Volume, error) {
 	return (&StorageManager{client: m.client}).CreateVolume(ctx, req)
-
 }
 
 // GetVolume retrieves a persistent disk by name.
 func (m *ComputeManager) GetVolume(ctx context.Context, id string) (*cpi.Volume, error) {
 	return (&StorageManager{client: m.client}).GetVolume(ctx, id)
-
 }
 
 // ListVolumes lists persistent disks.
 func (m *ComputeManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
 	return (&StorageManager{client: m.client}).ListVolumes(ctx, filters)
-
 }
 
 // DeleteVolume deletes a persistent disk.
 func (m *ComputeManager) DeleteVolume(ctx context.Context, id string) error {
 	return (&StorageManager{client: m.client}).DeleteVolume(ctx, id)
-
 }
 
 // ListImages lists available images.
@@ -576,6 +577,7 @@ func (m *ComputeManager) GetImage(ctx context.Context, id string) (*cpi.Image, e
 		if image.GetSelfLink() == "" {
 			image.SelfLink = proto(fmt.Sprintf("projects/%s/global/images/%s", project, image.GetName()))
 		}
+
 		return m.convertImage(image), nil
 	}
 
@@ -668,6 +670,7 @@ func (m *ComputeManager) convertInstance(instance *computepb.Instance) *cpi.Inst
 			networkID = ExtractNameFromURL(ni.GetNetwork())
 			subnetID = ExtractNameFromURL(ni.GetSubnetwork())
 		}
+
 		if ni.GetNetworkIP() != "" {
 			privateIP = ni.GetNetworkIP()
 		}
