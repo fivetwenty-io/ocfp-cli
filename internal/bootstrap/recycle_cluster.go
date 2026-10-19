@@ -119,6 +119,9 @@ func (c *BastionRecycleCluster) dataVolumeID() (string, error) {
 
 // Observe reports the three facts that place an interrupted run.
 func (c *BastionRecycleCluster) Observe(ctx context.Context) (recycle.Observation, error) {
+	if p := strings.ToLower(c.mgr.options.Provider); p == "aws" || p == "gcp" {
+		return recycle.Observation{}, fmt.Errorf("bastion recycle on %s requires cloud-native staged replacement; the PVE stopped-create sequence is unsupported (original left untouched)", p)
+	}
 	originalID, originalExists := c.findByName(ctx, c.finalName())
 	replacementID, replacementExists := c.findByName(ctx, c.transientName())
 
@@ -410,7 +413,7 @@ func (c *BastionRecycleCluster) moveDisk(ctx context.Context, fromName, toName s
 		return fmt.Errorf("detach %s from %s: %w", volID, fromName, err)
 	}
 
-	err = c.mgr.provider.StorageManager().AttachVolume(ctx, volID, toID, bastionDataAttachSpec())
+	err = c.mgr.provider.StorageManager().AttachVolume(ctx, volID, toID, c.mgr.bastionDataDevice())
 	if err != nil {
 		return fmt.Errorf("re-attach %s to %s: %w", volID, toName, err)
 	}
