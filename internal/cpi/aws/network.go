@@ -2,8 +2,10 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -196,14 +198,23 @@ func (m *NetworkManager) ListNetworks(ctx context.Context, filters map[string]st
 		input.Filters = buildAWSTagFilters(filters)
 	}
 
-	output, err := ec2Client.DescribeVpcs(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list VPCs")
-	}
+	var networks []*cpi.Network
 
-	networks := make([]*cpi.Network, 0, len(output.Vpcs))
-	for _, vpc := range output.Vpcs {
-		networks = append(networks, convertVPCToNetwork(vpc, m.client.config.Region))
+	for {
+		output, err := ec2Client.DescribeVpcs(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "ListNetworks")
+		}
+
+		for _, vpc := range output.Vpcs {
+			networks = append(networks, convertVPCToNetwork(vpc, m.client.config.Region))
+		}
+
+		if aws.ToString(output.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = output.NextToken
 	}
 
 	return networks, nil
@@ -369,14 +380,23 @@ func (m *NetworkManager) ListSubnets(ctx context.Context, networkID string) ([]*
 		},
 	}
 
-	output, err := ec2Client.DescribeSubnets(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list subnets")
-	}
+	var subnets []*cpi.Subnet
 
-	subnets := make([]*cpi.Subnet, 0, len(output.Subnets))
-	for i := range output.Subnets {
-		subnets = append(subnets, convertSubnet(&output.Subnets[i]))
+	for {
+		output, err := ec2Client.DescribeSubnets(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "ListSubnets")
+		}
+
+		for i := range output.Subnets {
+			subnets = append(subnets, convertSubnet(&output.Subnets[i]))
+		}
+
+		if aws.ToString(output.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = output.NextToken
 	}
 
 	return subnets, nil
@@ -1054,6 +1074,10 @@ func buildTagsFromMap(tags map[string]string) []types.Tag {
 
 // CreateRouter creates a custom route table (router abstraction in AWS).
 func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouterRequest) (*cpi.Router, error) {
+	if req.ExternalGateway != "" && !strings.HasPrefix(req.ExternalGateway, "igw-") {
+		return nil, fmt.Errorf("ExternalGateway must name an internet gateway: %w", ErrInvalidRequest)
+	}
+
 	if req.NetworkID == "" {
 		return nil, &cpi.ProviderError{
 			Provider: "aws",
@@ -1083,13 +1107,26 @@ func (m *NetworkManager) CreateRouter(ctx context.Context, req *cpi.CreateRouter
 
 	rtID := aws.ToString(output.RouteTable.RouteTableId)
 
+	var routes []*cpi.Route
+
+	if req.ExternalGateway != "" {
+		_, routeErr := ec2Client.CreateRoute(ctx, &ec2.CreateRouteInput{RouteTableId: aws.String(rtID), DestinationCidrBlock: aws.String("0.0.0.0/0"), GatewayId: aws.String(req.ExternalGateway)})
+		if routeErr != nil {
+			_, cleanupErr := ec2Client.DeleteRouteTable(ctx, &ec2.DeleteRouteTableInput{RouteTableId: aws.String(rtID)})
+
+			return nil, fmt.Errorf("configure router gateway: %w", errors.Join(routeErr, cleanupErr))
+		}
+
+		routes = []*cpi.Route{{Destination: "0.0.0.0/0", NextHop: req.ExternalGateway}}
+	}
+
 	return &cpi.Router{
 		ID:              rtID,
 		Name:            req.Name,
 		NetworkID:       req.NetworkID,
-		ExternalGateway: "",
+		ExternalGateway: req.ExternalGateway,
 		State:           cpi.ResourceStateAvailable,
-		Routes:          []*cpi.Route{},
+		Routes:          routes,
 		Interfaces:      []string{},
 		Tags:            req.Tags,
 		CreatedAt:       time.Now(),
@@ -1128,14 +1165,25 @@ func (m *NetworkManager) ListRouters(ctx context.Context) ([]*cpi.Router, error)
 		return nil, err
 	}
 
-	output, err := ec2Client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{})
-	if err != nil {
-		return nil, wrapError(err, "failed to list route tables")
-	}
+	input := &ec2.DescribeRouteTablesInput{}
 
-	routers := make([]*cpi.Router, 0, len(output.RouteTables))
-	for i := range output.RouteTables {
-		routers = append(routers, convertRouteTable(&output.RouteTables[i]))
+	var routers []*cpi.Router
+
+	for {
+		output, err := ec2Client.DescribeRouteTables(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "failed to list route tables")
+		}
+
+		for i := range output.RouteTables {
+			routers = append(routers, convertRouteTable(&output.RouteTables[i]))
+		}
+
+		if aws.ToString(output.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = output.NextToken
 	}
 
 	return routers, nil
