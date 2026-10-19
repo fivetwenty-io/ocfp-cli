@@ -82,13 +82,16 @@ func runBastionRecycle(
 		return ErrBlocIsRequired
 	}
 
-	err := validateRecycleFlags(opts.archive, opts.archiveStorage)
+	mgr, err := buildBootstrapManager(ctx, blocName, configFile)
 	if err != nil {
 		return err
 	}
 
-	mgr, err := buildBootstrapManager(ctx, blocName, configFile)
-	if err != nil {
+	if mgr.NativeRecycle() {
+		return runNativeBastionRecycle(ctx, mgr, blocName, opts)
+	}
+
+	if err = validateRecycleFlags(opts.archive, opts.archiveStorage); err != nil {
 		return err
 	}
 
@@ -160,4 +163,56 @@ func buildBootstrapManager(ctx context.Context, blocName, configFile string) (*b
 		Region:   region,
 		Bastion:  true,
 	}), nil
+}
+
+func nativeRecycleWarning(blocName string) string {
+	return fmt.Sprintf(`About to refresh the bastion OS for %s.
+The same instance, network interfaces, private addresses, and data disk are retained.
+The stopped root receives a durable snapshot, then a replacement boot disk.
+The original root is deleted only after the replacement guest is verified.
+Use --stop-before-retire to pause reversibly; --abort restores the old root before retirement.
+The snapshot remains available after completion. Ephemeral public IPs may change.
+Continue?`, blocName)
+}
+func runNativeBastionRecycle(ctx context.Context, mgr *bootstrap.Manager, blocName string, opts recycleFlags) error {
+	if strings.TrimSpace(opts.archiveStorage) != "" {
+		return errors.New("native cloud recycle uses provider snapshots; --archive-storage is only for PVE")
+	}
+
+	cluster, err := bootstrap.NewNativeBastionRecycle(mgr)
+	if err != nil {
+		return err
+	}
+
+	if recycleNeedsConfirmation(opts.yes, opts.abort) {
+		_, _ = fmt.Fprintln(os.Stdout, nativeRecycleWarning(blocName))
+		_, _ = fmt.Fprint(os.Stdout, "Type the bloc name to proceed: ")
+
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != blocName {
+			_, _ = fmt.Fprintln(os.Stdout, "Aborted; nothing was changed.")
+
+			return nil
+		}
+	}
+
+	if err := cluster.Run(ctx, opts.abort, opts.stopBeforeRetire); err != nil {
+		return err
+	}
+
+	if opts.abort {
+		_, _ = fmt.Fprintln(os.Stdout, "Native recycle aborted; original root restored.")
+
+		return nil
+	}
+
+	if opts.stopBeforeRetire {
+		_, _ = fmt.Fprintln(os.Stdout, "Paused with the new root running and the original root retained. Guest boot and data mounts verified. Re-run without --stop-before-retire to retire the old root, or use --abort.")
+	} else {
+		_, _ = fmt.Fprintln(os.Stdout, "Native boot refresh complete; recovery snapshot retained.")
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "Run ocfp bastion init --bloc %s to finish tool and Vault service initialization. Boot verification does not replace bastion init.\n", blocName)
+
+	return nil
 }

@@ -92,3 +92,15 @@ func TestErrRecycleNeedsArchiveStorage(t *testing.T) {
 		t.Errorf("unexpected error without --archive: %v", err)
 	}
 }
+
+func TestNativeRecycleWarningRetainsInstance(t *testing.T) {
+	warning := nativeRecycleWarning("prod")
+	for _, want := range []string{"same instance", "data disk", "verified", "snapshot"} {
+		if !strings.Contains(warning, want) {
+			t.Fatalf("warning missing %q", want)
+		}
+	}
+	if strings.Contains(warning, "destroys the original VM") {
+		t.Fatal("native warning describes PVE")
+	}
+}
