@@ -53,7 +53,7 @@ func TestBastionDataDefaults(t *testing.T) {
 func TestBastionDataDefaults_NonPVEDisabled(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"aws", "stackit", "gcp", "azure", ""} {
+	for _, provider := range []string{"stackit", "azure", ""} {
 		provider := provider
 
 		t.Run(provider, func(t *testing.T) {
@@ -209,7 +209,7 @@ func TestBastionDataDefaultsUseTheResolvedProvider(t *testing.T) {
 func TestBastionDataDefaultsStayOffForOtherProviders(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"aws", "stackit", "gcp", "azure"} {
+	for _, provider := range []string{"stackit", "azure"} {
 		provider := provider
 
 		t.Run(provider, func(t *testing.T) {
@@ -222,5 +222,21 @@ func TestBastionDataDefaultsStayOffForOtherProviders(t *testing.T) {
 				t.Errorf("provider %q enabled the bastion data disk", provider)
 			}
 		})
+	}
+}
+
+func TestBastionDataCloudDefaults(t *testing.T) {
+	for provider, pool := range map[string]string{"aws": "gp3", "gcp": "pd-balanced"} {
+		var d BastionDataConfig
+		d.Defaults(provider)
+		if !d.Enabled || d.StoragePool != pool {
+			t.Errorf("%s defaults = %+v", provider, d)
+		}
+		d.SetEnabled(false)
+		d.StoragePool = "custom"
+		d.Defaults(provider)
+		if d.Enabled || d.StoragePool != "custom" {
+			t.Errorf("%s explicit settings overwritten", provider)
+		}
 	}
 }

@@ -396,9 +396,9 @@ func TestArtifactsConfigValidate(t *testing.T) {
 			wantErr:              nil,
 		},
 		{
-			name:                 "non-pve provider rejected",
+			name:                 "unsupported provider rejected",
 			cfg:                  validEnabled(),
-			provider:             "aws",
+			provider:             "azure",
 			bastionEnabled:       true,
 			internalCAConfigured: true,
 			wantErr:              ErrArtifactsRequiresPVE,

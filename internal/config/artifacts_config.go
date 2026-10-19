@@ -33,7 +33,7 @@ const (
 // Sentinel errors for ArtifactsConfig validation.
 var (
 	// ErrArtifactsRequiresPVE is returned when artifacts is enabled on a non-PVE provider.
-	ErrArtifactsRequiresPVE = errors.New("artifacts VM requires provider=pve")
+	ErrArtifactsRequiresPVE = errors.New("artifacts VM requires provider=pve, aws, or gcp")
 
 	// ErrArtifactsRequiresBastion is returned when artifacts is enabled but bastion is disabled.
 	ErrArtifactsRequiresBastion = errors.New("artifacts VM requires bastion to be enabled")
@@ -247,10 +247,19 @@ func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, interna
 		return nil
 	}
 
-	if !strings.EqualFold(strings.TrimSpace(provider), "pve") {
+	if p := strings.ToLower(strings.TrimSpace(provider)); p != "pve" && p != "aws" && p != "gcp" {
 		return fmt.Errorf("%w: got %q", ErrArtifactsRequiresPVE, provider)
 	}
 
+	if p := strings.ToLower(strings.TrimSpace(provider)); p == "aws" || p == "gcp" {
+		if strings.TrimSpace(a.Template) == "" || strings.HasSuffix(a.Template, "-template") {
+			return fmt.Errorf("artifacts on %s requires a native cloud image in artifacts.template or bastion.image", p)
+		}
+
+		if a.CPU != 0 || a.MemoryMiB != 0 {
+			return fmt.Errorf("artifacts on %s uses artifacts.flavor for sizing; cpu and memory_mib overrides are PVE-only", p)
+		}
+	}
 	if !bastionEnabled {
 		return ErrArtifactsRequiresBastion
 	}
@@ -403,4 +412,33 @@ func (a *ArtifactsConfig) UnmarshalYAML(data []byte) error {
 	}
 
 	return nil
+}
+
+// CloudDefaults resolves native cloud resources before generic PVE defaults.
+// Images remain operator-selected because AMI IDs are region-specific.
+func (a *ArtifactsConfig) CloudDefaults(provider, image string) {
+	p := strings.ToLower(provider)
+	if p != "aws" && p != "gcp" {
+		return
+	}
+
+	if a.Template == "" {
+		a.Template = image
+	}
+
+	if a.Flavor == "" {
+		if p == "aws" {
+			a.Flavor = "t3.medium"
+		} else {
+			a.Flavor = "e2-medium"
+		}
+	}
+
+	if a.Data.StoragePool == "" {
+		if p == "aws" {
+			a.Data.StoragePool = "gp3"
+		} else {
+			a.Data.StoragePool = "pd-balanced"
+		}
+	}
 }

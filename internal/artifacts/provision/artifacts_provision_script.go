@@ -162,5 +162,9 @@ func RenderArtifactsProvisionScript(in ArtifactsCloudInitInputs) (string, error)
 		return "", fmt.Errorf("render artifacts provision script: %w", err)
 	}
 
+	if in.Provider == "aws" || in.Provider == "gcp" {
+		return cloudArtifactsScript(in, buf.String()), nil
+	}
+
 	return buf.String(), nil
 }

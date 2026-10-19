@@ -76,9 +76,10 @@ func (m *Manager) EnsureBastionDataVolume(ctx context.Context) error {
 		return nil
 	}
 
-	var err error
-
-	volume := m.resolveBastionDataVolume(ctx, instanceID)
+	volume, err := m.resolveBastionDataVolume(ctx, instanceID)
+	if err != nil {
+		return err
+	}
 
 	created := false
 
@@ -86,34 +87,30 @@ func (m *Manager) EnsureBastionDataVolume(ctx context.Context) error {
 		created = true
 
 		volume, err = m.createBastionDataVolume(ctx, instanceID)
-		if err != nil {
+		if err != nil && (volume == nil || volume.ID == "") {
 			return err
 		}
 	}
 
-	// The attach is safe to repeat: the client library looks the volume up in
-	// the VM config before choosing a slot, so attaching an attached disk is a
-	// no-op rewrite rather than a duplicate.
-	err = storage.AttachVolume(ctx, volume.ID, instanceID, bastionDataAttachSpec())
-	if err != nil {
-		// Only clean up a volume we just made. Deleting one that predates this
-		// run would destroy the operator state the disk exists to protect.
-		if created {
-			if delErr := storage.DeleteVolume(ctx, volume.ID); delErr != nil {
-				logger.Warnf("Failed to clean up orphaned data volume %s: %v", volume.ID, delErr)
-			}
-		}
+	createErr := err
 
-		// Unlike the artifacts path, we do not delete the guest here. An
-		// artifacts VM has no purpose without its disk; a bastion whose data
-		// disk failed to attach is still a working bastion holding an
-		// operator's deployment trees.
-		return fmt.Errorf("attach bastion data volume: %w", err)
+	// Record before attachment: a lost response can mean the disk is already
+	// attached. Preserve both its identity and contents for a safe retry.
+	if err := m.recordBastionDataVolume(volume, instanceID); err != nil {
+		return fmt.Errorf("record bastion data volume: %w", err)
 	}
 
-	err = m.recordBastionDataVolume(volume, instanceID)
+	if err := m.stateManager.Save(); err != nil {
+		return fmt.Errorf("save bastion data volume: %w", err)
+	}
+
+	if createErr != nil {
+		return createErr
+	}
+
+	err = storage.AttachVolume(ctx, volume.ID, instanceID, m.bastionDataDevice())
 	if err != nil {
-		return fmt.Errorf("record bastion data volume: %w", err)
+		return fmt.Errorf("attach bastion data volume %s (preserved for retry): %w", volume.ID, err)
 	}
 
 	if created {
@@ -144,11 +141,9 @@ func (m *Manager) bastionInstanceID(bastionName string) (string, bool) {
 // duplicated. Creating a second data disk beside a first would leave the
 // operator's state stranded on a disk nothing mounts.
 //
-// A nil return means absent-or-unknown, which is the caller's signal to
-// create one. There is deliberately no error result: a listing failure is not
-// fatal on its own, because the attach is what would actually conflict, so it
-// is logged loudly and treated as "unknown" rather than failing bootstrap.
-func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID string) *cpi.Volume {
+// A nil volume without error means absent. Failed or ambiguous discovery
+// aborts before allocation so existing data cannot be stranded.
+func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID string) (*cpi.Volume, error) {
 	name := m.bastionDataVolumeName()
 
 	if res, _ := m.stateManager.GetResource(state.ResourceTypeVolume, name); res != nil && res.ID != "" {
@@ -159,29 +154,36 @@ func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID strin
 			Name: name,
 			Size: m.config.Bastion.Data.DiskSizeGiB,
 			Type: m.config.Bastion.Data.StoragePool,
-		}
+		}, nil
 	}
 
 	volumes, err := m.provider.StorageManager().ListVolumes(ctx, nil)
 	if err != nil {
-		logger.Warnf("Could not list volumes to adopt an existing bastion data disk: %v", err)
-
-		return nil
+		return nil, fmt.Errorf("discover bastion data volume: %w", err)
 	}
 
+	var match *cpi.Volume
 	for _, vol := range volumes {
 		if vol == nil {
 			continue
 		}
 
 		if isBastionDataVolume(vol, instanceID, name) {
-			logger.Warnf("Adopting existing bastion data volume %s found on the provider but not in state", vol.ID)
+			if p := strings.ToLower(m.options.Provider); p == "aws" || p == "gcp" {
+				if vol.Tags["ocfp:bloc"] != m.options.BlocName || vol.Tags["ocfp:role"] != "bastion-data" {
+					return nil, fmt.Errorf("data volume %s matches name but lacks exact bloc/role ownership; refusing adoption", vol.ID)
+				}
+			}
 
-			return vol
+			if match != nil && match.ID != vol.ID {
+				return nil, fmt.Errorf("multiple bastion data volumes match %s; refusing to select one", name)
+			}
+
+			match = vol
 		}
 	}
 
-	return nil
+	return match, nil
 }
 
 // isBastionDataVolume reports whether a provider volume is this bastion's data
@@ -212,7 +214,7 @@ func (m *Manager) createBastionDataVolume(ctx context.Context, instanceID string
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create bastion data volume: %w", err)
+		return vol, fmt.Errorf("create bastion data volume: %w", err)
 	}
 
 	return vol, nil
@@ -238,7 +240,7 @@ func (m *Manager) recordBastionDataVolume(vol *cpi.Volume, instanceID string) er
 			"filesystem":    data.Filesystem,
 			"mountpoint":    data.Mountpoint,
 			"device_serial": config.BastionDataDiskSerial,
-			"slot":          bastionDataSlot,
+			"slot":          m.bastionDataDevice(),
 			"preserve":      true,
 		},
 	})
@@ -270,5 +272,17 @@ func (m *Manager) bastionDataDiskSpec() *cpi.DataDiskSpec {
 		// replacement bastion would trust only the authorized_keys the
 		// persistent home brought over from the machine it replaced.
 		AuthorizedKey: strings.TrimSpace(m.bastionPublicKey()),
+	}
+}
+
+// bastionDataDevice maps the persistent data disk to the provider API's device syntax.
+func (m *Manager) bastionDataDevice() string {
+	switch strings.ToLower(m.options.Provider) {
+	case "aws":
+		return "/dev/sdf"
+	case "gcp":
+		return "ocfp-bastion-data"
+	default:
+		return bastionDataAttachSpec()
 	}
 }
