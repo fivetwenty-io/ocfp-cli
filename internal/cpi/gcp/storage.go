@@ -105,6 +105,15 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 		return nil, err
 	}
 
+	if isNumericResource(id) {
+		disk, err := m.legacyDisk(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+
+		return m.convertDisk(disk), nil
+	}
+
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	projectID, zone, id := resourceScope(projectID, config.Zone, id)
@@ -290,6 +299,11 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 		return err
 	}
 
+	id, err = m.canonicalDiskID(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	projectID, zone, id := resourceScope(projectID, config.Zone, id)
@@ -319,6 +333,15 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 // DeleteVolume deletes a persistent disk.
 func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
+		return err
+	}
+
+	id, err = m.canonicalDiskID(ctx, id)
+	if IsNotFound(err) {
+		return nil
+	}
+
 	if err != nil {
 		return err
 	}

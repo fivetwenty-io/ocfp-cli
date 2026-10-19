@@ -90,7 +90,9 @@ func TestParityLegacyDiskIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/disks/42"):
+		case strings.HasSuffix(r.URL.Path, "/aggregated/disks"):
+			_, _ = w.Write([]byte(`{"items":{"zones/r-b":{"disks":[{"name":"data","id":"42","zone":"projects/p/zones/r-b"}]}}}`))
+		case strings.HasSuffix(r.URL.Path, "/disks/data"):
 			_, _ = w.Write([]byte(`{"name":"data","id":"42","zone":"projects/p/zones/r-b"}`))
 		case strings.HasSuffix(r.URL.Path, "/instances/vm"):
 			_, _ = w.Write([]byte(`{"name":"vm","disks":[{"source":"projects/p/zones/r-b/disks/data","deviceName":"ocfp-bastion-data"}]}`))

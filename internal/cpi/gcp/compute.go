@@ -272,6 +272,15 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 		return nil, err
 	}
 
+	if isNumericResource(id) {
+		vm, err := m.legacyInstance(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+
+		return m.convertInstance(vm), nil
+	}
+
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	projectID, zone, id := resourceScope(projectID, config.Zone, id)
@@ -324,6 +333,11 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error { /
 		return err
 	}
 
+	id, err = m.canonicalInstanceID(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	projectID, zone, id := resourceScope(projectID, config.Zone, id)
@@ -350,6 +364,11 @@ func (m *ComputeManager) StartInstance(ctx context.Context, id string) error { /
 // StopInstance stops a running instance.
 func (m *ComputeManager) StopInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
+		return err
+	}
+
+	id, err = m.canonicalInstanceID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -384,6 +403,11 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { 
 		return err
 	}
 
+	id, err = m.canonicalInstanceID(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	projectID, zone, id := resourceScope(projectID, config.Zone, id)
@@ -410,6 +434,15 @@ func (m *ComputeManager) RebootInstance(ctx context.Context, id string) error { 
 // DeleteInstance deletes an instance.
 func (m *ComputeManager) DeleteInstance(ctx context.Context, id string) error { //nolint:varnamelen
 	err := m.client.ensureClientsLoaded(ctx)
+	if err != nil {
+		return err
+	}
+
+	id, err = m.canonicalInstanceID(ctx, id)
+	if IsNotFound(err) {
+		return nil
+	}
+
 	if err != nil {
 		return err
 	}
