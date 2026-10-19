@@ -2470,8 +2470,23 @@ func (m *TeardownManager) deleteComputeResource(ctx context.Context, resource *R
 	// PVE's DeleteInstance purges with purge=true, which destroys every disk
 	// the VM config still references, so a data disk left attached dies with
 	// the machine it was meant to outlive.
-	m.detachPreservedVolumes(ctx, resource)
+	if err := m.detachPreservedVolumes(ctx, resource); err != nil {
+		return err
+	}
 
+	// Only this authorized deletion path clears protection, after preserved
+	// disks are safely detached. Ordinary DeleteInstance retains its guard.
+	if optioner, ok := compute.(interface {
+		EnsureGuestOptions(ctx context.Context, id string, opts cpi.GuestOptions) error
+	}); ok {
+		if err := optioner.EnsureGuestOptions(ctx, resource.ID, cpi.GuestOptions{Protected: false}); err != nil {
+			if cpi.IsNotFound(err) {
+				return nil
+			}
+
+			return fmt.Errorf("refusing to delete %s: cannot clear guest protection: %w", resource.ID, err)
+		}
+	}
 	err := compute.DeleteInstance(ctx, resource.ID)
 	if err != nil {
 		// If resource doesn't exist, that's success (already deleted)
