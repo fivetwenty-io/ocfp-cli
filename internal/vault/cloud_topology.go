@@ -552,3 +552,127 @@ func validateCloudState(bloc string) error {
 
 	return nil
 }
+
+// cloudLocationAndTags exports observed native identities, never guessed cloud zones or tags.
+func (g *GCPVaultProvider) cloudLocationAndTags() (string, string, string, error) {
+	sm := g.awsStateReader().loadStateManager()
+
+	subs, err := cloudSubnets(g.Config, sm)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	region, zone, err := g.cloudLocation(subs)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	tags := []string{}
+
+	if sm != nil {
+		resources, err := sm.GetResourcesByType("security_group")
+		if err != nil {
+			return "", "", "", err
+		}
+
+		for _, r := range resources {
+			if r.State != "deleted" && r.ID != "" {
+				tags = append(tags, r.Name)
+			}
+		}
+	}
+
+	sort.Strings(tags)
+
+	encoded, err := json.Marshal(tags)
+	if err != nil {
+		return "", "", "", fmt.Errorf("encode GCP network tags: %w", err)
+	}
+
+	return region, zone, string(encoded), nil
+}
+
+func cloudResourceName(id string) string {
+	parts := strings.Split(strings.TrimRight(id, "/"), "/")
+
+	return parts[len(parts)-1]
+}
+func (g *GCPVaultProvider) networkName() string {
+	if g.Config.Network.Name != "" {
+		return g.Config.Network.Name
+	}
+
+	return cloudResourceName(g.awsStateReader().getVPCID())
+}
+
+func (g *GCPVaultProvider) cloudLocation(subs []cloudSubnet) (string, string, error) {
+	zone := ""
+
+	for _, sub := range subs {
+		if sub.Type == DefaultSubnetType && sub.AvailabilityZone != "" {
+			zone = sub.AvailabilityZone
+
+			break
+		}
+	}
+
+	if az, ok := g.Config.AZs[zone]; ok && az.Zone != "" {
+		zone = az.Zone
+	}
+
+	if zone == "" {
+		keys := make([]string, 0, len(g.Config.AZs))
+		for key := range g.Config.AZs {
+			keys = append(keys, key)
+		}
+
+		sort.Strings(keys)
+
+		if len(keys) > 0 {
+			zone = g.Config.AZs[keys[0]].Zone
+			if zone == "" {
+				zone = keys[0]
+			}
+		}
+	}
+
+	region := g.Config.Region
+	if len(region) > 2 && region[len(region)-2] == '-' {
+		if zone == "" {
+			zone = region
+		}
+
+		region = region[:len(region)-2]
+	}
+
+	if zone != "" {
+		if len(zone) < 3 || zone[len(zone)-2] != '-' {
+			return "", "", fmt.Errorf("invalid GCP physical zone %q", zone)
+		}
+
+		actualRegion := zone[:len(zone)-2]
+		if region != "" && region != actualRegion {
+			return "", "", fmt.Errorf("GCP zone %s is outside configured region %s", zone, region)
+		}
+
+		region = actualRegion
+	}
+
+	return region, zone, nil
+}
+
+// networkProject retains Shared VPC host identity from the observed resource.
+func (g *GCPVaultProvider) networkProject() string {
+	id := strings.TrimPrefix(g.awsStateReader().getVPCID(), "https://www.googleapis.com/compute/v1/")
+
+	parts := strings.Split(id, "/")
+	if len(parts) >= 4 && parts[0] == "projects" && parts[1] != "" {
+		return parts[1]
+	}
+
+	if g.Config.EnableSharedVPC && g.Config.HostProjectID != "" {
+		return g.Config.HostProjectID
+	}
+
+	return g.Config.ProjectID
+}

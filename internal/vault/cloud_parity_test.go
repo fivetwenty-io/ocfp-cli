@@ -303,3 +303,28 @@ func TestCloudParityRejectsCorruptStateBeforeExports(t *testing.T) {
 		})
 	}
 }
+
+func TestGCPCanonicalExportsUseObservedTopology(t *testing.T) {
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.SetOutput("network_id", "projects/host-project/global/networks/actual"))
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "subnet", ID: "actual-subnet", Name: "custom", Properties: map[string]any{"cidr": "10.80.4.0/22", "availability_zone": "us-central1-b", "type": "ocfp", "workload_index": 0}}))
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "security_group", ID: "sg-id", Name: "custom-tag"}))
+	require.NoError(t, sm.Save())
+	cfg := &config.Config{Provider: "gcp", ProjectID: "service-project", Region: "us-central1", Network: config.NetworkConfig{Strategy: "wide", DNS: []string{"10.80.0.2"}}, Keys: map[string]string{"test-bloc-bastion": "PRIVATE KEY"}}
+	mock := &gcpMockSafe{}
+	p := newTestGCPProvider(cfg, mock, "test-bloc")
+	require.NoError(t, p.ConfigureIAAS("", "mgmt", nil, nil, 1))
+	cpi := mock.findCall("secret/config/test-bloc/mgmt/cpi/gcp").data
+	require.Equal(t, "us-central1-b", cpi["zone"])
+	require.JSONEq(t, `["custom-tag"]`, cpi["default_security_groups"].(string))
+	require.Equal(t, "host-project", mock.findCall(p.PathBuilder.GetNetPath("mgmt")).data["project"])
+	require.Equal(t, "10.80.0.2", mock.findCall(p.PathBuilder.GetNetPath("mgmt")).data["dns"])
+	require.Equal(t, "PRIVATE KEY", mock.findCall(p.PathBuilder.GetBOSHKeyPath("mgmt")).data["private"])
+	require.NoError(t, p.configureSubnets("", "mgmt", nil, 1, 1))
+	require.Equal(t, "10.80.0.2", mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", 0)).data["dns"])
+	require.Equal(t, "actual-subnet", mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", 0)).data["cloud_name"])
+	require.NoError(t, p.ConfigureBlobstores("", "mgmt", nil, 1, 1))
+	blob := mock.findCall(p.PathBuilder.GetSystemBlobstorePath("mgmt", "bosh", "bosh")).data
+	require.Equal(t, blob["bucket_name"], blob["name"])
+	require.NotContains(t, cpi, "access_key_id")
+}
