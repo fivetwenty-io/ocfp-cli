@@ -622,8 +622,9 @@ func TestStorageManager_AttachVolume_HappyPath(t *testing.T) {
 		describeVolumesOut: &ec2.DescribeVolumesOutput{
 			Volumes: []ec2types.Volume{
 				{
-					VolumeId: aws.String(volID),
-					State:    ec2types.VolumeStateInUse,
+					VolumeId:    aws.String(volID),
+					State:       ec2types.VolumeStateInUse,
+					Attachments: []ec2types.VolumeAttachment{{InstanceId: aws.String("i-instance"), Device: aws.String("/dev/sdf"), State: ec2types.VolumeAttachmentStateAttached}},
 				},
 			},
 		},
@@ -641,7 +642,8 @@ func TestStorageManager_AttachVolume_APIError(t *testing.T) {
 	t.Parallel()
 
 	fakeEC2 := &stFakeEC2{
-		attachVolumeErr: fmt.Errorf("simulated attach error"),
+		attachVolumeErr:    fmt.Errorf("simulated attach error"),
+		describeVolumesOut: &ec2.DescribeVolumesOutput{Volumes: []ec2types.Volume{{VolumeId: aws.String("vol-x"), State: ec2types.VolumeStateAvailable}}},
 	}
 
 	mgr := stNewStorageManager(fakeEC2, nil)

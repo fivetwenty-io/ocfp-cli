@@ -54,6 +54,10 @@ func (m *ComputeManager) getEC2(ctx context.Context) (EC2API, error) {
 //
 //nolint:funlen // EC2 instance creation requires extensive configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
+	if req.CreateStopped {
+		return nil, fmt.Errorf("AWS cannot create a stopped instance; safe recycle requires staged network and disk handover: %w", ErrUnsupportedFeature)
+	}
+
 	client, err := m.getEC2(ctx)
 	if err != nil {
 		return nil, err
@@ -87,6 +91,8 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		input.KeyName = aws.String(keyPairName)
 	}
 
+	input.DisableApiTermination = aws.Bool(req.Protected)
+
 	// User data (must be base64 encoded)
 	if req.UserData != "" {
 		encoded := base64.StdEncoding.EncodeToString([]byte(req.UserData))
@@ -107,7 +113,8 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 			{
 				DeviceIndex:              aws.Int32(0),
 				SubnetId:                 aws.String(req.SubnetID),
-				AssociatePublicIpAddress: aws.Bool(true), // Request public IP for instances in public subnets
+				AssociatePublicIpAddress: aws.Bool(req.PublicIP == nil || *req.PublicIP),
+				PrivateIpAddress:         optionalString(req.StaticPrivateIP),
 				Groups:                   securityGroups,
 			},
 		}
@@ -123,6 +130,14 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		}
 	}
 
+	// Source/destination checks must be disabled for a routed subnet gateway.
+	forward := req.IPForwarding || req.Tailscale != nil || req.Ingress != nil
+
+	modifier, canModify := client.(instanceAttributeAPI)
+	if forward && !canModify {
+		return nil, fmt.Errorf("AWS forwarding attribute API unavailable: %w", ErrUnsupportedFeature)
+	}
+
 	// Root device size configuration
 	if req.BootVolumeSize > 0 {
 		if req.BootVolumeSize < ebsMinSizeGB || req.BootVolumeSize > ebsMaxSizeGB {
@@ -130,9 +145,17 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 				req.BootVolumeSize, ebsMinSizeGB, ebsMaxSizeGB)
 		}
 
+		images, imageErr := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{req.Image}})
+		if imageErr != nil {
+			return nil, fmt.Errorf("resolve AMI root device: %w", imageErr)
+		}
+
+		if len(images.Images) != 1 || aws.ToString(images.Images[0].RootDeviceName) == "" {
+			return nil, fmt.Errorf("AMI %s has no unambiguous root device: %w", req.Image, ErrInvalidRequest)
+		}
 		input.BlockDeviceMappings = []types.BlockDeviceMapping{
 			{
-				DeviceName: aws.String("/dev/sda1"), // Standard root device name
+				DeviceName: images.Images[0].RootDeviceName,
 				Ebs: &types.EbsBlockDevice{
 					VolumeSize:          aws.Int32(int32(req.BootVolumeSize)),
 					VolumeType:          types.VolumeTypeGp3,
@@ -159,14 +182,26 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 
 	instance := m.ec2InstanceToCPIInstance(&result.Instances[0])
 
+	if forward {
+		_, attrErr := modifier.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{InstanceId: aws.String(instance.ID), SourceDestCheck: &types.AttributeBooleanValue{Value: aws.Bool(false)}})
+		if attrErr != nil {
+			return instance, fmt.Errorf("instance %s created but forwarding could not be enabled: %w", instance.ID, attrErr)
+		}
+	}
 	// Wait for instance to be running
 	err = m.waitForInstanceState(ctx, instance.ID, types.InstanceStateNameRunning, instanceCreateTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("instance failed to reach running state: %w", err)
+		return instance, fmt.Errorf("instance %s failed to reach running state: %w", instance.ID, err)
 	}
 
-	// Refresh instance data to get assigned IPs
-	return m.GetInstance(ctx, instance.ID)
+	// Preserve the created handle if the final refresh fails, so bootstrap can
+	// journal the resource rather than launching a duplicate on retry.
+	refreshed, err := m.GetInstance(ctx, instance.ID)
+	if err != nil {
+		return instance, fmt.Errorf("instance %s created but refresh failed: %w", instance.ID, err)
+	}
+
+	return refreshed, nil
 }
 
 // GetInstance retrieves an instance by ID.
@@ -239,17 +274,25 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 		input.Filters = ec2Filters
 	}
 
-	result, err := client.DescribeInstances(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list instances")
-	}
+	var instances []*cpi.Instance
 
-	var instances []*cpi.Instance //nolint:prealloc // size unknown until runtime
-
-	for _, reservation := range result.Reservations {
-		for i := range reservation.Instances {
-			instances = append(instances, m.ec2InstanceToCPIInstance(&reservation.Instances[i]))
+	for {
+		result, err := client.DescribeInstances(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "failed to list instances")
 		}
+
+		for _, reservation := range result.Reservations {
+			for i := range reservation.Instances {
+				instances = append(instances, m.ec2InstanceToCPIInstance(&reservation.Instances[i]))
+			}
+		}
+
+		if aws.ToString(result.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = result.NextToken
 	}
 
 	return instances, nil
@@ -562,15 +605,23 @@ func (m *ComputeManager) ListImages(ctx context.Context, filters map[string]stri
 		input.Owners = []string{"self"}
 	}
 
-	result, err := client.DescribeImages(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list images")
-	}
+	var images []*cpi.Image
 
-	var images []*cpi.Image //nolint:prealloc // size unknown until runtime
+	for {
+		result, err := client.DescribeImages(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "failed to list images")
+		}
 
-	for i := range result.Images {
-		images = append(images, m.ec2ImageToCPIImage(&result.Images[i]))
+		for i := range result.Images {
+			images = append(images, m.ec2ImageToCPIImage(&result.Images[i]))
+		}
+
+		if aws.ToString(result.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = result.NextToken
 	}
 
 	return images, nil
@@ -608,16 +659,25 @@ func (m *ComputeManager) ListFlavors(ctx context.Context) ([]*cpi.Flavor, error)
 		return nil, err
 	}
 
-	// List all instance types in the region
-	result, err := client.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{})
-	if err != nil {
-		return nil, wrapError(err, "failed to list instance types")
-	}
+	input := &ec2.DescribeInstanceTypesInput{}
 
-	var flavors []*cpi.Flavor //nolint:prealloc // size unknown until runtime
+	var flavors []*cpi.Flavor
 
-	for i := range result.InstanceTypes {
-		flavors = append(flavors, m.ec2InstanceTypeToCPIFlavor(&result.InstanceTypes[i]))
+	for {
+		result, err := client.DescribeInstanceTypes(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "failed to list instance types")
+		}
+
+		for i := range result.InstanceTypes {
+			flavors = append(flavors, m.ec2InstanceTypeToCPIFlavor(&result.InstanceTypes[i]))
+		}
+
+		if aws.ToString(result.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = result.NextToken
 	}
 
 	return flavors, nil

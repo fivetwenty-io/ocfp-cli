@@ -85,8 +85,27 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		volumeType = "gp3" // Default to gp3 (general purpose SSD)
 	}
 
+	// Derive disk locality from the actual VM, not the operator's default AZ.
+	zone := req.AvailabilityZone
+	if req.InstanceID != "" {
+		instances, lookupErr := cli.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{req.InstanceID}})
+		if lookupErr != nil {
+			return nil, fmt.Errorf("resolve disk owner availability zone: %w", lookupErr)
+		}
+
+		if len(instances.Reservations) != 1 || len(instances.Reservations[0].Instances) != 1 || instances.Reservations[0].Instances[0].Placement == nil {
+			return nil, fmt.Errorf("disk owner %s not found: %w", req.InstanceID, ErrNotFound)
+		}
+
+		ownerZone := aws.ToString(instances.Reservations[0].Instances[0].Placement.AvailabilityZone)
+		if zone != "" && zone != ownerZone {
+			return nil, fmt.Errorf("disk zone %s differs from instance zone %s: %w", zone, ownerZone, ErrInvalidRequest)
+		}
+
+		zone = ownerZone
+	}
 	// Validate availability zone
-	if req.AvailabilityZone == "" {
+	if zone == "" {
 		return nil, &cpi.ProviderError{
 			Provider: ProviderName,
 			Code:     "InvalidParameter",
@@ -96,7 +115,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 
 	// Build create volume input
 	input := &ec2.CreateVolumeInput{
-		AvailabilityZone: aws.String(req.AvailabilityZone),
+		AvailabilityZone: aws.String(zone),
 		Size:             aws.Int32(int32(size)),
 		VolumeType:       types.VolumeType(volumeType),
 		Encrypted:        aws.Bool(req.Encrypted),
@@ -165,7 +184,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	// Wait for volume to become available
 	err = m.waitForVolumeState(ctx, *result.VolumeId, cpi.ResourceStateAvailable, volumeWaitTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("volume failed to become available: %w", err)
+		return volume, fmt.Errorf("volume failed to become available: %w", err)
 	}
 
 	logger.WithOperation("CreateVolume").Infof("Created EBS volume: %s", volume.ID)
@@ -230,14 +249,23 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 		input.Filters = ec2Filters
 	}
 
-	result, err := cli.DescribeVolumes(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list EBS volumes")
-	}
+	var volumes []*cpi.Volume
 
-	volumes := make([]*cpi.Volume, 0, len(result.Volumes))
-	for i := range result.Volumes {
-		volumes = append(volumes, m.mapVolume(&result.Volumes[i]))
+	for {
+		result, err := cli.DescribeVolumes(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "ListVolumes")
+		}
+
+		for i := range result.Volumes {
+			volumes = append(volumes, m.mapVolume(&result.Volumes[i]))
+		}
+
+		if aws.ToString(result.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = result.NextToken
 	}
 
 	return volumes, nil
@@ -257,6 +285,28 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 		device = "/dev/sdf"
 	}
 
+	existing, lookupErr := cli.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+	if lookupErr != nil {
+		return fmt.Errorf("inspect volume attachment: %w", lookupErr)
+	}
+
+	if len(existing.Volumes) != 1 {
+		return fmt.Errorf("volume %s not found: %w", volumeID, ErrNotFound)
+	}
+
+	for _, attachment := range existing.Volumes[0].Attachments {
+		if aws.ToString(attachment.InstanceId) != instanceID || aws.ToString(attachment.Device) != device {
+			return fmt.Errorf("volume %s already attached elsewhere: %w", volumeID, ErrInvalidRequest)
+		}
+
+		if attachment.State == types.VolumeAttachmentStateAttached {
+			return nil
+		}
+
+		if attachment.State == types.VolumeAttachmentStateAttaching {
+			return m.waitForAttachment(ctx, cli, volumeID, instanceID, device)
+		}
+	}
 	input := &ec2.AttachVolumeInput{
 		VolumeId:   aws.String(volumeID),
 		InstanceId: aws.String(instanceID),
@@ -269,7 +319,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 	}
 
 	// Wait for volume to be in-use
-	err = m.waitForVolumeState(ctx, volumeID, cpi.ResourceStateInUse, volumeAttachTimeout)
+	err = m.waitForAttachment(ctx, cli, volumeID, instanceID, device)
 	if err != nil {
 		return fmt.Errorf("volume failed to attach: %w", err)
 	}
@@ -288,6 +338,24 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID 
 		return err
 	}
 
+	existing, lookupErr := cli.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+	if lookupErr != nil {
+		return fmt.Errorf("inspect disk before detach: %w", lookupErr)
+	}
+
+	if existing == nil || len(existing.Volumes) != 1 {
+		return fmt.Errorf("volume %s not found: %w", volumeID, ErrNotFound)
+	}
+
+	if existing.Volumes[0].State == types.VolumeStateAvailable && len(existing.Volumes[0].Attachments) == 0 {
+		return nil
+	}
+
+	for _, attachment := range existing.Volumes[0].Attachments {
+		if aws.ToString(attachment.InstanceId) != instanceID {
+			return fmt.Errorf("volume %s belongs to a different instance: %w", volumeID, ErrInvalidRequest)
+		}
+	}
 	input := &ec2.DetachVolumeInput{
 		VolumeId:   aws.String(volumeID),
 		InstanceId: aws.String(instanceID),
@@ -517,14 +585,23 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 		input.Filters = buildAWSTagFilters(combinedFilters)
 	}
 
-	result, err := cli.DescribeSnapshots(ctx, input)
-	if err != nil {
-		return nil, wrapError(err, "failed to list snapshots")
-	}
+	var snapshots []*cpi.Snapshot
 
-	snapshots := make([]*cpi.Snapshot, 0, len(result.Snapshots))
-	for i := range result.Snapshots {
-		snapshots = append(snapshots, m.mapSnapshot(&result.Snapshots[i]))
+	for {
+		result, err := cli.DescribeSnapshots(ctx, input)
+		if err != nil {
+			return nil, wrapError(err, "ListSnapshots")
+		}
+
+		for i := range result.Snapshots {
+			snapshots = append(snapshots, m.mapSnapshot(&result.Snapshots[i]))
+		}
+
+		if aws.ToString(result.NextToken) == "" {
+			break
+		}
+
+		input.NextToken = result.NextToken
 	}
 
 	return snapshots, nil
