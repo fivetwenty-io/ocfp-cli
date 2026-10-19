@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -72,7 +73,7 @@ func (m *LoadBalancerManager) CreateLoadBalancer(ctx context.Context, req *cpi.C
 		return nil, fmt.Errorf("load balancer name is required: %w", ErrInvalidRequest)
 	}
 
-	if len(req.SubnetIDs) < minRequiredSubnets {
+	if len(req.SubnetIDs) == 0 || (req.Type != "network" && len(req.SubnetIDs) < minRequiredSubnets) {
 		return nil, fmt.Errorf("at least 2 subnets are required for ALB: %w", ErrInvalidRequest)
 	}
 
@@ -167,12 +168,15 @@ func (m *LoadBalancerManager) GetLoadBalancer(ctx context.Context, lbID string) 
 	}
 
 	out := m.convertLoadBalancer(&loadBalancer)
+	if err := populateLoadBalancerTags(ctx, elbClient, out); err != nil {
+		return nil, err
+	}
 
 	// Get backends from target groups
 	for _, targetGroup := range targetGroups {
 		backends, err := m.getBackendsFromTargetGroup(ctx, elbClient, aws.ToString(targetGroup.TargetGroupArn))
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		out.Backends = append(out.Backends, backends...)
@@ -219,6 +223,9 @@ func (m *LoadBalancerManager) ListLoadBalancers(ctx context.Context, filters map
 
 	for i := range loadBalancers {
 		lb := m.convertLoadBalancer(&loadBalancers[i])
+		if err := populateLoadBalancerTags(ctx, elbClient, lb); err != nil {
+			return nil, err
+		}
 
 		// Apply filters
 		if m.matchFilters(lb, filters) {
@@ -331,6 +338,10 @@ func (m *LoadBalancerManager) DeleteLoadBalancer(ctx context.Context, lbID strin
 
 // AddBackend adds a backend to the load balancer.
 func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backend *cpi.Backend) error {
+	if backend == nil || backend.Port < 1 || backend.Port > 65535 || (net.ParseIP(backend.Address) == nil && !strings.HasPrefix(backend.Address, "i-")) {
+		return fmt.Errorf("backend requires an instance ID or IP address and port 1..65535: %w", ErrInvalidRequest)
+	}
+
 	elbClient, err := m.getELB(ctx)
 	if err != nil {
 		return WrapAWSError(err, "failed to get ELBv2 client")
@@ -352,7 +363,7 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 
 	if len(targetGroups) == 0 {
 		// Create default target group
-		tgArn, err := m.createDefaultTargetGroup(ctx, elbClient, lbID, backend.Port)
+		tgArn, err := m.createDefaultTargetGroup(ctx, elbClient, lbID, backend.Port, backend.Address)
 		if err != nil {
 			return err
 		}
@@ -360,9 +371,11 @@ func (m *LoadBalancerManager) AddBackend(ctx context.Context, lbID string, backe
 		targetGroupArn = tgArn
 
 		// Create default listener if none exists
-		err = m.ensureDefaultListener(ctx, elbClient, lbArn, targetGroupArn)
+		err = m.ensureDefaultListener(ctx, elbClient, lbArn, targetGroupArn, backend.Port)
 		if err != nil {
-			return err
+			_, cleanupErr := elbClient.DeleteTargetGroup(ctx, &elbv2.DeleteTargetGroupInput{TargetGroupArn: aws.String(targetGroupArn)})
+
+			return errors.Join(err, cleanupErr)
 		}
 	} else {
 		targetGroupArn = aws.ToString(targetGroups[0].TargetGroupArn)
@@ -507,7 +520,7 @@ func (m *LoadBalancerManager) GetHealthStatus(ctx context.Context, lbID string) 
 
 		result, err := elbClient.DescribeTargetHealth(ctx, input)
 		if err != nil {
-			continue
+			return nil, WrapAWSError(err, "failed to read target health")
 		}
 
 		for _, targetHealth := range result.TargetHealthDescriptions {
@@ -796,20 +809,37 @@ func (m *LoadBalancerManager) getTargetGroupsForLoadBalancer(ctx context.Context
 		LoadBalancerArn: aws.String(lbArn),
 	}
 
-	listenersResult, err := client.DescribeListeners(ctx, listenersInput)
-	if err != nil {
-		return nil, WrapAWSError(err, "failed to describe listeners")
-	}
-
-	// Collect unique target group ARNs
+	// Every listener contributes to ownership and cleanup; a single page can
+	// otherwise leave target groups behind or hide a backend.
 	tgArnSet := make(map[string]bool)
 
-	for _, listener := range listenersResult.Listeners {
-		for _, action := range listener.DefaultActions {
-			if action.TargetGroupArn != nil {
-				tgArnSet[aws.ToString(action.TargetGroupArn)] = true
+	for {
+		listenersResult, err := client.DescribeListeners(ctx, listenersInput)
+		if err != nil {
+			return nil, WrapAWSError(err, "failed to describe listeners")
+		}
+
+		for _, listener := range listenersResult.Listeners {
+			for _, action := range listener.DefaultActions {
+				if action.TargetGroupArn != nil {
+					tgArnSet[aws.ToString(action.TargetGroupArn)] = true
+				}
+
+				if action.ForwardConfig != nil {
+					for _, target := range action.ForwardConfig.TargetGroups {
+						if target.TargetGroupArn != nil {
+							tgArnSet[aws.ToString(target.TargetGroupArn)] = true
+						}
+					}
+				}
 			}
 		}
+
+		if aws.ToString(listenersResult.NextMarker) == "" {
+			break
+		}
+
+		listenersInput.Marker = listenersResult.NextMarker
 	}
 
 	// Get target group details
@@ -822,7 +852,7 @@ func (m *LoadBalancerManager) getTargetGroupsForLoadBalancer(ctx context.Context
 
 		result, err := client.DescribeTargetGroups(ctx, input)
 		if err != nil {
-			continue
+			return nil, WrapAWSError(err, "failed to discover target group")
 		}
 
 		targetGroups = append(targetGroups, result.TargetGroups...)
@@ -858,15 +888,18 @@ func (m *LoadBalancerManager) getBackendsFromTargetGroup(ctx context.Context, cl
 }
 
 // createDefaultTargetGroup creates a default target group for a load balancer.
-func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, client ELBv2API, lbName string, port int) (string, error) {
+func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, client ELBv2API, lbName string, port int, address string) (string, error) {
 	// Validate port
 	if port < 0 || port > 65535 {
 		return "", fmt.Errorf("invalid port number %d: must be between 0 and 65535: %w", port, ErrInvalidRequest)
 	}
 
 	// Get VPC ID from load balancer
-	lbInput := &elbv2.DescribeLoadBalancersInput{
-		Names: []string{lbName},
+	lbInput := &elbv2.DescribeLoadBalancersInput{}
+	if strings.HasPrefix(lbName, "arn:") {
+		lbInput.LoadBalancerArns = []string{lbName}
+	} else {
+		lbInput.Names = []string{lbName}
 	}
 
 	lbResult, err := client.DescribeLoadBalancers(ctx, lbInput)
@@ -879,20 +912,31 @@ func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, clie
 	}
 
 	vpcID := lbResult.LoadBalancers[0].VpcId
+	lbName = aws.ToString(lbResult.LoadBalancers[0].LoadBalancerName)
+
+	protocol := elbv2types.ProtocolEnumHttp
+	if lbResult.LoadBalancers[0].Type == elbv2types.LoadBalancerTypeEnumNetwork {
+		protocol = elbv2types.ProtocolEnumTcp
+	}
+
+	targetType := elbv2types.TargetTypeEnumInstance
+	if net.ParseIP(address) != nil {
+		targetType = elbv2types.TargetTypeEnumIp
+	}
 
 	// Create target group
-	tgName := lbName + "-tg"
+	tgName := fmt.Sprintf("%s-%d-tg", lbName, port)
 	if len(tgName) > maxTargetGroupNameLength {
 		tgName = tgName[:maxTargetGroupNameLength]
 	}
 
 	tgInput := &elbv2.CreateTargetGroupInput{
 		Name:     aws.String(tgName),
-		Protocol: elbv2types.ProtocolEnumHttp,
+		Protocol: protocol,
 		Port:     aws.Int32(int32(port)), // #nosec G115 -- port validated above
 
 		VpcId:                      vpcID,
-		TargetType:                 elbv2types.TargetTypeEnumInstance,
+		TargetType:                 targetType,
 		HealthCheckProtocol:        elbv2types.ProtocolEnum(defaultHealthCheckProtocol),
 		HealthCheckPath:            aws.String(defaultHealthCheckPath),
 		HealthCheckIntervalSeconds: aws.Int32(int32(defaultHealthCheckInterval)),
@@ -905,6 +949,10 @@ func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, clie
 		},
 	}
 
+	if protocol == elbv2types.ProtocolEnumTcp {
+		tgInput.HealthCheckProtocol = elbv2types.ProtocolEnumTcp
+		tgInput.HealthCheckPath = nil
+	}
 	tgResult, err := client.CreateTargetGroup(ctx, tgInput)
 	if err != nil {
 		return "", WrapAWSError(err, "failed to create target group")
@@ -918,7 +966,7 @@ func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, clie
 }
 
 // ensureDefaultListener ensures a default listener exists for the load balancer.
-func (m *LoadBalancerManager) ensureDefaultListener(ctx context.Context, client ELBv2API, lbArn string, targetGroupArn string) error {
+func (m *LoadBalancerManager) ensureDefaultListener(ctx context.Context, client ELBv2API, lbArn string, targetGroupArn string, port int) error {
 	// Check if listeners already exist
 	input := &elbv2.DescribeListenersInput{
 		LoadBalancerArn: aws.String(lbArn),
@@ -929,15 +977,28 @@ func (m *LoadBalancerManager) ensureDefaultListener(ctx context.Context, client 
 		return WrapAWSError(err, "failed to describe listeners")
 	}
 
-	if len(result.Listeners) > 0 {
-		return nil // Listener already exists
+	for _, listener := range result.Listeners {
+		if int(aws.ToInt32(listener.Port)) == port {
+			for _, action := range listener.DefaultActions {
+				if aws.ToString(action.TargetGroupArn) == targetGroupArn {
+					return nil
+				}
+			}
+
+			return fmt.Errorf("listener port %d already forwards to another target group: %w", port, ErrInvalidRequest)
+		}
+	}
+
+	protocol := elbv2types.ProtocolEnumHttp
+	if strings.Contains(lbArn, ":loadbalancer/net/") {
+		protocol = elbv2types.ProtocolEnumTcp
 	}
 
 	// Create default HTTP listener
 	listenerInput := &elbv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbArn),
-		Protocol:        elbv2types.ProtocolEnumHttp,
-		Port:            aws.Int32(defaultHTTPPort),
+		Protocol:        protocol,
+		Port:            aws.Int32(int32(port)), // #nosec G115 -- caller validates the listener port within 1..65535
 		DefaultActions: []elbv2types.Action{
 			{
 				Type:           elbv2types.ActionTypeEnumForward,
@@ -979,14 +1040,53 @@ func (m *LoadBalancerManager) matchFilters(loadBalancer *cpi.LoadBalancer, filte
 				return false
 			}
 		default:
-			// For all other keys (like "bloc", "managed-by"), check tags
-			// Note: LoadBalancer.Tags is currently []string, not map[string]string
-			// Until tags are properly populated from AWS, tag filters will cause
-			// load balancers to be excluded (which is safer than including all)
-			//nolint:godox // Fetch and populate tags in convertLoadBalancer (future enhancement)
-			return false
+			wanted := strings.TrimPrefix(key, "tag:") + "=" + value
+			found := false
+
+			for _, tag := range loadBalancer.Tags {
+				if tag == wanted {
+					found = true
+
+					break
+				}
+			}
+
+			if !found {
+				return false
+			}
 		}
 	}
 
 	return true
+}
+
+// tagReader is optional only for older injected service implementations; the
+// production ELBv2 SDK implements it. Reads must not turn authorization errors
+// into a false absence of owned load balancers.
+type tagReader interface {
+	DescribeTags(ctx context.Context, input *elbv2.DescribeTagsInput, opts ...func(*elbv2.Options)) (*elbv2.DescribeTagsOutput, error)
+}
+
+func populateLoadBalancerTags(ctx context.Context, client ELBv2API, lb *cpi.LoadBalancer) error {
+	reader, ok := client.(tagReader)
+	if !ok {
+		return nil
+	}
+
+	out, err := reader.DescribeTags(ctx, &elbv2.DescribeTagsInput{ResourceArns: []string{lb.ID}})
+	if err != nil {
+		return WrapAWSError(err, "read load balancer ownership tags")
+	}
+
+	for _, description := range out.TagDescriptions {
+		if aws.ToString(description.ResourceArn) != lb.ID {
+			continue
+		}
+
+		for _, tag := range description.Tags {
+			lb.Tags = append(lb.Tags, aws.ToString(tag.Key)+"="+aws.ToString(tag.Value))
+		}
+	}
+
+	return nil
 }
