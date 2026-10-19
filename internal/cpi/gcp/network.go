@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +27,7 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 
 	network := &computepb.Network{
 		Name:                  proto(req.Name),
-		Description:           proto(req.Description),
+		Description:           proto(resourceDescription(req.Description, req.Tags)),
 		AutoCreateSubnetworks: proto(false), // Use custom subnet mode
 	}
 
@@ -37,7 +36,21 @@ func (m *NetworkManager) CreateNetwork(ctx context.Context, req *cpi.NetworkRequ
 		NetworkResource: network,
 	})
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateNetwork")
+		wrapped := WrapGCPError(err, "CreateNetwork")
+		if IsAlreadyExists(wrapped) {
+			existing, getErr := m.client.getNetworksClient().Get(ctx, &computepb.GetNetworkRequest{Project: projectID, Network: req.Name})
+			if getErr != nil {
+				return nil, WrapGCPError(getErr, "CreateNetwork.Reconcile")
+			}
+
+			if !matchesFilters(existing.GetDescription(), req.Tags) || len(req.Tags) == 0 || existing.GetAutoCreateSubnetworks() {
+				return nil, fmt.Errorf("existing network %s does not match requested ownership/configuration", req.Name)
+			}
+
+			return m.convertNetwork(existing), nil
+		}
+
+		return nil, wrapped
 	}
 
 	// Wait for operation to complete
@@ -120,7 +133,12 @@ func (m *NetworkManager) DeleteNetwork(ctx context.Context, id string) error { /
 		Network: id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeleteNetwork")
+		wrapped := WrapGCPError(err, "DeleteNetwork")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -149,6 +167,7 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 
 	subnetwork := &computepb.Subnetwork{
 		Name:                  proto(req.Name),
+		Description:           proto(resourceDescription("", req.Tags)),
 		IpCidrRange:           proto(req.CIDR),
 		Network:               proto(networkURL),
 		Region:                proto(region),
@@ -161,7 +180,21 @@ func (m *NetworkManager) CreateSubnet(ctx context.Context, req *cpi.SubnetReques
 		SubnetworkResource: subnetwork,
 	})
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateSubnet")
+		wrapped := WrapGCPError(err, "CreateSubnet")
+		if IsAlreadyExists(wrapped) {
+			existing, getErr := m.client.getSubnetworksClient().Get(ctx, &computepb.GetSubnetworkRequest{Project: projectID, Region: region, Subnetwork: req.Name})
+			if getErr != nil {
+				return nil, WrapGCPError(getErr, "CreateSubnet.Reconcile")
+			}
+
+			if len(req.Tags) == 0 || !matchesFilters(existing.GetDescription(), req.Tags) || existing.GetIpCidrRange() != req.CIDR || canonicalURL(existing.GetNetwork()) != canonicalURL(networkURL) || existing.GetPrivateIpGoogleAccess() != config.EnablePrivateGoogleAccess {
+				return nil, fmt.Errorf("existing subnet %s does not match requested ownership/configuration", req.Name)
+			}
+
+			return m.convertSubnet(existing), nil
+		}
+
+		return nil, wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -184,6 +217,7 @@ func (m *NetworkManager) GetSubnet(ctx context.Context, id string) (*cpi.Subnet,
 	config := m.client.getConfig()
 	projectID := config.GetNetworkProject()
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	subnet, err := m.client.getSubnetworksClient().Get(ctx, &computepb.GetSubnetworkRequest{
 		Project:    projectID,
@@ -244,6 +278,7 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //
 	config := m.client.getConfig()
 	projectID := config.GetNetworkProject()
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	op, err := m.client.getSubnetworksClient().Delete(ctx, &computepb.DeleteSubnetworkRequest{ //nolint:varnamelen
 		Project:    projectID,
@@ -251,7 +286,12 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //
 		Subnetwork: id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeleteSubnet")
+		wrapped := WrapGCPError(err, "DeleteSubnet")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -268,146 +308,26 @@ func (m *NetworkManager) DeleteSubnet(ctx context.Context, id string) error { //
 //
 //nolint:dupl // intentionally similar CPI implementation
 func (m *NetworkManager) CreateSecurityGroup(ctx context.Context, req *cpi.CreateSecurityGroupRequest) (*cpi.SecurityGroup, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return (&SecurityManager{client: m.client}).CreateSecurityGroup(ctx, req)
 
-	projectID := m.client.getConfig().GetNetworkProject()
-	networkTag := FormatNetworkTag(req.Name)
-
-	// Build network URL
-	networkURL := FormatNetworkURL(projectID, req.NetworkID)
-
-	// Create firewall rule for this security group
-	firewall := &computepb.Firewall{
-		Name:        proto(req.Name),
-		Description: proto(req.Description),
-		Network:     proto(networkURL),
-		TargetTags:  []string{networkTag},
-		Allowed:     []*computepb.Allowed{},
-	}
-
-	// Add rules
-	for _, rule := range req.Rules {
-		allowed := &computepb.Allowed{
-			IPProtocol: proto(rule.Protocol),
-		}
-		if rule.PortRangeMin > 0 && rule.PortRangeMax > 0 {
-			if rule.PortRangeMin == rule.PortRangeMax {
-				allowed.Ports = []string{strconv.Itoa(rule.PortRangeMin)}
-			} else {
-				allowed.Ports = []string{fmt.Sprintf("%d-%d", rule.PortRangeMin, rule.PortRangeMax)}
-			}
-		}
-
-		firewall.Allowed = append(firewall.Allowed, allowed)
-
-		// Set source ranges for ingress
-		if rule.Direction == DirectionIngress && rule.RemoteIPCIDR != "" {
-			firewall.SourceRanges = append(firewall.SourceRanges, rule.RemoteIPCIDR)
-		}
-	}
-
-	// Default to allow from anywhere if no source ranges specified
-	if len(firewall.GetSourceRanges()) == 0 {
-		firewall.SourceRanges = []string{"0.0.0.0/0"}
-	}
-
-	op, err := m.client.getFirewallsClient().Insert(ctx, &computepb.InsertFirewallRequest{ //nolint:varnamelen
-		Project:          projectID,
-		FirewallResource: firewall,
-	})
-	if err != nil {
-		return nil, WrapGCPError(err, "CreateSecurityGroup")
-	}
-
-	err = op.Wait(ctx)
-	if err != nil {
-		return nil, WrapGCPError(err, "CreateSecurityGroup.Wait")
-	}
-
-	logger.Debugw("Created firewall rule", "name", req.Name, "networkTag", networkTag)
-
-	return m.GetSecurityGroup(ctx, req.Name)
 }
 
 // GetSecurityGroup retrieves a firewall rule by name.
-func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) { //nolint:varnamelen
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (m *NetworkManager) GetSecurityGroup(ctx context.Context, id string) (*cpi.SecurityGroup, error) {
+	return (&SecurityManager{client: m.client}).GetSecurityGroup(ctx, id)
 
-	projectID := m.client.getConfig().GetNetworkProject()
-
-	firewall, err := m.client.getFirewallsClient().Get(ctx, &computepb.GetFirewallRequest{
-		Project:  projectID,
-		Firewall: id,
-	})
-	if err != nil {
-		return nil, WrapGCPError(err, "GetSecurityGroup")
-	}
-
-	return m.convertFirewallToSecurityGroup(firewall), nil
 }
 
 // ListSecurityGroups lists firewall rules.
 func (m *NetworkManager) ListSecurityGroups(ctx context.Context, _filters map[string]string) ([]*cpi.SecurityGroup, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return (&SecurityManager{client: m.client}).ListSecurityGroups(ctx, _filters)
 
-	projectID := m.client.getConfig().GetNetworkProject()
-
-	var securityGroups []*cpi.SecurityGroup
-
-	it := m.client.getFirewallsClient().List(ctx, &computepb.ListFirewallsRequest{
-		Project: projectID,
-	})
-
-	for {
-		firewall, err := it.Next()
-		if errors.Is(err, iterator.Done) {
-			break
-		}
-
-		if err != nil {
-			return nil, WrapGCPError(err, "ListSecurityGroups")
-		}
-
-		securityGroups = append(securityGroups, m.convertFirewallToSecurityGroup(firewall))
-	}
-
-	return securityGroups, nil
 }
 
 // DeleteSecurityGroup deletes a firewall rule.
-func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error { //nolint:varnamelen
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
-		return err
-	}
+func (m *NetworkManager) DeleteSecurityGroup(ctx context.Context, id string) error {
+	return (&SecurityManager{client: m.client}).DeleteSecurityGroup(ctx, id)
 
-	projectID := m.client.getConfig().GetNetworkProject()
-
-	op, err := m.client.getFirewallsClient().Delete(ctx, &computepb.DeleteFirewallRequest{ //nolint:varnamelen
-		Project:  projectID,
-		Firewall: id,
-	})
-	if err != nil {
-		return WrapGCPError(err, "DeleteSecurityGroup")
-	}
-
-	err = op.Wait(ctx)
-	if err != nil {
-		return WrapGCPError(err, "DeleteSecurityGroup.Wait")
-	}
-
-	logger.Debugw("Deleted firewall rule", "name", id)
-
-	return nil
 }
 
 // CreatePublicIP reserves a static external IP address.
@@ -465,6 +385,7 @@ func (m *NetworkManager) GetPublicIP(ctx context.Context, id string) (*cpi.Publi
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	address, err := m.client.getAddressesClient().Get(ctx, &computepb.GetAddressRequest{
 		Project: projectID,
@@ -525,6 +446,7 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error { 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	op, err := m.client.getAddressesClient().Delete(ctx, &computepb.DeleteAddressRequest{ //nolint:varnamelen
 		Project: projectID,
@@ -532,7 +454,12 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error { 
 		Address: id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeletePublicIP")
+		wrapped := WrapGCPError(err, "DeletePublicIP")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -594,6 +521,7 @@ func (m *NetworkManager) GetFloatingIP(ctx context.Context, id string) (*cpi.Flo
 	config := m.client.getConfig()
 	projectID := config.ProjectID
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	address, err := m.client.getAddressesClient().Get(ctx, &computepb.GetAddressRequest{
 		Project: projectID,
@@ -635,7 +563,7 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[strin
 			return nil, WrapGCPError(err, "ListFloatingIPs")
 		}
 
-		if address.GetAddressType() == "EXTERNAL" {
+		if address.GetAddressType() == "EXTERNAL" && matchesLabelFilters(address.GetLabels(), _filters) {
 			floatingIPs = append(floatingIPs, m.convertAddressToFloatingIP(address))
 		}
 	}
@@ -644,17 +572,136 @@ func (m *NetworkManager) ListFloatingIPs(ctx context.Context, _filters map[strin
 }
 
 // AssociateFloatingIP associates a floating IP with an instance.
-func (m *NetworkManager) AssociateFloatingIP(_ctx context.Context, _ipID string, _instanceID string) error {
-	// In GCP, this is done by updating the instance's access config
-	// This is a more complex operation that requires getting the instance,
-	// finding the network interface, and adding an access config
-	return fmt.Errorf("%w: AssociateFloatingIP - use instance network interface configuration", ErrNotImplemented)
+func (m *NetworkManager) AssociateFloatingIP(ctx context.Context, ipID, instanceID string) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+		return err
+	}
+
+	cfg := m.client.getConfig()
+	project, zone, name := resourceScope(cfg.ProjectID, cfg.Zone, instanceID)
+
+	addressProject, addressRegion, addressName := regionalScope(project, GetRegionFromZone(zone), ipID)
+	if addressProject != project || addressRegion != GetRegionFromZone(zone) {
+		return errors.New("address and instance must share project and region")
+	}
+
+	address, err := m.client.getAddressesClient().Get(ctx, &computepb.GetAddressRequest{Project: addressProject, Region: addressRegion, Address: addressName})
+	if err != nil {
+		return WrapGCPError(err, "AssociateFloatingIP.GetAddress")
+	}
+
+	for _, user := range address.GetUsers() {
+		if ExtractNameFromURL(user) != name || ExtractZoneFromURL(user) != zone {
+			return errors.New("address is already associated with another resource")
+		}
+	}
+
+	vm, err := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: project, Zone: zone, Instance: name})
+	if err != nil {
+		return WrapGCPError(err, "AssociateFloatingIP.GetInstance")
+	}
+
+	if len(vm.GetNetworkInterfaces()) != 1 {
+		return errors.New("floating IP association requires exactly one network interface")
+	}
+
+	nic := vm.GetNetworkInterfaces()[0]
+	for _, access := range nic.GetAccessConfigs() {
+		if access.GetNatIP() == address.GetAddress() {
+			return nil
+		}
+	}
+
+	if len(nic.GetAccessConfigs()) > 1 {
+		return errors.New("multiple access configurations require explicit selection")
+	}
+
+	return m.replaceAccessConfig(ctx, project, zone, name, nic, address)
 }
 
-// DisassociateFloatingIP disassociates a floating IP from an instance.
-func (m *NetworkManager) DisassociateFloatingIP(_ctx context.Context, _ipID string) error {
-	// In GCP, this is done by removing the access config from the instance
-	return fmt.Errorf("%w: DisassociateFloatingIP - use instance network interface configuration", ErrNotImplemented)
+func (m *NetworkManager) replaceAccessConfig(ctx context.Context, project, zone, name string, nic *computepb.NetworkInterface, address *computepb.Address) error {
+	var (
+		err      error
+		previous *computepb.AccessConfig
+	)
+	if len(nic.GetAccessConfigs()) == 1 {
+		previous = nic.GetAccessConfigs()[0]
+		if err = m.deleteAccessConfig(ctx, project, zone, name, nic.GetName(), previous.GetName()); err != nil {
+			return err
+		}
+	}
+
+	access := &computepb.AccessConfig{Name: proto("External NAT"), Type: proto("ONE_TO_ONE_NAT"), NatIP: proto(address.GetAddress()), NetworkTier: proto(address.GetNetworkTier())}
+	if access.GetNetworkTier() == "" {
+		access.NetworkTier = proto("PREMIUM")
+	}
+
+	if err = m.addAccessConfig(ctx, project, zone, name, nic.GetName(), access); err != nil {
+		if previous != nil {
+			rollbackErr := m.addAccessConfig(ctx, project, zone, name, nic.GetName(), previous)
+			if rollbackErr != nil {
+				return fmt.Errorf("associate floating IP: %w; restore previous access configuration: %w", err, rollbackErr)
+			}
+		}
+
+		return err
+	}
+
+	return nil
+}
+func (m *NetworkManager) addAccessConfig(ctx context.Context, project, zone, instance, nic string, access *computepb.AccessConfig) error {
+	op, err := m.client.getInstancesClient().AddAccessConfig(ctx, &computepb.AddAccessConfigInstanceRequest{Project: project, Zone: zone, Instance: instance, NetworkInterface: nic, AccessConfigResource: access})
+	if err != nil {
+		return WrapGCPError(err, "AddAccessConfig")
+	}
+
+	return WrapGCPError(op.Wait(ctx), "AddAccessConfig.Wait")
+}
+func (m *NetworkManager) deleteAccessConfig(ctx context.Context, project, zone, instance, nic, access string) error {
+	op, err := m.client.getInstancesClient().DeleteAccessConfig(ctx, &computepb.DeleteAccessConfigInstanceRequest{Project: project, Zone: zone, Instance: instance, NetworkInterface: nic, AccessConfig: access})
+	if err != nil {
+		return WrapGCPError(err, "DeleteAccessConfig")
+	}
+
+	return WrapGCPError(op.Wait(ctx), "DeleteAccessConfig.Wait")
+}
+func (m *NetworkManager) DisassociateFloatingIP(ctx context.Context, ipID string) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
+		return err
+	}
+
+	cfg := m.client.getConfig()
+	addressProject, addressRegion, addressName := regionalScope(cfg.ProjectID, cfg.Region, ipID)
+
+	address, err := m.client.getAddressesClient().Get(ctx, &computepb.GetAddressRequest{Project: addressProject, Region: addressRegion, Address: addressName})
+	if err != nil {
+		return WrapGCPError(err, "DisassociateFloatingIP.GetAddress")
+	}
+
+	for _, user := range address.GetUsers() {
+		if !strings.Contains(user, "/instances/") {
+			return errors.New("address is associated with a non-instance resource")
+		}
+
+		project, zone, name := resourceScope(cfg.ProjectID, cfg.Zone, user)
+
+		vm, getErr := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: project, Zone: zone, Instance: name})
+		if getErr != nil {
+			return WrapGCPError(getErr, "DisassociateFloatingIP.GetInstance")
+		}
+
+		for _, nic := range vm.GetNetworkInterfaces() {
+			for _, access := range nic.GetAccessConfigs() {
+				if access.GetNatIP() == address.GetAddress() {
+					if err = m.deleteAccessConfig(ctx, project, zone, name, nic.GetName(), access.GetName()); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // ReleaseFloatingIP releases a floating IP.
@@ -709,6 +756,7 @@ func (m *NetworkManager) GetRouter(ctx context.Context, id string) (*cpi.Router,
 	config := m.client.getConfig()
 	projectID := config.GetNetworkProject()
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	router, err := m.client.getRoutersClient().Get(ctx, &computepb.GetRouterRequest{
 		Project: projectID,
@@ -779,6 +827,7 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //
 	config := m.client.getConfig()
 	projectID := config.GetNetworkProject()
 	region := config.Region
+	projectID, region, id = regionalScope(projectID, region, id)
 
 	op, err := m.client.getRoutersClient().Delete(ctx, &computepb.DeleteRouterRequest{ //nolint:varnamelen
 		Project: projectID,
@@ -786,7 +835,12 @@ func (m *NetworkManager) DeleteRouter(ctx context.Context, id string) error { //
 		Router:  id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeleteRouter")
+		wrapped := WrapGCPError(err, "DeleteRouter")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -853,8 +907,9 @@ func (m *NetworkManager) GetLoadBalancerHealth(_ctx context.Context, _lbID strin
 
 func (m *NetworkManager) convertNetwork(network *computepb.Network) *cpi.Network {
 	return &cpi.Network{
-		ID:        strconv.FormatUint(network.GetId(), 10),
+		ID:        network.GetName(),
 		Name:      network.GetName(),
+		Tags:      resourceTags(network.GetDescription()),
 		State:     cpi.ResourceStateActive,
 		CreatedAt: ParseTimestamp(network.GetCreationTimestamp()),
 	}
@@ -862,8 +917,9 @@ func (m *NetworkManager) convertNetwork(network *computepb.Network) *cpi.Network
 
 func (m *NetworkManager) convertSubnet(subnet *computepb.Subnetwork) *cpi.Subnet {
 	return &cpi.Subnet{
-		ID:               strconv.FormatUint(subnet.GetId(), 10),
+		ID:               subnet.GetName(),
 		Name:             subnet.GetName(),
+		Tags:             resourceTags(subnet.GetDescription()),
 		NetworkID:        ExtractNameFromURL(subnet.GetNetwork()),
 		CIDR:             subnet.GetIpCidrRange(),
 		AvailabilityZone: ExtractRegionFromURL(subnet.GetSelfLink()),
@@ -888,7 +944,7 @@ func (m *NetworkManager) convertFirewallToSecurityGroup(firewall *computepb.Fire
 	}
 
 	return &cpi.SecurityGroup{
-		ID:          strconv.FormatUint(firewall.GetId(), 10),
+		ID:          firewall.GetName(),
 		Name:        firewall.GetName(),
 		Description: firewall.GetDescription(),
 		NetworkID:   ExtractNameFromURL(firewall.GetNetwork()),
@@ -904,7 +960,7 @@ func (m *NetworkManager) convertAddressToPublicIP(address *computepb.Address) *c
 	}
 
 	return &cpi.PublicIP{
-		ID:        strconv.FormatUint(address.GetId(), 10),
+		ID:        regionalIdentity(address.GetRegion(), "addresses", address.GetName()),
 		Name:      address.GetName(),
 		IPAddress: address.GetAddress(),
 		Address:   address.GetAddress(),
@@ -923,17 +979,17 @@ func (m *NetworkManager) convertAddressToFloatingIP(address *computepb.Address) 
 	}
 
 	return &cpi.FloatingIP{
-		ID:        strconv.FormatUint(address.GetId(), 10),
+		ID:        regionalIdentity(address.GetRegion(), "addresses", address.GetName()),
 		Address:   address.GetAddress(),
 		Status:    status,
-		Tags:      address.GetLabels(),
+		Tags:      decodedLabels(address.GetLabels()),
 		CreatedAt: ParseTimestamp(address.GetCreationTimestamp()),
 	}
 }
 
 func (m *NetworkManager) convertRouter(router *computepb.Router) *cpi.Router {
 	return &cpi.Router{
-		ID:        strconv.FormatUint(router.GetId(), 10),
+		ID:        router.GetName(),
 		Name:      router.GetName(),
 		NetworkID: ExtractNameFromURL(router.GetNetwork()),
 		State:     cpi.ResourceStateActive,
@@ -962,16 +1018,20 @@ func parsePortRange(port string) (int, int) {
 }
 
 func matchesFilters(description string, filters map[string]string) bool {
-	// Simple filter matching - in production would use proper label filtering
 	if len(filters) == 0 {
 		return true
 	}
 
-	for _, v := range filters {
-		if strings.Contains(description, v) {
-			return true
+	tags := resourceTags(description)
+	if tags == nil {
+		return false
+	}
+
+	for key, value := range filters {
+		if logicalTag(tags, key) != value {
+			return false
 		}
 	}
 
-	return false
+	return true
 }
