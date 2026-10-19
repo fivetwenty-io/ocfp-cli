@@ -58,7 +58,7 @@ func NewInitCmd() *cobra.Command {
 		Short:     "Initialize OCFP components",
 		Long:      getInitLongDescription(),
 		Example:   getInitExamples(),
-		ValidArgs: []string{"aws", "pve", "pg", "cf", "bosh", RoleBastion, KeywordAll},
+		ValidArgs: []string{"aws", "gcp", "pve", "pg", "cf", "bosh", RoleBastion, KeywordAll},
 		Args:      cobra.ExactArgs(1),
 		RunE:      initFlags.runInit,
 	}
@@ -299,6 +299,8 @@ func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Comman
 	switch component {
 	case "aws":
 		return initializeAWS(cmd)
+	case "gcp":
+		return initializeGCP(cmd)
 	case "pve":
 		return initializePVE(cmd, cfg)
 	case "pg":
@@ -375,6 +377,7 @@ func getInitLongDescription() string {
 
 Components:
   aws     - Initialize AWS environment (requires --bloc ocfp-aws-<region>, or OCFP_BLOC)
+  gcp     - Initialize Google Cloud environment
   pve     - Initialize Proxmox VE environment (requires --bloc <name>, or OCFP_BLOC; datacenter from config region)
   pg      - Initialize PostgreSQL database
   cf      - Initialize Cloud Foundry

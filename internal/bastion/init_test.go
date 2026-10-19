@@ -543,3 +543,38 @@ func TestManager_createFilteredConfig_CarriesAllTopLevelSections(t *testing.T) {
 	assert.Contains(t, filteredConfig.Blocs, "test-bloc")
 	assert.NotContains(t, filteredConfig.Blocs, "other-bloc")
 }
+
+func TestManagerFilteredGCPConfigTransportsCredentials(t *testing.T) {
+	for _, source := range []string{"key-path", "json-path", "inline", "environment"} {
+		t.Run(source, func(t *testing.T) {
+			raw := `{"type":"service_account","private_key":"test-secret"}`
+			path := filepath.Join(t.TempDir(), "credentials.json")
+			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
+			bloc := &config.Config{Name: "prod", Provider: "gcp"}
+			switch source {
+			case "key-path":
+				bloc.ServiceAccountKeyPath = path
+			case "json-path":
+				bloc.ServiceAccountJSON = path
+			case "inline":
+				bloc.ServiceAccountJSON = raw
+			case "environment":
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
+			}
+			original := *bloc
+			manager := &Manager{config: bloc, log: newTestLogger()}
+			filtered, err := manager.createFilteredConfig(&config.ConfigFile{Blocs: map[string]*config.Config{"prod": bloc}}, "local.yml")
+			require.NoError(t, err)
+			require.Equal(t, raw, filtered.Blocs["prod"].ServiceAccountJSON)
+			require.Empty(t, filtered.Blocs["prod"].ServiceAccountKeyPath)
+			require.Equal(t, original, *bloc, "local configuration must remain unchanged")
+		})
+	}
+}
+
+func TestManagerFilteredGCPConfigRejectsUnreadableCredentials(t *testing.T) {
+	bloc := &config.Config{Name: "prod", Provider: "gcp", ServiceAccountKeyPath: "/does-not-exist/credentials.json"}
+	manager := &Manager{config: bloc, log: newTestLogger()}
+	_, err := manager.createFilteredConfig(&config.ConfigFile{Blocs: map[string]*config.Config{"prod": bloc}}, "local.yml")
+	require.Error(t, err)
+}
