@@ -138,14 +138,7 @@ func (m *NetworkManager) DeletePublicIP(ctx context.Context, id string) error {
 
 // CreateLoadBalancer delegates to the load balancer manager.
 func (m *NetworkManager) CreateLoadBalancer(ctx context.Context, config *cpi.LoadBalancer) (*cpi.LoadBalancer, error) {
-	req := &cpi.CreateLoadBalancerRequest{
-		Name:           config.Name,
-		NetworkID:      config.NetworkID,
-		SubnetIDs:      config.SubnetIDs,
-		SecurityGroups: config.SecurityGroups,
-	}
-
-	return m.client.loadBalancer.CreateLoadBalancer(ctx, req)
+	return m.createLegacyLoadBalancer(ctx, config)
 }
 
 // GetLoadBalancer delegates to the load balancer manager.
