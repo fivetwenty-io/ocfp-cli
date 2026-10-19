@@ -78,6 +78,13 @@ var (
 
 // CreateNetwork creates the network/VPC.
 func (m *Manager) CreateNetwork(ctx context.Context) error {
+	if err := m.config.ValidateCloudEgress(); err != nil {
+		return err
+	}
+
+	if !m.config.CloudPublicIP() {
+		return m.importPrivateTopology(ctx)
+	}
 	// Determine network name - use override from config if provided, otherwise use bloc-name
 	networkName := m.resolveNetworkName()
 
@@ -109,6 +116,13 @@ func (m *Manager) CreateNetwork(ctx context.Context) error {
 
 // CreateSubnets creates the network subnets.
 func (m *Manager) CreateSubnets(ctx context.Context) error {
+	if err := m.config.ValidateCloudEgress(); err != nil {
+		return err
+	}
+
+	if !m.config.CloudPublicIP() {
+		return m.importPrivateTopology(ctx)
+	}
 	// Get network ID from state
 	networkName := m.resolveNetworkName()
 

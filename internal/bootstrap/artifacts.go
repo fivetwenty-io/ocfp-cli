@@ -75,6 +75,10 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return nil
 	}
 
+	if err := m.config.ValidateCloudEgress(); err != nil {
+		return err
+	}
+
 	vmName := m.options.BlocName + "-artifacts"
 
 	if existing, _ := m.stateManager.GetResource(artifactsResourceType, vmName); existing != nil {
@@ -254,7 +258,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	}
 
 	if m.options.Provider == "aws" || m.options.Provider == "gcp" {
-		public := true
+		public := m.config.CloudPublicIP()
 		req.PublicIP = &public
 	}
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)
