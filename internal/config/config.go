@@ -1992,6 +1992,17 @@ func FormatAvailabilityZone(provider, region string, index int) string {
 		return fmt.Sprintf("%s-%d", region, index+1)
 	}
 
+	if strings.EqualFold(provider, "gcp") {
+		if len(region) > 2 && region[len(region)-2] == '-' && region[len(region)-1] >= 'a' && region[len(region)-1] <= 'z' {
+			region = region[:len(region)-2]
+		}
+
+		if index < 0 || index > 25 {
+			return fmt.Sprintf("%s-%d", region, index)
+		}
+
+		return region + "-" + string(rune('a'+index))
+	}
 	// AWS, GCP, Azure, and other providers use letter suffixes
 	if index < 0 || index > 25 {
 		return fmt.Sprintf("%s-%d", region, index)

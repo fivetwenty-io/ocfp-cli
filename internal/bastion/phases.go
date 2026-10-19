@@ -1008,6 +1008,10 @@ func (m *Manager) wrapScriptWithFunctions(script string) string {
 		fmt.Fprintf(&envExports, "export %s='%s'\n", key, value)
 	}
 
+	if m.config.Provider == "gcp" {
+		envExports.WriteString(provision.GenerateGCPCredentialsScript())
+	}
+
 	// Phases run via `bash -c` (not a login shell), so /etc/profile.d/ocfp.sh
 	// is not sourced. Put Linuxbrew on PATH here when it is installed, so tools
 	// installed via brew (vault, yq, openbao, …) are usable by every phase

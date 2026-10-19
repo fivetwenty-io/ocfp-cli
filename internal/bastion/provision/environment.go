@@ -64,6 +64,10 @@ func (em *EnvironmentManager) GenerateSystemEnvironmentScript(_ctx context.Conte
 	lines = append(lines, "# System environment configuration")
 	lines = append(lines, "")
 
+	if em.provider == providerGCP {
+		lines = append(lines, GenerateGCPCredentialsScript())
+	}
+
 	lines = append(lines, em.generateEnvironmentGuardClause()...)
 	lines = append(lines, em.generateEtcEnvironmentUpdate(envVars)...)
 	lines = append(lines, em.generateProfileDScript(envVars)...)
@@ -152,6 +156,9 @@ func (em *EnvironmentManager) generateProfileDScript(envVars map[string]string) 
 		lines = append(lines, fmt.Sprintf("export %s='%s'", key, value))
 	}
 
+	if em.provider == providerGCP {
+		lines = append(lines, gcpCredentialProfile)
+	}
 	lines = append(lines, "PROFILE_EOF")
 	lines = append(lines, "    sudo install -m 0644 /tmp/ocfp_profile.sh /etc/profile.d/ocfp.sh")
 	lines = append(lines, "    # Verify write")

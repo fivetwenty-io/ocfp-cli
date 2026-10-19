@@ -346,7 +346,7 @@ func TestFormatAvailabilityZone(t *testing.T) {
 			provider: "gcp",
 			region:   "us-central1",
 			index:    1,
-			want:     "us-central1b",
+			want:     "us-central1-b",
 		},
 		{
 			name:     "Azure uses letter suffix",

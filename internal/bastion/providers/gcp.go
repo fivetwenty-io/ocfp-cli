@@ -2,15 +2,20 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	bastionssh "github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	gcpcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
 // GCP provider errors.
@@ -35,29 +40,16 @@ func NewGCPBastionInit(cfg *config.Config) *GCPBastionInit {
 
 // Validate validates the GCP configuration for bastion initialization.
 func (g *GCPBastionInit) Validate() error {
-	// Check for required GCP configuration
-	if g.config.ProjectID == "" {
-		// Try to get from environment
-		if projectID := os.Getenv("GOOGLE_PROJECT"); projectID == "" {
-			if projectID = os.Getenv("GOOGLE_CLOUD_PROJECT"); projectID == "" {
-				return ErrGCPProjectIDRequired
-			}
-		}
+	if g.projectID() == "" {
+		return ErrGCPProjectIDRequired
 	}
 
-	// Check for service account credentials
-	if g.config.ServiceAccountJSON == "" && g.config.ServiceAccountKeyPath == "" {
-		// Try to get from environment
-		if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
-			return ErrGCPServiceAccountRequired
-		}
+	if _, err := g.CredentialsJSON(); err != nil {
+		return err
 	}
 
-	// Check for zone/region
-	if g.config.Region == "" {
-		if os.Getenv("GOOGLE_ZONE") == "" && os.Getenv("CLOUDSDK_COMPUTE_ZONE") == "" {
-			return ErrGCPZoneRequired
-		}
+	if g.zone() == "" {
+		return ErrGCPZoneRequired
 	}
 
 	g.log.Debug("GCP configuration validated successfully")
@@ -73,14 +65,14 @@ func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
 	}
 
 	// Set GCP-specific environment variables
-	if g.config.ProjectID != "" {
-		env["GOOGLE_PROJECT"] = g.config.ProjectID
-		env["GOOGLE_CLOUD_PROJECT"] = g.config.ProjectID
-		env["CLOUDSDK_CORE_PROJECT"] = g.config.ProjectID
+	if project := g.projectID(); project != "" {
+		env["GOOGLE_PROJECT"] = project
+		env["GOOGLE_CLOUD_PROJECT"] = project
+		env["CLOUDSDK_CORE_PROJECT"] = project
 	}
 
 	// Set zone and region
-	zone := g.config.Region
+	zone := g.zone()
 	if zone != "" {
 		env["GOOGLE_ZONE"] = zone
 		env["CLOUDSDK_COMPUTE_ZONE"] = zone
@@ -90,13 +82,10 @@ func (g *GCPBastionInit) PrepareEnvironment() map[string]string {
 		env["CLOUDSDK_COMPUTE_REGION"] = region
 	}
 
-	// Set credentials path
-	if g.config.ServiceAccountKeyPath != "" {
-		env["GOOGLE_APPLICATION_CREDENTIALS"] = g.config.ServiceAccountKeyPath
-	} else if g.config.ServiceAccountJSON != "" {
-		// If inline JSON, we might need to write it to a temp file
-		// For now, just note that it's configured
-		env["OCFP_GCP_CREDENTIALS_INLINE"] = "true"
+	// Carry encoded JSON, never a local file path the remote host cannot read.
+	// The provisioning wrapper materializes this into an owner-only file.
+	if raw, err := g.CredentialsJSON(); err == nil && raw != "" {
+		env["OCFP_GCP_CREDENTIALS_B64"] = base64.StdEncoding.EncodeToString([]byte(raw))
 	}
 
 	// Add Genesis-specific environment variables
@@ -139,16 +128,99 @@ func (g *GCPBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDet
 
 // addGenesisEnv adds Genesis-specific environment variables.
 func (g *GCPBastionInit) addGenesisEnv(env map[string]string) {
-	// Genesis expects these variables
-	if g.config.ProjectID != "" {
-		env["GCP_PROJECT"] = g.config.ProjectID
+	env["GENESIS_ENVIRONMENT"] = g.config.Name
+	if project := g.projectID(); project != "" {
+		env["GCP_PROJECT"] = project
 	}
 
-	zone := g.config.Region
-	if zone != "" {
+	if zone := g.zone(); zone != "" {
 		env["GCP_ZONE"] = zone
 		env["GCP_REGION"] = gcpcpi.GetRegionFromZone(zone)
 	}
+
+	genesis := g.config.Bastion.Genesis
+	if !genesis.Enabled {
+		env["GENESIS_SKIP_INSTALL"] = "1"
+
+		return
+	}
+
+	for k, v := range map[string]string{"GENESIS_BRANCH": genesis.Branch, "GENESIS_COMMIT": genesis.Commit, "GENESIS_VERSION_PREFIX": genesis.VersionPrefix, "GENESIS_REPO": genesis.Repo} {
+		if v != "" {
+			env[k] = v
+		}
+	}
+}
+
+func (g *GCPBastionInit) projectID() string {
+	for _, v := range []string{g.config.ProjectID, os.Getenv("GOOGLE_PROJECT"), os.Getenv("GOOGLE_CLOUD_PROJECT")} {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func (g *GCPBastionInit) zone() string {
+	// Prefer the subnet actually selected for the bastion over unrelated AZs.
+	for _, subnet := range g.config.Network.Subnets {
+		if subnet.AvailabilityZone != "" {
+			return subnet.AvailabilityZone
+		}
+	}
+
+	for _, v := range []string{os.Getenv("GOOGLE_ZONE"), os.Getenv("CLOUDSDK_COMPUTE_ZONE"), g.config.Region} {
+		parts := strings.Split(v, "-")
+		if len(parts) >= 3 && len(parts[len(parts)-1]) == 1 {
+			return v
+		}
+	}
+
+	keys := make([]string, 0, len(g.config.AZs))
+	for k := range g.config.AZs {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		if z := g.config.AZs[k].Zone; z != "" {
+			return z
+		}
+	}
+
+	return ""
+}
+
+// CredentialsJSON resolves local credential sources before transport to the bastion.
+func (g *GCPBastionInit) CredentialsJSON() (string, error) {
+	source := g.config.ServiceAccountJSON
+	if source == "" {
+		source = g.config.ServiceAccountKeyPath
+	}
+
+	if source == "" {
+		source = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	}
+
+	if source == "" {
+		return "", ErrGCPServiceAccountRequired
+	}
+
+	credentialConfig := gcpcpi.Config{ServiceAccountJSON: source}
+
+	data, err := credentialConfig.GetServiceAccountCredentials()
+	if err != nil {
+		return "", fmt.Errorf("read GCP service account credentials: %w", err)
+	}
+
+	raw := string(data)
+	if !json.Valid([]byte(raw)) {
+		return "", errors.New("GCP service account credentials must be valid JSON")
+	}
+
+	return raw, nil
 }
 
 // getBastionIP retrieves the bastion IP address.
@@ -185,29 +257,36 @@ func (g *GCPBastionInit) getBastionIP() (string, error) {
 //
 //nolint:unparam // signature kept for interface compatibility
 func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
-	// Look for state file in standard locations. A bloc directory that
-	// cannot be resolved is skipped: this lookup only reads, and it always
-	// returns empty so the caller falls through to its other sources.
-	statePaths := []string{filepath.Join(".", "state.json")}
-
-	blocDir, err := config.OcfpBlocDir(g.config.Name)
+	dir, err := state.GetStateDir(g.config.Name)
 	if err != nil {
-		g.log.Debugw("Skipping the bloc directory in the state file lookup", "error", err)
-	} else {
-		statePaths = append([]string{filepath.Join(blocDir, "state.json")}, statePaths...)
+		return "", err
 	}
 
-	for _, statePath := range statePaths {
-		_, statErr := os.Stat(statePath) // #nosec -- path from trusted config
-		if statErr == nil {              // #nosec -- path components are from trusted config
-			// State file exists - would parse and extract bastion IP
-			// For now, return empty to fall through to other methods
-			g.log.Debugw("Found state file", "path", statePath)
+	sm, err := state.NewManager(dir)
+	if err != nil {
+		return "", err
+	}
 
-			break
+	if _, err = sm.Load(g.config.Name); err != nil {
+		return "", err
+	}
+
+	for _, key := range []string{"bastion_public_ip", "bastion_private_ip"} {
+		if raw, e := sm.GetOutput(key); e == nil {
+			if ip, ok := raw.(string); ok && ip != "" {
+				return ip, nil
+			}
 		}
 	}
 
+	resource, err := sm.GetResource(state.ResourceTypeInstance, g.config.Name+"-bastion")
+	if err == nil && resource != nil {
+		for _, key := range []string{"public_ip", "private_ip"} {
+			if ip, ok := resource.Properties[key].(string); ok && ip != "" {
+				return ip, nil
+			}
+		}
+	}
 	return "", nil
 }
 
@@ -230,6 +309,14 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 		if statErr == nil {
 			return keyPath, nil
 		}
+	}
+
+	if key, err := bastionssh.NewKeyManager().FindPrivateKey(g.config.Name); err == nil {
+		return key, nil
+	}
+
+	if key := g.config.Keys[g.config.Name+"-keypair"]; key != "" {
+		return bastionssh.NewKeyManager().RestoreKeyFromConfig(g.config.Name, key)
 	}
 
 	// Check standard locations
@@ -255,12 +342,7 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 // getSSHOptions returns SSH options for GCP connections.
 func (g *GCPBastionInit) getSSHOptions() []string {
 	return []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=30",
-		"-o", "ServerAliveInterval=60",
-		"-o", "ServerAliveCountMax=3",
+		"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null", "LogLevel=ERROR", "ConnectTimeout=30", "ServerAliveInterval=60", "ServerAliveCountMax=3", "ForwardAgent=yes",
 	}
 }
 
