@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"time"
+	"strings"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"cloud.google.com/go/storage"
@@ -32,6 +31,17 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		zone = req.AvailabilityZone
 	}
 
+	if req.InstanceID != "" {
+		instance, lookupErr := (&ComputeManager{client: m.client}).GetInstance(ctx, req.InstanceID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+
+		projectID, zone, _ = resourceScope(projectID, zone, instance.ID)
+		if req.AvailabilityZone != "" && req.AvailabilityZone != zone {
+			return nil, errors.New("volume zone differs from owning instance")
+		}
+	}
 	labels := BuildLabels(req.Name, req.Tags)
 
 	size := int64(req.Size)
@@ -59,17 +69,31 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		DiskResource: disk,
 	})
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateVolume")
+		wrapped := WrapGCPError(err, "CreateVolume")
+		if IsAlreadyExists(wrapped) {
+			existing, getErr := m.client.getDisksClient().Get(ctx, &computepb.GetDiskRequest{Project: projectID, Zone: zone, Disk: req.Name})
+			if getErr != nil {
+				return nil, WrapGCPError(getErr, "CreateVolume.Reconcile")
+			}
+
+			if len(req.Tags) == 0 || !matchesLabelFilters(existing.GetLabels(), req.Tags) || existing.GetSizeGb() != size || ExtractNameFromURL(existing.GetType()) != diskType {
+				return nil, fmt.Errorf("existing disk %s does not match requested ownership/configuration", req.Name)
+			}
+
+			return m.convertDisk(existing), nil
+		}
+
+		return nil, wrapped
 	}
 
 	err = op.Wait(ctx)
 	if err != nil {
-		return nil, WrapGCPError(err, "CreateVolume.Wait")
+		return &cpi.Volume{ID: scopedResource(projectID, zone, "disks", req.Name), Name: req.Name}, WrapGCPError(err, "CreateVolume.Wait")
 	}
 
 	logger.Debugw("Created persistent disk", "name", req.Name, "size", size, "zone", zone)
 
-	return m.GetVolume(ctx, req.Name)
+	return m.GetVolume(ctx, scopedResource(projectID, zone, "disks", req.Name))
 }
 
 // GetVolume retrieves a persistent disk by name.
@@ -81,7 +105,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	disk, err := m.client.getDisksClient().Get(ctx, &computepb.GetDiskRequest{
 		Project: projectID,
@@ -97,111 +121,161 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 // ListVolumes lists persistent disks.
 func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]string) ([]*cpi.Volume, error) {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
 		return nil, err
 	}
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
-
-	var volumes []*cpi.Volume
-
-	it := m.client.getDisksClient().List(ctx, &computepb.ListDisksRequest{ //nolint:varnamelen
-		Project: projectID,
-		Zone:    zone,
-	})
-
+	it := m.client.getDisksClient().AggregatedList(ctx, &computepb.AggregatedListDisksRequest{Project: m.client.getConfig().ProjectID})
+	volumes := []*cpi.Volume{}
 	for {
-		disk, err := it.Next()
+		pair, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
 		}
-
 		if err != nil {
 			return nil, WrapGCPError(err, "ListVolumes")
 		}
 
-		if matchesStorageLabelFilters(disk.GetLabels(), filters) {
-			volumes = append(volumes, m.convertDisk(disk))
+		for _, disk := range pair.Value.GetDisks() {
+			if matchesStorageLabelFilters(disk.GetLabels(), filters) {
+				volumes = append(volumes, m.convertDisk(disk))
+			}
 		}
 	}
-
 	return volumes, nil
 }
 
 // AttachVolume attaches a persistent disk to an instance.
-func (m *StorageManager) AttachVolume(ctx context.Context, volumeID string, instanceID string, device string) error {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
+func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
 		return err
 	}
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
+	if isNumericResource(volumeID) {
+		volume, err := m.GetVolume(ctx, volumeID)
+		if err != nil {
+			return err
+		}
 
-	diskURL := FormatDiskURL(projectID, zone, volumeID)
-
-	attachedDisk := &computepb.AttachedDisk{
-		Source:     proto(diskURL),
-		AutoDelete: proto(false),
+		volumeID = volume.ID
 	}
 
-	if device != "" {
-		attachedDisk.DeviceName = proto(device)
+	if isNumericResource(instanceID) {
+		instance, err := (&ComputeManager{client: m.client}).GetInstance(ctx, instanceID)
+		if err != nil {
+			return err
+		}
+
+		instanceID = instance.ID
 	}
 
-	op, err := m.client.getInstancesClient().AttachDisk(ctx, &computepb.AttachDiskInstanceRequest{ //nolint:varnamelen
-		Project:              projectID,
-		Zone:                 zone,
-		Instance:             instanceID,
-		AttachedDiskResource: attachedDisk,
-	})
+	cfg := m.client.getConfig()
+	project, zone, instance := resourceScope(cfg.ProjectID, cfg.Zone, instanceID)
+
+	diskProject, diskZone, disk := resourceScope(project, zone, volumeID)
+	if diskProject != project || diskZone != zone {
+		return errors.New("disk and instance must be in the same project and zone")
+	}
+
+	if device == "" {
+		device = disk
+	}
+
+	if strings.ContainsAny(device, "/,=") {
+		return fmt.Errorf("GCP device name must be a bare name, got %q", device)
+	}
+
+	vm, err := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: project, Zone: zone, Instance: instance})
+	if err != nil {
+		return WrapGCPError(err, "AttachVolume.GetInstance")
+	}
+
+	for _, attached := range vm.GetDisks() {
+		if canonicalURL(attached.GetSource()) == canonicalURL(FormatDiskURL(project, zone, disk)) {
+			if attached.GetBoot() || attached.GetAutoDelete() {
+				return errors.New("refusing to reuse boot or auto-delete disk")
+			}
+
+			if attached.GetDeviceName() != device {
+				return fmt.Errorf("disk already attached under different device name %s", attached.GetDeviceName())
+			}
+
+			return nil
+		}
+
+		if attached.GetDeviceName() == device {
+			return fmt.Errorf("device %s already occupied", device)
+		}
+	}
+
+	op, err := m.client.getInstancesClient().AttachDisk(ctx, &computepb.AttachDiskInstanceRequest{Project: project, Zone: zone, Instance: instance, AttachedDiskResource: &computepb.AttachedDisk{Source: proto(FormatDiskURL(project, zone, disk)), DeviceName: proto(device), AutoDelete: proto(false), Mode: proto("READ_WRITE"), Type: proto("PERSISTENT")}})
 	if err != nil {
 		return WrapGCPError(err, "AttachVolume")
 	}
 
-	err = op.Wait(ctx)
-	if err != nil {
-		return WrapGCPError(err, "AttachVolume.Wait")
-	}
-
-	logger.Debugw("Attached disk to instance", "disk", volumeID, "instance", instanceID)
-
-	return nil
+	return WrapGCPError(op.Wait(ctx), "AttachVolume.Wait")
 }
 
-// DetachVolume detaches a persistent disk from an instance.
-func (m *StorageManager) DetachVolume(ctx context.Context, volumeID string, instanceID string) error {
-	err := m.client.ensureClientsLoaded(ctx)
-	if err != nil {
+func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID string) error {
+	if err := m.client.ensureClientsLoaded(ctx); err != nil {
 		return err
 	}
 
-	config := m.client.getConfig()
-	projectID := config.ProjectID
-	zone := config.Zone
+	if isNumericResource(volumeID) {
+		volume, err := m.GetVolume(ctx, volumeID)
+		if err != nil {
+			return err
+		}
 
-	op, err := m.client.getInstancesClient().DetachDisk(ctx, &computepb.DetachDiskInstanceRequest{ //nolint:varnamelen
-		Project:    projectID,
-		Zone:       zone,
-		Instance:   instanceID,
-		DeviceName: volumeID,
-	})
+		volumeID = volume.ID
+	}
+
+	if isNumericResource(instanceID) {
+		instance, err := (&ComputeManager{client: m.client}).GetInstance(ctx, instanceID)
+		if err != nil {
+			return err
+		}
+
+		instanceID = instance.ID
+	}
+
+	cfg := m.client.getConfig()
+	project, zone, instance := resourceScope(cfg.ProjectID, cfg.Zone, instanceID)
+
+	diskProject, diskZone, disk := resourceScope(project, zone, volumeID)
+	if diskProject != project || diskZone != zone {
+		return errors.New("disk and instance must be in the same project and zone")
+	}
+
+	vm, err := m.client.getInstancesClient().Get(ctx, &computepb.GetInstanceRequest{Project: project, Zone: zone, Instance: instance})
+	if err != nil {
+		return WrapGCPError(err, "DetachVolume.GetInstance")
+	}
+
+	device := ""
+
+	for _, attached := range vm.GetDisks() {
+		if canonicalURL(attached.GetSource()) == canonicalURL(FormatDiskURL(project, zone, disk)) {
+			if attached.GetBoot() {
+				return errors.New("refusing to detach boot disk")
+			}
+
+			device = attached.GetDeviceName()
+
+			break
+		}
+	}
+
+	if device == "" {
+		return nil
+	}
+
+	op, err := m.client.getInstancesClient().DetachDisk(ctx, &computepb.DetachDiskInstanceRequest{Project: project, Zone: zone, Instance: instance, DeviceName: device})
 	if err != nil {
 		return WrapGCPError(err, "DetachVolume")
 	}
 
-	err = op.Wait(ctx)
-	if err != nil {
-		return WrapGCPError(err, "DetachVolume.Wait")
-	}
-
-	logger.Debugw("Detached disk from instance", "disk", volumeID, "instance", instanceID)
-
-	return nil
+	return WrapGCPError(op.Wait(ctx), "DetachVolume.Wait")
 }
 
 // ResizeVolume resizes a persistent disk.
@@ -213,7 +287,7 @@ func (m *StorageManager) ResizeVolume(ctx context.Context, id string, size int) 
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	op, err := m.client.getDisksClient().Resize(ctx, &computepb.ResizeDiskRequest{ //nolint:varnamelen
 		Project: projectID,
@@ -246,7 +320,7 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //
 
 	config := m.client.getConfig()
 	projectID := config.ProjectID
-	zone := config.Zone
+	projectID, zone, id := resourceScope(projectID, config.Zone, id)
 
 	op, err := m.client.getDisksClient().Delete(ctx, &computepb.DeleteDiskRequest{ //nolint:varnamelen
 		Project: projectID,
@@ -254,7 +328,12 @@ func (m *StorageManager) DeleteVolume(ctx context.Context, id string) error { //
 		Disk:    id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeleteVolume")
+		wrapped := WrapGCPError(err, "DeleteVolume")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -352,8 +431,10 @@ func (m *StorageManager) ListSnapshots(ctx context.Context, volumeID string, fil
 
 		// Filter by volume ID if specified
 		if volumeID != "" {
-			sourceDisk := ExtractNameFromURL(snapshot.GetSourceDisk())
-			if sourceDisk != volumeID {
+			sourceDisk := canonicalURL(snapshot.GetSourceDisk())
+
+			wanted := canonicalURL(FormatDiskURL(projectID, config.Zone, volumeID))
+			if sourceDisk != wanted {
 				continue
 			}
 		}
@@ -381,7 +462,12 @@ func (m *StorageManager) DeleteSnapshot(ctx context.Context, id string) error { 
 		Snapshot: id,
 	})
 	if err != nil {
-		return WrapGCPError(err, "DeleteSnapshot")
+		wrapped := WrapGCPError(err, "DeleteSnapshot")
+		if IsNotFound(wrapped) {
+			return nil
+		}
+
+		return wrapped
 	}
 
 	err = op.Wait(ctx)
@@ -544,11 +630,7 @@ func (m *StorageManager) IsBucketEmpty(ctx context.Context, name string) (bool, 
 
 // CreateCredentialsGroup creates a credentials group (not applicable for GCP).
 func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, req *cpi.CredentialsGroupRequest) (*cpi.CredentialsGroup, error) {
-	// GCP uses IAM for credentials, not credentials groups
-	return &cpi.CredentialsGroup{
-		Name:      req.Name,
-		CreatedAt: time.Now(),
-	}, nil
+	return nil, fmt.Errorf("%w: GCP uses IAM credentials, not credentials groups", ErrNotImplemented)
 }
 
 // Helper functions
@@ -556,30 +638,30 @@ func (m *StorageManager) CreateCredentialsGroup(_ctx context.Context, req *cpi.C
 func (m *StorageManager) convertDisk(disk *computepb.Disk) *cpi.Volume {
 	var attachedTo string
 	if len(disk.GetUsers()) > 0 {
-		attachedTo = ExtractNameFromURL(disk.GetUsers()[0])
+		attachedTo = strings.TrimPrefix(disk.GetUsers()[0], "https://www.googleapis.com/compute/v1/")
 	}
 
 	return &cpi.Volume{
-		ID:         strconv.FormatUint(disk.GetId(), 10),
+		ID:         resourceIdentity(m.client.getConfig(), disk.GetZone(), "disks", disk.GetName()),
 		Name:       disk.GetName(),
 		Size:       int(disk.GetSizeGb()),
 		Type:       ExtractNameFromURL(disk.GetType()),
-		State:      MapDiskStateToResourceState(disk.GetStatus()),
+		State:      diskState(disk),
 		AttachedTo: attachedTo,
-		Tags:       disk.GetLabels(),
+		Tags:       decodedLabels(disk.GetLabels()),
 		CreatedAt:  ParseTimestamp(disk.GetCreationTimestamp()),
 	}
 }
 
 func (m *StorageManager) convertSnapshot(snapshot *computepb.Snapshot) *cpi.Snapshot {
 	return &cpi.Snapshot{
-		ID:          strconv.FormatUint(snapshot.GetId(), 10),
+		ID:          snapshot.GetName(),
 		Name:        snapshot.GetName(),
-		VolumeID:    ExtractNameFromURL(snapshot.GetSourceDisk()),
+		VolumeID:    canonicalURL(snapshot.GetSourceDisk()),
 		Size:        int(snapshot.GetDiskSizeGb()),
-		State:       MapGCPStateToResourceState(snapshot.GetStatus()),
+		State:       snapshotState(snapshot.GetStatus()),
 		Description: snapshot.GetDescription(),
-		Tags:        snapshot.GetLabels(),
+		Tags:        decodedLabels(snapshot.GetLabels()),
 		CreatedAt:   ParseTimestamp(snapshot.GetCreationTimestamp()),
 	}
 }
@@ -590,7 +672,7 @@ func (m *StorageManager) convertBucket(attrs *storage.BucketAttrs) *cpi.Bucket {
 		Region:       attrs.Location,
 		StorageClass: attrs.StorageClass,
 		Versioning:   attrs.VersioningEnabled,
-		Tags:         attrs.Labels,
+		Tags:         decodedLabels(attrs.Labels),
 		CreatedAt:    attrs.Created,
 	}
 }
@@ -601,11 +683,27 @@ func matchesStorageLabelFilters(labels map[string]string, filters map[string]str
 	}
 
 	for k, v := range filters {
-		cleanKey := stripLabelPrefix(k)
-		if labels[cleanKey] != v {
+		cleanKey := SanitizeLabel(stripLabelPrefix(k))
+		if labels[cleanKey] != SanitizeLabel(v) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func diskState(disk *computepb.Disk) cpi.ResourceState {
+	if len(disk.GetUsers()) > 0 {
+		return cpi.ResourceStateInUse
+	}
+
+	return MapDiskStateToResourceState(disk.GetStatus())
+}
+
+func snapshotState(status string) cpi.ResourceState {
+	if status == "READY" {
+		return cpi.ResourceStateAvailable
+	}
+
+	return MapGCPStateToResourceState(status)
 }
