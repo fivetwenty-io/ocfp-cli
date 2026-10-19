@@ -178,28 +178,25 @@ func (m *Manager) Save() error {
 
 	m.current.UpdatedAt = time.Now()
 
-	// Create backup of existing state
-	statePath := m.getStatePath(m.current.BlocName)
-
-	_, err := os.Stat(statePath)
-	if err == nil {
-		backupPath := statePath + ".backup"
-
-		err := os.Rename(statePath, backupPath)
-		if err != nil {
-			logger.Warnf("Failed to create state backup: %v", err)
-		}
-	}
-
-	// Marshal state to JSON
 	data, err := json.MarshalIndent(m.current, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	// Write state file
-	err = os.WriteFile(statePath, data, stateFileMode)
-	if err != nil {
+	statePath := m.getStatePath(m.current.BlocName)
+
+	previous, err := os.ReadFile(statePath) // #nosec G304 -- manager derives the state path within its configured directory.
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read previous state: %w", err)
+	}
+
+	if err == nil {
+		if err = atomicStateWrite(statePath+".backup", previous); err != nil {
+			return fmt.Errorf("failed to preserve state backup: %w", err)
+		}
+	}
+
+	if err = atomicStateWrite(statePath, data); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -546,4 +543,44 @@ func getHostname() string {
 	}
 
 	return hostname
+}
+
+// atomicStateWrite never removes the live file before its replacement is durable.
+func atomicStateWrite(path string, data []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".ocfp-state-*")
+	if err != nil {
+		return err
+	}
+
+	name := file.Name()
+	defer func() { _ = os.Remove(name) }()
+
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+
+		return err
+	}
+
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+
+		return err
+	}
+
+	if err = file.Close(); err != nil {
+		return err
+	}
+
+	if err = os.Rename(name, path); err != nil {
+		return err
+	}
+
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = dir.Close() }()
+
+	return dir.Sync()
 }
