@@ -1412,10 +1412,10 @@ func (m *Manager) findMatchingFlavor(flavors []*cpi.Flavor, flavorNameOrID strin
 		if flavor.ID == flavorNameOrID || strings.EqualFold(flavor.Name, flavorNameOrID) {
 			logger.Infof("Found matching flavor: ID='%s', Name='%s', Disk=%dGB", flavor.ID, flavor.Name, flavor.Disk)
 
-			// For STACKIT and AWS, accept diskless flavors (they use boot volumes/EBS)
+			// For STACKIT, AWS, and GCP, boot disks are separate from machine size.
 			// STACKIT API reports disk=1 for diskless flavors, AWS reports disk=0
 			isDiskless := (strings.EqualFold(m.options.Provider, "stackit") && flavor.Disk <= 1) ||
-				(strings.EqualFold(m.options.Provider, "aws") && flavor.Disk == 0)
+				((strings.EqualFold(m.options.Provider, "aws") || strings.EqualFold(m.options.Provider, "gcp")) && flavor.Disk == 0)
 			if isDiskless {
 				logger.Infof("Using diskless flavor '%s' (will use boot volume/EBS)", flavor.ID)
 
@@ -1444,13 +1444,13 @@ func (m *Manager) selectSmallestSuitableFlavor(flavors []*cpi.Flavor, minDiskGB 
 	var selectedFlavor *cpi.Flavor
 
 	isStackit := strings.EqualFold(m.options.Provider, "stackit")
-	isAWS := strings.EqualFold(m.options.Provider, "aws")
+	isSeparateBoot := strings.EqualFold(m.options.Provider, "aws") || strings.EqualFold(m.options.Provider, "gcp")
 
 	for _, flavor := range flavors {
 		suitable := false
-		// STACKIT and AWS both support diskless flavors that use EBS/boot volumes
+		// STACKIT, AWS, and GCP support flavors with separate boot volumes.
 		// STACKIT API reports disk=1 for diskless flavors, AWS reports disk=0
-		isDiskless := (isStackit && flavor.Disk <= 1) || (isAWS && flavor.Disk == 0)
+		isDiskless := (isStackit && flavor.Disk <= 1) || (isSeparateBoot && flavor.Disk == 0)
 		if isDiskless {
 			suitable = true
 		} else if flavor.Disk >= minDiskGB {
@@ -1477,7 +1477,7 @@ func (m *Manager) resolveFlavorID(ctx context.Context, flavorNameOrID string) (s
 
 	computeMgr := m.provider.ComputeManager()
 
-	// For AWS and STACKIT, try GetFlavor first
+	// For clouds with separate boot disks, try GetFlavor first.
 	if id, found := m.tryGetFlavorDirect(ctx, computeMgr, flavorNameOrID, minDiskGB); found {
 		return id, nil
 	}
@@ -1487,7 +1487,7 @@ func (m *Manager) resolveFlavorID(ctx context.Context, flavorNameOrID string) (s
 }
 
 func (m *Manager) tryGetFlavorDirect(ctx context.Context, computeMgr cpi.ComputeManager, flavorNameOrID string, minDiskGB int) (string, bool) {
-	if !strings.EqualFold(m.options.Provider, "aws") && !strings.EqualFold(m.options.Provider, "stackit") {
+	if !strings.EqualFold(m.options.Provider, "aws") && !strings.EqualFold(m.options.Provider, "stackit") && !strings.EqualFold(m.options.Provider, "gcp") {
 		return "", false
 	}
 
@@ -1498,7 +1498,7 @@ func (m *Manager) tryGetFlavorDirect(ctx context.Context, computeMgr cpi.Compute
 
 	// Check if suitable
 	isDiskless := (strings.EqualFold(m.options.Provider, "stackit") && flavor.Disk <= 1) ||
-		(strings.EqualFold(m.options.Provider, "aws") && flavor.Disk == 0)
+		((strings.EqualFold(m.options.Provider, "aws") || strings.EqualFold(m.options.Provider, "gcp")) && flavor.Disk == 0)
 
 	if isDiskless || flavor.Disk >= minDiskGB {
 		logger.Infof("Using requested flavor: %s", flavorNameOrID)
