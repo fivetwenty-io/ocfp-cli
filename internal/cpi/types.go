@@ -414,6 +414,10 @@ type DataDiskSpec struct {
 
 // InstanceRequest represents a request for creating instances.
 type InstanceRequest struct {
+	// PublicIP controls ephemeral public access. Nil preserves provider defaults.
+	PublicIP *bool
+	// IPForwarding enables routing traffic for other guests through this VM.
+	IPForwarding          bool
 	Name                  string
 	Flavor                string
 	Image                 string
