@@ -7,6 +7,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,7 +127,7 @@ func TestAWS_Bug4_BlobstoreKeyIsBosh(t *testing.T) {
 
 	// Key should be "bosh", not "artifacts"
 	_, hasArtifacts := blobstores["artifacts"]
-	assert.False(t, hasArtifacts, "Should not have 'artifacts' key")
+	assert.True(t, hasArtifacts, "Native artifact bucket must be exported")
 
 	boshBlob, hasBosh := blobstores["bosh"]
 	assert.True(t, hasBosh, "Should have 'bosh' key")
@@ -139,6 +140,12 @@ func TestAWS_Bug4_BlobstoreKeyIsBosh(t *testing.T) {
 
 // TestAWS_Bug3_SecurityGroupUsesOCFP verifies SG uses "ocfp" name, not envType.
 func TestAWS_Bug3_SecurityGroupUsesOCFP(t *testing.T) {
+	sm := seedPVEState(t, "test-bloc")
+	for _, name := range []string{"default", "ocfp"} {
+		require.NoError(t, sm.AddResource(&state.Resource{Type: "security_group", Name: "test-bloc-" + name, ID: "sg-" + name}))
+	}
+	require.NoError(t, sm.Save())
+
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "us-east-1"}
 	provider := newTestAWSProvider(cfg, mock)
@@ -154,12 +161,18 @@ func TestAWS_Bug3_SecurityGroupUsesOCFP(t *testing.T) {
 	call := mock.findSetMultipleCall(expectedPath)
 	require.NotNil(t, call, "Should write to sgs/ocfp, not sgs/mgmt")
 
-	assert.Equal(t, "test-bloc-ocfp", call.data["id"])
-	assert.Equal(t, "ocfp", call.data["name"])
+	assert.Equal(t, "sg-ocfp", call.data["id"])
+	assert.Equal(t, "test-bloc-ocfp", call.data["name"])
 }
 
 // TestAWS_Bug3_SecurityGroupOCFEnv verifies SG path for ocf environment too.
 func TestAWS_Bug3_SecurityGroupOCFEnv(t *testing.T) {
+	sm := seedPVEState(t, "test-bloc")
+	for _, name := range []string{"default", "ocfp"} {
+		require.NoError(t, sm.AddResource(&state.Resource{Type: "security_group", Name: "test-bloc-" + name, ID: "sg-" + name}))
+	}
+	require.NoError(t, sm.Save())
+
 	mock := &awsMockSafe{}
 	cfg := &config.Config{Region: "us-east-1"}
 	provider := newTestAWSProvider(cfg, mock)
@@ -172,8 +185,8 @@ func TestAWS_Bug3_SecurityGroupOCFEnv(t *testing.T) {
 	call := mock.findSetMultipleCall(expectedPath)
 	require.NotNil(t, call, "Should write to ocf env sgs/ocfp, not sgs/ocf")
 
-	assert.Equal(t, "test-bloc-ocfp", call.data["id"])
-	assert.Equal(t, "ocfp", call.data["name"])
+	assert.Equal(t, "sg-ocfp", call.data["id"])
+	assert.Equal(t, "test-bloc-ocfp", call.data["name"])
 }
 
 // TestAWS_Bug2_CPIHasAllFields verifies CPI config includes keypair_name, instance type, and disk type.
@@ -472,7 +485,7 @@ func TestAWS_BuildSubnetData_HasParityFields(t *testing.T) {
 	data := provider.buildSubnetData("ocfp", 0, "10.0.1.0/24", networkInfo, "us-east-1a", "")
 
 	// Original fields
-	assert.Equal(t, "test-bloc-ocfp-0", data["id"])
+	assert.Equal(t, "", data["id"])
 	assert.Equal(t, "10.0.1.0/24", data["cidr_block"])
 	assert.Equal(t, "10.0.1", data["cidr_prefix"])
 	assert.Equal(t, "10.0.1.0", data["ip_0"])
@@ -496,7 +509,7 @@ func TestAWS_BuildSubnetData_HasParityFields(t *testing.T) {
 	assert.Equal(t, "10.0.0.0/16", data["parent_cidr"])
 	assert.Equal(t, "test-bloc", data["environment"])
 	assert.Equal(t, "us-east-1", data["region"])
-	assert.NotEmpty(t, data["network_id"])
+	assert.Empty(t, data["network_id"], "missing cloud identity must not be invented")
 	assert.Equal(t, "false", data["virtual"])
 }
 

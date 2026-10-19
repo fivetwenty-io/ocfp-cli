@@ -52,7 +52,7 @@ func TestAWSReservedIPs_EmptyStrategyDefaultsToSpanning(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("Idx0Mgmt", func(t *testing.T) {
-		assert.Equal(t, "10.4.4.3", mgmt0["bastion_ip"])
+		assert.Equal(t, "10.4.7.254", mgmt0["bastion_ip"])
 		assert.Equal(t, "10.4.4.4", mgmt0["bosh_ip"])
 		assert.Equal(t, "10.4.4.4", mgmt0["ip"], "bosh_ip aliases to ip, same as PVE's writeTieredReservedIPs")
 		assert.Equal(t, "10.4.4.4", mgmt0["director_ip"], "bosh_ip aliases to director_ip, same as PVE's writeTieredReservedIPs")

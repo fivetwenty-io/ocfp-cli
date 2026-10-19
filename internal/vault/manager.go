@@ -51,11 +51,11 @@ var (
 	// ErrReservedIPsRequiresPVE is returned when a reserved-ips populate
 	// phase or migrate/status operation is attempted against a non-PVE
 	// provider: the scoped writers it drives exist only on *PVEVaultProvider.
-	ErrReservedIPsRequiresPVE = errors.New("reserved-ips is only supported on the PVE provider")
+	ErrReservedIPsRequiresPVE = errors.New("reserved-ips is not supported by this provider")
 
 	// ErrFQDNsRequiresPVE is returned when the fqdns populate phase is
 	// requested for a provider other than PVE.
-	ErrFQDNsRequiresPVE = errors.New("the fqdns phase is only supported on the PVE provider")
+	ErrFQDNsRequiresPVE = errors.New("the fqdns phase is not supported by this provider")
 
 	// ErrFQDNFilterWrongPhase is returned when --plane or --key is given to a
 	// populate phase other than fqdns.
@@ -628,7 +628,7 @@ func (m *Manager) populateReservedIPsPhase(reporter ProgressReporter, opts *Popu
 		return fmt.Errorf("failed to create vault provider: %w", err)
 	}
 
-	pveProvider, ok := provider.(*PVEVaultProvider)
+	pveProvider, ok := provider.(reservedIPProvider)
 	if !ok {
 		return fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
 	}
@@ -650,6 +650,11 @@ func applyPopulateProviderOptions(provider providers.VaultProvider, kmsKeyARN st
 	// For AWS providers, apply the KMS key ARN from the CLI flag before configuring.
 	if awsProvider, ok := provider.(*AWSVaultProvider); ok {
 		awsProvider.KMSKeyARN = kmsKeyARN
+		awsProvider.blobstoreOptions = opts
+	}
+
+	if gcpProvider, ok := provider.(*GCPVaultProvider); ok {
+		gcpProvider.blobstoreOptions = opts
 	}
 
 	// For PVE providers, propagate every blobstore flag in one shot so
@@ -706,7 +711,7 @@ func (m *Manager) populateDryRun(opts *PopulateOptions, base SafeInterface, targ
 	case PhasePublicIPs:
 		err = provider.ConfigurePublicIPs(opts.ProgressReporter, 1, 1)
 	case PhaseReservedIPs:
-		pveProvider, ok := provider.(*PVEVaultProvider)
+		pveProvider, ok := provider.(reservedIPProvider)
 		if !ok {
 			return fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
 		}
@@ -784,14 +789,14 @@ func (m *Manager) reservedIPs(opts *ReservedIPOptions) (ReservedIPReport, error)
 	// only on *PVEVaultProvider, so any other provider is a clear error
 	// rather than a silent no-op or (as Configure would have been) a
 	// full-tree write of every other path this operation must leave alone.
-	pveProvider, ok := provider.(*PVEVaultProvider)
+	pveProvider, ok := provider.(reservedIPProvider)
 	if !ok {
 		return empty, fmt.Errorf("%w: got %q", ErrReservedIPsRequiresPVE, m.config.Provider)
 	}
 
 	// A status pass must not reach the blobstore any more than a dry-run does.
-	if !opts.Apply {
-		pveProvider.bucketEnsurer = noopBucketEnsurer{}
+	if pve, ok := provider.(*PVEVaultProvider); ok && !opts.Apply {
+		pve.bucketEnsurer = noopBucketEnsurer{}
 	}
 
 	err = pveProvider.ConfigureReservedIPs(opts.ProgressReporter, 1, 1)

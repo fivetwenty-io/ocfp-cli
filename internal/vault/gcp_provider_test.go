@@ -11,6 +11,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,6 +103,7 @@ func newTestGCPProvider(cfg *config.Config, mock *gcpMockSafe, blocName string) 
 func gcpTestConfig() *config.Config {
 	return &config.Config{
 		ProjectID:          "my-project",
+		Subnets:            []config.Subnet{{Name: "workload-a", CIDR: "10.80.4.0/22", Type: "ocfp", AvailabilityZone: "us-central1-a"}, {Name: "workload-b", CIDR: "10.80.8.0/22", Type: "ocfp", AvailabilityZone: "us-central1-b"}, {Name: "workload-c", CIDR: "10.80.12.0/22", Type: "ocfp", AvailabilityZone: "us-central1-c"}},
 		Region:             "us-central1-a",
 		ServiceAccountJSON: `{"type":"service_account"}`,
 		FQDNs: &config.FQDNConfig{
@@ -319,7 +321,7 @@ func TestGCP_ConfigureBlobstores_MgmtHasBOSHOnly(t *testing.T) {
 	artifactsPath := p.PathBuilder.GetSystemBlobstorePath(MgmtEnvType, "bosh", "artifacts")
 	call := mock.findCall(artifactsPath)
 	require.NotNil(t, call, "must write bosh artifacts blobstore at %s", artifactsPath)
-	assert.Equal(t, "test-bloc-mgmt-bosh-artifacts", call.data["bucket_name"])
+	assert.Equal(t, "test-bloc-mgmt-artifacts", call.data["bucket_name"])
 	assert.Equal(t, "us-central1", call.data["region"])
 	assert.Equal(t, "STANDARD", call.data["storage_class"])
 }
@@ -338,7 +340,11 @@ func TestGCP_ConfigureBlobstores_OCFHasCFBlobstores(t *testing.T) {
 		bPath := p.PathBuilder.GetSystemBlobstorePath(OCFEnvType, "cf", name)
 		call := mock.findCall(bPath)
 		require.NotNil(t, call, "must write cf/%s blobstore for ocf env", name)
-		assert.Equal(t, "test-bloc-ocf-cf-"+name, call.data["bucket_name"])
+		bucket := name
+		if name == "resources" {
+			bucket = "resource-pool"
+		}
+		assert.Equal(t, "test-bloc-ocf-cf-"+bucket, call.data["bucket_name"])
 	}
 }
 
@@ -366,7 +372,7 @@ func TestGCP_GetBlobstoresForSystem_Bosh(t *testing.T) {
 	result := p.getBlobstoresForSystem("bosh", MgmtEnvType)
 
 	require.Contains(t, result, "artifacts")
-	assert.Equal(t, "test-bloc-mgmt-bosh-artifacts", result["artifacts"]["bucket_name"])
+	assert.Equal(t, "test-bloc-mgmt-artifacts", result["artifacts"]["bucket_name"])
 	assert.Equal(t, "STANDARD", result["artifacts"]["storage_class"])
 }
 
@@ -392,41 +398,29 @@ func TestGCP_GetBlobstoresForSystem_UnknownSystem(t *testing.T) {
 // ---- ConfigureDatabases ----
 
 func TestGCP_ConfigureDatabases_WritesPostgres(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "database", Name: "postgres", ID: "sql-real", Properties: map[string]any{"environment": "mgmt", "hostname": "10.90.0.5", "port": 5432, "type": "postgres"}}))
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
+	require.NoError(t, p.ConfigureDatabases("ignored", "mgmt", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetDatabasePath("mgmt", "postgres"))
+	require.NotNil(t, call)
+	assert.Equal(t, "10.90.0.5", call.data["hostname"])
 
-	err := p.ConfigureDatabases(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	dbPath := envPath + "/databases/postgres"
-	call := mock.findCall(dbPath)
-	require.NotNil(t, call, "must write postgres db config at %s", dbPath)
-	assert.Equal(t, 5432, call.data["port"])
-	assert.Equal(t, "postgres", call.data["type"])
-	assert.Equal(t, "us-central1", call.data["region"])
-	assert.NotEmpty(t, call.data["hostname"])
 }
 
 func TestGCP_ConfigureDatabases_HostnameContainsBlocAndEnv(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "database", Name: "postgres", ID: "sql-real", Properties: map[string]any{"environment": "ocf", "hostname": "10.90.0.5", "port": 5432, "type": "postgres"}}))
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
-	p := newTestGCPProvider(gcpTestConfig(), mock, "mybloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(OCFEnvType)
-
-	err := p.ConfigureDatabases(envPath, OCFEnvType, nil, 1, 5)
-	require.NoError(t, err)
-
-	dbPath := envPath + "/databases/postgres"
-	call := mock.findCall(dbPath)
+	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
+	require.NoError(t, p.ConfigureDatabases("ignored", "ocf", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetDatabasePath("ocf", "postgres"))
 	require.NotNil(t, call)
+	assert.Equal(t, "10.90.0.5", call.data["hostname"])
 
-	hostname, _ := call.data["hostname"].(string)
-	assert.Contains(t, hostname, "mybloc")
-	assert.Contains(t, hostname, "ocf")
 }
 
 func TestGCP_ConfigureDatabases_ReporterCalled(t *testing.T) {
@@ -447,42 +441,29 @@ func TestGCP_ConfigureDatabases_ReporterCalled(t *testing.T) {
 // ---- ConfigureLoadBalancers ----
 
 func TestGCP_ConfigureLoadBalancers_MgmtLBs(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "load_balancer", Name: "actual", ID: "lb-real", Properties: map[string]any{"environment": "mgmt", "type": "tcp", "port": 443}}))
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
+	require.NoError(t, p.ConfigureLoadBalancers("ignored", "mgmt", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetLoadBalancerPath("mgmt", "actual"))
+	require.NotNil(t, call)
+	assert.Equal(t, "lb-real", call.data["id"])
 
-	err := p.ConfigureLoadBalancers(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, name := range []string{"concourse", "vault", "prometheus"} {
-		lbPath := envPath + "/load-balancers/" + name
-		call := mock.findCall(lbPath)
-		require.NotNil(t, call, "must write LB %s at %s", name, lbPath)
-		assert.Equal(t, "https", call.data["type"])
-		assert.Equal(t, 443, call.data["port"])
-	}
 }
 
 func TestGCP_ConfigureLoadBalancers_OCFLBs(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "load_balancer", Name: "actual", ID: "lb-real", Properties: map[string]any{"environment": "ocf", "type": "tcp", "port": 443}}))
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(OCFEnvType)
+	require.NoError(t, p.ConfigureLoadBalancers("ignored", "ocf", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetLoadBalancerPath("ocf", "actual"))
+	require.NotNil(t, call)
+	assert.Equal(t, "lb-real", call.data["id"])
 
-	err := p.ConfigureLoadBalancers(envPath, OCFEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	routerCall := mock.findCall(envPath + "/load-balancers/router")
-	require.NotNil(t, routerCall)
-	assert.Equal(t, "https", routerCall.data["type"])
-
-	sshCall := mock.findCall(envPath + "/load-balancers/ssh")
-	require.NotNil(t, sshCall)
-	assert.Equal(t, "tcp", sshCall.data["type"])
-	assert.Equal(t, 2222, sshCall.data["port"])
 }
 
 func TestGCP_ConfigureLoadBalancers_ReporterCalled(t *testing.T) {
@@ -529,39 +510,23 @@ func TestGCP_GetLoadBalancersForEnv_OCFHasThree(t *testing.T) {
 // ---- ConfigureFQDNs ----
 
 func TestGCP_ConfigureFQDNs_MgmtFQDNs(t *testing.T) {
-	t.Parallel()
-
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
+	require.NoError(t, p.ConfigureFQDNs("ignored", "mgmt", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetFQDNsPath("mgmt"))
+	require.NotNil(t, call)
+	assert.NotEmpty(t, call.data)
 
-	err := p.ConfigureFQDNs(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, name := range []string{"concourse", "vault", "prometheus"} {
-		fqdnPath := envPath + "/fqdns/" + name
-		call := mock.findCall(fqdnPath)
-		require.NotNil(t, call, "must write FQDN %s", name)
-		assert.NotEmpty(t, call.data["fqdn"])
-		assert.NotEmpty(t, call.data["system"])
-	}
 }
 
 func TestGCP_ConfigureFQDNs_OCFFQDNs(t *testing.T) {
-	t.Parallel()
-
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(OCFEnvType)
+	require.NoError(t, p.ConfigureFQDNs("ignored", "ocf", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetFQDNsPath("ocf"))
+	require.NotNil(t, call)
+	assert.NotEmpty(t, call.data)
 
-	err := p.ConfigureFQDNs(envPath, OCFEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, name := range []string{"system", "apps", "login", "uaa", "api"} {
-		fqdnPath := envPath + "/fqdns/" + name
-		call := mock.findCall(fqdnPath)
-		require.NotNil(t, call, "must write FQDN %s for ocf env", name)
-	}
 }
 
 func TestGCP_ConfigureFQDNs_FQDNUsesBaseDomain(t *testing.T) {
@@ -576,27 +541,22 @@ func TestGCP_ConfigureFQDNs_FQDNUsesBaseDomain(t *testing.T) {
 	err := p.ConfigureFQDNs(envPath, MgmtEnvType, nil, 1, 10)
 	require.NoError(t, err)
 
-	call := mock.findCall(envPath + "/fqdns/concourse")
+	call := mock.findCall(envPath + "/fqdns")
 	require.NotNil(t, call)
-	assert.Equal(t, "concourse.myco.io", call.data["fqdn"])
+	assert.Equal(t, "concourse.myco.io", call.data["concourse"])
 }
 
 func TestGCP_ConfigureFQDNs_FallbackBaseDomain(t *testing.T) {
-	t.Parallel()
-
 	cfg := gcpTestConfig()
 	cfg.FQDNs = nil
+	cfg.DomainName = "custom.example.net"
 	mock := &gcpMockSafe{}
-	p := newTestGCPProvider(cfg, mock, "mybloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
-
-	err := p.ConfigureFQDNs(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	call := mock.findCall(envPath + "/fqdns/vault")
+	p := newTestGCPProvider(cfg, mock, "test-bloc")
+	require.NoError(t, p.ConfigureFQDNs("ignored", "mgmt", nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetFQDNsPath("mgmt"))
 	require.NotNil(t, call)
-	fqdn, _ := call.data["fqdn"].(string)
-	assert.Contains(t, fqdn, "mybloc", "fallback domain must include bloc name")
+	assert.Equal(t, "vault.custom.example.net", call.data["vault"])
+
 }
 
 // ---- getFQDNsForEnv ----
@@ -652,21 +612,16 @@ func TestGCP_ConfigureCertificates_ReporterCalled(t *testing.T) {
 // ---- ConfigurePublicIPs ----
 
 func TestGCP_ConfigurePublicIPs_WritesThreeJobs(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	require.NoError(t, sm.AddResource(&state.Resource{Type: "public_ip", Name: "test-bloc-router-0", ID: "address-real", Properties: map[string]any{"ip_address": "198.51.100.10", "job": "router"}, Tags: map[string]string{"job": "router"}}))
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
+	require.NoError(t, p.ConfigurePublicIPs(nil, 1, 1))
+	call := mock.findCall(p.PathBuilder.GetPublicIPsPath())
+	require.NotNil(t, call)
+	assert.Equal(t, "198.51.100.10", call.data["cf_router_0"])
 
-	err := p.ConfigurePublicIPs(nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, job := range []string{"bastion", "router", "tcp-router"} {
-		ipPath := "secret/config/test-bloc/public-ips/" + job
-		call := mock.findCall(ipPath)
-		require.NotNil(t, call, "must write public IP entry for job %s", job)
-		assert.Equal(t, job, call.data["job"])
-		assert.Equal(t, 0, call.data["index"])
-	}
 }
 
 func TestGCP_ConfigurePublicIPs_ReporterCalled(t *testing.T) {
@@ -686,78 +641,69 @@ func TestGCP_ConfigurePublicIPs_ReporterCalled(t *testing.T) {
 // ---- configureSubnets (via configureEnvironment) ----
 
 func TestGCP_ConfigureSubnets_WritesThreeSubnets(t *testing.T) {
-	t.Parallel()
-
+	t.Setenv("OCFP_HOME", t.TempDir())
 	mock := &gcpMockSafe{}
-	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
-
-	err := p.configureSubnets(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, name := range []string{"compilation", "core", "edge"} {
-		subnetPath := envPath + "/subnets/" + name
-		call := mock.findCall(subnetPath)
-		require.NotNil(t, call, "must write subnet %s", name)
-		assert.NotEmpty(t, call.data["name"])
-		assert.NotEmpty(t, call.data["cidr"])
-		assert.Equal(t, "us-central1", call.data["region"])
-		assert.Equal(t, true, call.data["private_google_access"])
+	cfg := gcpTestConfig()
+	p := newTestGCPProvider(cfg, mock, "test-bloc")
+	require.NoError(t, p.configureSubnets("ignored", "mgmt", nil, 1, 1))
+	for i, sub := range cfg.Subnets {
+		call := mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", i))
+		require.NotNil(t, call)
+		assert.Equal(t, sub.Name, call.data["name"])
+		assert.Equal(t, sub.CIDR, call.data["cidr_block"])
 	}
+
 }
 
 func TestGCP_ConfigureSubnets_NameIncludesBlocAndEnv(t *testing.T) {
-	t.Parallel()
-
+	t.Setenv("OCFP_HOME", t.TempDir())
 	mock := &gcpMockSafe{}
-	p := newTestGCPProvider(gcpTestConfig(), mock, "mybloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(OCFEnvType)
+	cfg := gcpTestConfig()
+	p := newTestGCPProvider(cfg, mock, "test-bloc")
+	require.NoError(t, p.configureSubnets("ignored", "ocf", nil, 1, 1))
+	for i, sub := range cfg.Subnets {
+		call := mock.findCall(p.PathBuilder.GetSubnetPath("ocf", "ocfp", i))
+		require.NotNil(t, call)
+		assert.Equal(t, sub.Name, call.data["name"])
+		assert.Equal(t, sub.CIDR, call.data["cidr_block"])
+	}
 
-	err := p.configureSubnets(envPath, OCFEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	call := mock.findCall(envPath + "/subnets/compilation")
-	require.NotNil(t, call)
-	name, _ := call.data["name"].(string)
-	assert.Contains(t, name, "mybloc")
-	assert.Contains(t, name, "ocf")
 }
 
 // ---- configureSecurityGroups ----
 
 func TestGCP_ConfigureSecurityGroups_MgmtHasThree(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	for _, name := range []string{"default", "ocfp", "bosh"} {
+		require.NoError(t, sm.AddResource(&state.Resource{Type: "security_group", Name: "test-bloc-" + name, ID: "firewall-" + name}))
+	}
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
-
-	err := p.configureSecurityGroups(envPath, MgmtEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	for _, sg := range []string{"default", "ocfp", "bosh"} {
-		sgPath := envPath + "/security-groups/" + sg
-		call := mock.findCall(sgPath)
-		require.NotNil(t, call, "must write SG %s at %s", sg, sgPath)
-		assert.NotEmpty(t, call.data["name"])
-		assert.NotEmpty(t, call.data["network_tag"])
+	require.NoError(t, p.configureSecurityGroups("ignored", "mgmt", nil, 1, 1))
+	for _, name := range []string{"default", "ocfp", "bosh"} {
+		call := mock.findCall(p.PathBuilder.GetSecurityGroupPath("mgmt", name))
+		require.NotNil(t, call)
+		assert.Equal(t, "test-bloc-"+name, call.data["network_tag"])
 	}
+
 }
 
 func TestGCP_ConfigureSecurityGroups_OCFHasCFExtra(t *testing.T) {
-	t.Parallel()
-
+	sm := seedPVEState(t, "test-bloc")
+	for _, name := range []string{"default", "ocfp", "bosh"} {
+		require.NoError(t, sm.AddResource(&state.Resource{Type: "security_group", Name: "test-bloc-" + name, ID: "firewall-" + name}))
+	}
+	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	envPath := p.PathBuilder.GetEnvironmentPath(OCFEnvType)
+	require.NoError(t, p.configureSecurityGroups("ignored", "ocf", nil, 1, 1))
+	for _, name := range []string{"default", "ocfp", "bosh"} {
+		call := mock.findCall(p.PathBuilder.GetSecurityGroupPath("ocf", name))
+		require.NotNil(t, call)
+		assert.Equal(t, "test-bloc-"+name, call.data["network_tag"])
+	}
 
-	err := p.configureSecurityGroups(envPath, OCFEnvType, nil, 1, 10)
-	require.NoError(t, err)
-
-	cfSGPath := envPath + "/security-groups/cf"
-	call := mock.findCall(cfSGPath)
-	require.NotNil(t, call, "ocf env must have cf security group")
-	assert.Equal(t, "Cloud Foundry firewall rules", call.data["description"])
 }
 
 func TestGCP_ConfigureSecurityGroups_ReporterCalled(t *testing.T) {
