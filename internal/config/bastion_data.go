@@ -64,8 +64,7 @@ var (
 // to match every other key under `bastion:` in the shipped example config.
 type BastionDataConfig struct {
 	// Enabled controls whether the data disk is created and attached.
-	// Defaults to true on PVE and false elsewhere, because PVE is the only
-	// provider whose bastion template carries the unit that prepares the disk.
+	// Defaults to true on PVE, AWS and GCP, whose guest bootstrap prepares the disk.
 	Enabled bool `json:"enabled,omitempty" mapstructure:"enabled" yaml:"enabled,omitempty"`
 
 	// enabledSet records whether Enabled was explicitly set, so that
@@ -98,7 +97,16 @@ func (d *BastionDataConfig) SetEnabled(v bool) {
 // Defaults applies default values to any field that has not been set.
 func (d *BastionDataConfig) Defaults(provider string) {
 	if !d.enabledSet {
-		d.Enabled = strings.EqualFold(provider, "pve")
+		d.Enabled = strings.EqualFold(provider, "pve") || strings.EqualFold(provider, "aws") || strings.EqualFold(provider, "gcp")
+	}
+
+	if d.StoragePool == "" {
+		switch strings.ToLower(provider) {
+		case "aws":
+			d.StoragePool = "gp3"
+		case "gcp":
+			d.StoragePool = "pd-balanced"
+		}
 	}
 
 	if d.DiskSizeGiB == 0 {

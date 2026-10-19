@@ -20,6 +20,7 @@ import (
 // ==============================================================================
 
 type fakeComputeEnhanced struct {
+	listErr        error
 	lastReq        *cpi.InstanceRequest
 	images         []*cpi.Image
 	flavors        []*cpi.Flavor
@@ -119,6 +120,9 @@ func (f *fakeComputeEnhanced) GetInstance(_ctx context.Context, id string) (*cpi
 }
 
 func (f *fakeComputeEnhanced) ListInstances(_ctx context.Context, _filters map[string]string) ([]*cpi.Instance, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	var instances []*cpi.Instance
 	for _, inst := range f.instances {
 		instances = append(instances, inst)
@@ -911,7 +915,7 @@ func TestGetAvailabilityZone(t *testing.T) {
 			region:   "us-central1",
 			provider: "gcp",
 			index:    1,
-			want:     "us-central1b",
+			want:     "us-central1-b",
 		},
 	}
 
@@ -1507,5 +1511,48 @@ func TestCreateBastion_CustomNamedSubnetFoundByIndex(t *testing.T) {
 
 	if fakeComp.lastReq.SubnetID != "subnet-east-a" {
 		t.Errorf("SubnetID = %q, want subnet-east-a (workload index 0)", fakeComp.lastReq.SubnetID)
+	}
+}
+
+func TestBastionDiscoveryFailurePreventsCreation(t *testing.T) {
+	m, c, _, _ := setupComputeTest(t, "aws")
+	c.listErr = fmt.Errorf("permission denied")
+	if err := m.CreateBastion(context.Background()); err == nil {
+		t.Fatal("failed discovery must abort")
+	}
+	if c.lastReq != nil {
+		t.Fatal("created guest despite failed discovery")
+	}
+}
+func TestBastionDuplicateDiscoveryPreventsAdoption(t *testing.T) {
+	m, c, _, _ := setupComputeTest(t, "aws")
+	c.instances["one"] = &cpi.Instance{ID: "one", Name: "prod-bastion"}
+	c.instances["two"] = &cpi.Instance{ID: "two", Name: "prod-bastion"}
+	if err := m.CreateBastion(context.Background()); err == nil {
+		t.Fatal("duplicate discovery must abort")
+	}
+}
+
+func TestBastionPartialCreationPersistsHandle(t *testing.T) {
+	dir := t.TempDir()
+	sm, err := state.NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = sm.Load("prod"); err != nil {
+		t.Fatal(err)
+	}
+	setupBastionPrerequisites(t, sm)
+	comp := &partialArtifactsCompute{newFakeComputeEnhanced()}
+	m := bootstrap.NewManager(createComputeTestConfig(), &fakeProv{n: &fakeNet{}, c: comp}, sm, &bootstrap.Options{BlocName: "prod", Provider: "aws"})
+	if err := m.CreateBastion(context.Background()); err == nil {
+		t.Fatal("expected readiness failure")
+	}
+	res, err := reopenState(t, dir).GetResource(state.ResourceTypeInstance, "prod-bastion")
+	if err != nil || res == nil || res.ID != "inst-prod-bastion" {
+		t.Fatalf("lost cloud handle: %+v %v", res, err)
+	}
+	if err := m.CreateBastion(context.Background()); err == nil {
+		t.Fatal("partial creation must not report ready on retry")
 	}
 }
