@@ -68,6 +68,10 @@ type Manager struct {
 	// cloudflare.NewClient. Nil in production (real client); tests inject a
 	// fake to exercise DNS-API success and error paths without a network call.
 	cloudflareDoer cloudflareDoer
+
+	// Snapshot only IDs, not mutable Resource pointers: rollback must never
+	// delete resources that predate this Execute invocation.
+	rollbackBaseline map[string]string
 }
 
 // NewManager creates a new bootstrap manager.
@@ -122,6 +126,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 		return nil
 	}
 
+	m.captureRollbackBaseline()
 	totalSteps := len(steps)
 	for stepIndex, step := range steps {
 		// Show progress indicator
@@ -451,26 +456,134 @@ func (m *Manager) rollbackBootstrap(ctx context.Context) error {
 	return nil
 }
 
-// collectRollbackResources collects all resources from state that should be rolled back.
+// captureRollbackBaseline freezes resource identities that predate this run.
+func (m *Manager) captureRollbackBaseline() {
+	m.rollbackBaseline = nil
+	if m.stateManager == nil || m.stateManager.Current() == nil {
+		return
+	}
+
+	m.rollbackBaseline = make(map[string]string)
+	for key, resource := range m.stateManager.Current().Resources {
+		if resource != nil {
+			m.rollbackBaseline[key] = resource.ID
+		}
+	}
+}
+
+func rollbackFlag(raw interface{}) bool {
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(value, "true")
+	default:
+		return false
+	}
+}
+
+// Dependency records written by older bootstrap versions used legacy aliases.
+func rollbackDependencyKey(key string) string {
+	parts := strings.SplitN(key, ".", resourceKeyParts)
+	if len(parts) != resourceKeyParts {
+		return key
+	}
+
+	switch parts[0] {
+	case "instance":
+		parts[0] = state.ResourceTypeInstance
+	case "keypair":
+		parts[0] = state.ResourceTypeKeyPair
+	case "volume":
+		parts[0] = state.ResourceTypeVolume
+	case "bucket":
+		parts[0] = state.ResourceTypeBucket
+	}
+
+	return strings.Join(parts, ".")
+}
+
 func (m *Manager) collectRollbackResources() map[string][]*rollbackResource {
 	resources := make(map[string][]*rollbackResource)
+	if m.rollbackBaseline == nil || m.stateManager == nil || m.stateManager.Current() == nil {
+		return resources
+	}
 
-	for key, resource := range m.stateManager.Current().Resources {
+	current := m.stateManager.Current()
+	retained := make(map[string]bool)
+	priorIDs := make(map[string]bool)
+	owners := make(map[string]bool)
+	unknownOwner := false
+
+	for _, id := range m.rollbackBaseline {
+		if id != "" {
+			priorIDs[id] = true
+		}
+	}
+
+	for key, resource := range current.Resources {
+		if resource == nil {
+			continue
+		}
+
+		_, prior := m.rollbackBaseline[key]
+		if prior || priorIDs[resource.ID] || rollbackFlag(resource.Properties["adopted"]) {
+			retained[key] = true
+		}
+
+		if resource.Type == state.ResourceTypeVolume && rollbackFlag(resource.Properties["preserve"]) {
+			retained[key] = true
+
+			owner, _ := resource.Properties["vm_id"].(string)
+			if owner == "" {
+				unknownOwner = true
+			} else {
+				owners[owner] = true
+			}
+		}
+	}
+
+	for key, resource := range current.Resources {
+		if resource == nil {
+			continue
+		}
+
+		vmID, _ := resource.Properties["vm_id"].(string)
+		if owners[resource.ID] || (vmID != "" && owners[vmID]) || (unknownOwner && resource.Type == state.ResourceTypeInstance) {
+			retained[key] = true
+		}
+	}
+	// Keep every recorded dependency of retained resources, transitively.
+	for changed := true; changed; {
+		changed = false
+
+		for key, dependencies := range current.Dependencies {
+			if !retained[rollbackDependencyKey(key)] {
+				continue
+			}
+
+			for _, dependency := range dependencies {
+				dependency = rollbackDependencyKey(dependency)
+				if !retained[dependency] {
+					retained[dependency] = true
+					changed = true
+				}
+			}
+		}
+	}
+
+	for key, resource := range current.Resources {
+		if resource == nil || retained[key] {
+			continue
+		}
+
 		parts := strings.SplitN(key, ".", resourceKeyParts)
 		if len(parts) != resourceKeyParts {
 			continue
 		}
 
-		resourceType := parts[0]
-		resourceName := parts[1]
-
-		resources[resourceType] = append(resources[resourceType], &rollbackResource{
-			Type: resourceType,
-			ID:   resource.ID,
-			Name: resourceName,
-		})
+		resources[parts[0]] = append(resources[parts[0]], &rollbackResource{Type: parts[0], ID: resource.ID, Name: parts[1]})
 	}
-
 	return resources
 }
 

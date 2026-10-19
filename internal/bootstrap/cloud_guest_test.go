@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"strings"
@@ -22,6 +23,16 @@ func TestCloudBastionRequestDelivery(t *testing.T) {
 		}
 		if !req.IPForwarding {
 			t.Fatal("ingress bastion must forward")
+		}
+	}
+}
+
+func TestCloudRecycleRefusesBeforeProviderAccess(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp"} {
+		m := &Manager{config: &config.Config{}, options: &Options{Provider: provider}}
+		cluster := NewBastionRecycleCluster(m, "")
+		if _, err := cluster.Observe(context.Background()); err == nil {
+			t.Fatal("unsafe cloud recycle accepted")
 		}
 	}
 }
