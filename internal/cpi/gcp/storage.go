@@ -43,6 +43,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 			return nil, errors.New("volume zone differs from owning instance")
 		}
 	}
+
 	labels := BuildLabels(req.Name, req.Tags)
 
 	size := int64(req.Size)
@@ -128,11 +129,13 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 
 	it := m.client.getDisksClient().AggregatedList(ctx, &computepb.AggregatedListDisksRequest{Project: m.client.getConfig().ProjectID})
 	volumes := []*cpi.Volume{}
+
 	for {
 		pair, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
 		}
+
 		if err != nil {
 			return nil, WrapGCPError(err, "ListVolumes")
 		}
@@ -143,6 +146,7 @@ func (m *StorageManager) ListVolumes(ctx context.Context, filters map[string]str
 			}
 		}
 	}
+
 	return volumes, nil
 }
 
