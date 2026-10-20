@@ -127,6 +127,7 @@ func (m *Manager) Execute(ctx context.Context) error {
 	}
 
 	m.captureRollbackBaseline()
+
 	totalSteps := len(steps)
 	for stepIndex, step := range steps {
 		// Show progress indicator
@@ -510,67 +511,9 @@ func (m *Manager) collectRollbackResources() map[string][]*rollbackResource {
 	}
 
 	current := m.stateManager.Current()
-	retained := make(map[string]bool)
-	priorIDs := make(map[string]bool)
-	owners := make(map[string]bool)
-	unknownOwner := false
+	retained := m.retainedRollbackResources(current.Resources)
 
-	for _, id := range m.rollbackBaseline {
-		if id != "" {
-			priorIDs[id] = true
-		}
-	}
-
-	for key, resource := range current.Resources {
-		if resource == nil {
-			continue
-		}
-
-		_, prior := m.rollbackBaseline[key]
-		if prior || priorIDs[resource.ID] || rollbackFlag(resource.Properties["adopted"]) {
-			retained[key] = true
-		}
-
-		if resource.Type == state.ResourceTypeVolume && rollbackFlag(resource.Properties["preserve"]) {
-			retained[key] = true
-
-			owner, _ := resource.Properties["vm_id"].(string)
-			if owner == "" {
-				unknownOwner = true
-			} else {
-				owners[owner] = true
-			}
-		}
-	}
-
-	for key, resource := range current.Resources {
-		if resource == nil {
-			continue
-		}
-
-		vmID, _ := resource.Properties["vm_id"].(string)
-		if owners[resource.ID] || (vmID != "" && owners[vmID]) || (unknownOwner && resource.Type == state.ResourceTypeInstance) {
-			retained[key] = true
-		}
-	}
-	// Keep every recorded dependency of retained resources, transitively.
-	for changed := true; changed; {
-		changed = false
-
-		for key, dependencies := range current.Dependencies {
-			if !retained[rollbackDependencyKey(key)] {
-				continue
-			}
-
-			for _, dependency := range dependencies {
-				dependency = rollbackDependencyKey(dependency)
-				if !retained[dependency] {
-					retained[dependency] = true
-					changed = true
-				}
-			}
-		}
-	}
+	retainRollbackDependencies(retained, current.Dependencies)
 
 	for key, resource := range current.Resources {
 		if resource == nil || retained[key] {
@@ -584,6 +527,7 @@ func (m *Manager) collectRollbackResources() map[string][]*rollbackResource {
 
 		resources[parts[0]] = append(resources[parts[0]], &rollbackResource{Type: parts[0], ID: resource.ID, Name: parts[1]})
 	}
+
 	return resources
 }
 
@@ -716,4 +660,73 @@ func (m *Manager) deleteNetwork(ctx context.Context, networkID string) error {
 	}
 
 	return nil
+}
+
+func retainRollbackDependencies(retained map[string]bool, dependenciesByResource map[string][]string) {
+	// Keep every recorded dependency of retained resources, transitively.
+	for changed := true; changed; {
+		changed = false
+
+		for key, dependencies := range dependenciesByResource {
+			if !retained[rollbackDependencyKey(key)] {
+				continue
+			}
+
+			for _, dependency := range dependencies {
+				dependency = rollbackDependencyKey(dependency)
+				if !retained[dependency] {
+					retained[dependency] = true
+					changed = true
+				}
+			}
+		}
+	}
+}
+
+func (m *Manager) retainedRollbackResources(currentResources map[string]*state.Resource) map[string]bool {
+	retained := make(map[string]bool)
+	priorIDs := make(map[string]bool)
+	owners := make(map[string]bool)
+	unknownOwner := false
+
+	for _, id := range m.rollbackBaseline {
+		if id != "" {
+			priorIDs[id] = true
+		}
+	}
+
+	for key, resource := range currentResources {
+		if resource == nil {
+			continue
+		}
+
+		_, prior := m.rollbackBaseline[key]
+		if prior || priorIDs[resource.ID] || rollbackFlag(resource.Properties["adopted"]) {
+			retained[key] = true
+		}
+
+		if resource.Type == state.ResourceTypeVolume && rollbackFlag(resource.Properties["preserve"]) {
+			retained[key] = true
+
+			owner, _ := resource.Properties["vm_id"].(string)
+			if owner == "" {
+				unknownOwner = true
+			} else {
+				owners[owner] = true
+			}
+		}
+	}
+
+	for key, resource := range currentResources {
+		if resource == nil {
+			continue
+		}
+
+		vmID, _ := resource.Properties["vm_id"].(string)
+		if owners[resource.ID] || (vmID != "" && owners[vmID]) || (unknownOwner && resource.Type == state.ResourceTypeInstance) {
+			retained[key] = true
+		}
+	}
+
+	return retained
 }

@@ -777,6 +777,7 @@ func (m *TeardownManager) DeleteResource(ctx context.Context, resource *Resource
 	if m.isImportedNetworkResource(resource) {
 		return fmt.Errorf("refusing to delete imported network resource %s", resource.ID)
 	}
+
 	switch resource.Type {
 	case ResourceInstance, ResourceArtifacts:
 		return m.deleteComputeResource(ctx, resource)
@@ -2141,6 +2142,7 @@ func (m *TeardownManager) shouldIncludeResource(resource *ResourceToDelete, bast
 	if m.isImportedNetworkResource(resource) {
 		return false
 	}
+
 	selectiveModeActive := m.isSelectiveModeActive()
 
 	if selectiveModeActive {
@@ -2493,6 +2495,7 @@ func (m *TeardownManager) deleteComputeResource(ctx context.Context, resource *R
 			return fmt.Errorf("refusing to delete %s: cannot clear guest protection: %w", resource.ID, err)
 		}
 	}
+
 	err := compute.DeleteInstance(ctx, resource.ID)
 	if err != nil {
 		// If resource doesn't exist, that's success (already deleted)

@@ -953,6 +953,7 @@ func (m *LoadBalancerManager) createDefaultTargetGroup(ctx context.Context, clie
 		tgInput.HealthCheckProtocol = elbv2types.ProtocolEnumTcp
 		tgInput.HealthCheckPath = nil
 	}
+
 	tgResult, err := client.CreateTargetGroup(ctx, tgInput)
 	if err != nil {
 		return "", WrapAWSError(err, "failed to create target group")

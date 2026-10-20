@@ -2289,20 +2289,8 @@ func validate(cfg *Config) error {
 		cfg.IaaS = cfg.Provider
 	}
 
-	// Validate provider
-	validProviders := []string{providerStackIT, "openstack", "aws", "azure", "gcp", "vmware", "pve"}
-	providerValid := false
-
-	for _, p := range validProviders {
-		if strings.EqualFold(cfg.Provider, p) {
-			providerValid = true
-
-			break
-		}
-	}
-
-	if !providerValid {
-		return ErrInvalidProvider(cfg.Provider)
+	if err := validateProvider(cfg.Provider); err != nil {
+		return err
 	}
 
 	if err := cfg.ValidateCloudEgress(); err != nil {
@@ -2658,4 +2646,24 @@ type PublicIPsConfig struct {
 // BucketConfig represents bucket configuration.
 type BucketConfig struct {
 	Name string `json:"name,omitempty" mapstructure:"name" yaml:"name,omitempty"`
+}
+
+func validateProvider(provider string) error {
+	// Validate provider
+	validProviders := []string{providerStackIT, "openstack", "aws", "azure", "gcp", "vmware", "pve"}
+	providerValid := false
+
+	for _, p := range validProviders {
+		if strings.EqualFold(provider, p) {
+			providerValid = true
+
+			break
+		}
+	}
+
+	if !providerValid {
+		return ErrInvalidProvider(provider)
+	}
+
+	return nil
 }

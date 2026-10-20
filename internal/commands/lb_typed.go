@@ -1168,6 +1168,7 @@ func reconcileNativeLBMembers(ctx context.Context, manager cpi.NetworkManager, i
 			if member.Port != port && member.TargetPort != port {
 				return fmt.Errorf("backend %s has a conflicting port", ip)
 			}
+
 			continue
 		}
 
@@ -1185,6 +1186,7 @@ func reconcileNativeLBMembers(ctx context.Context, manager cpi.NetworkManager, i
 			}
 		}
 	}
+
 	return nil
 }
 

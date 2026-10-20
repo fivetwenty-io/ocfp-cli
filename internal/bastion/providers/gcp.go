@@ -287,6 +287,7 @@ func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 			}
 		}
 	}
+
 	return "", nil
 }
 

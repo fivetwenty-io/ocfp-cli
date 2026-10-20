@@ -378,6 +378,7 @@ func (c *Client) parseConfig(config interface{}) (*Config, error) {
 		if err := configValue.ValidateCloudEgress(); err != nil {
 			return nil, err
 		}
+
 		return c.convertOCFPConfig(configValue), nil
 	case map[string]interface{}:
 		return c.handleMapConfig()

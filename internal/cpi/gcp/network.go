@@ -874,31 +874,6 @@ func (m *NetworkManager) convertSubnet(subnet *computepb.Subnetwork) *cpi.Subnet
 	}
 }
 
-func (m *NetworkManager) convertFirewallToSecurityGroup(firewall *computepb.Firewall) *cpi.SecurityGroup {
-	var rules []*cpi.SecurityRule
-
-	for _, allowed := range firewall.GetAllowed() {
-		for _, port := range allowed.GetPorts() {
-			portMin, portMax := parsePortRange(port)
-			rules = append(rules, &cpi.SecurityRule{
-				Direction:    DirectionIngress,
-				Protocol:     allowed.GetIPProtocol(),
-				PortRangeMin: portMin,
-				PortRangeMax: portMax,
-			})
-		}
-	}
-
-	return &cpi.SecurityGroup{
-		ID:          firewall.GetName(),
-		Name:        firewall.GetName(),
-		Description: firewall.GetDescription(),
-		NetworkID:   ExtractNameFromURL(firewall.GetNetwork()),
-		Rules:       rules,
-		CreatedAt:   ParseTimestamp(firewall.GetCreationTimestamp()),
-	}
-}
-
 func (m *NetworkManager) convertAddressToPublicIP(address *computepb.Address) *cpi.PublicIP {
 	status := "available"
 	if address.GetStatus() == AddressStatusInUse {
@@ -941,26 +916,6 @@ func (m *NetworkManager) convertRouter(router *computepb.Router) *cpi.Router {
 		State:     cpi.ResourceStateActive,
 		CreatedAt: ParseTimestamp(router.GetCreationTimestamp()),
 	}
-}
-
-func parsePortRange(port string) (int, int) {
-	if strings.Contains(port, "-") {
-		parts := strings.Split(port, "-")
-		if len(parts) == 2 { //nolint:mnd
-			var portMin, portMax int
-
-			_, _ = fmt.Sscanf(parts[0], "%d", &portMin)
-			_, _ = fmt.Sscanf(parts[1], "%d", &portMax)
-
-			return portMin, portMax
-		}
-	}
-
-	var p int
-
-	_, _ = fmt.Sscanf(port, "%d", &p)
-
-	return p, p
 }
 
 func matchesFilters(description string, filters map[string]string) bool {

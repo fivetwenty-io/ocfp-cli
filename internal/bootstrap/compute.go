@@ -106,26 +106,7 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 	// Create bastion instance
 	instance, err := m.createBastionInstance(ctx, bastionName, networkID, subnetInfo.ID, subnetInfo.AvailabilityZone, sgID)
 	if err != nil {
-		if instance != nil && instance.ID != "" {
-			if saveErr := m.saveBastionToState(instance, bastionName); saveErr != nil {
-				return fmt.Errorf("bastion creation: %w; record recovery: %w", err, saveErr)
-			}
-
-			res, getErr := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
-			if getErr != nil {
-				return fmt.Errorf("bastion creation: %w; recovery state: %w", err, getErr)
-			}
-
-			res.Properties["creation_pending"] = true
-			if saveErr := m.stateManager.UpdateResource(res); saveErr != nil {
-				return fmt.Errorf("bastion creation: %w; recovery state: %w", err, saveErr)
-			}
-
-			if saveErr := m.stateManager.Save(); saveErr != nil {
-				return fmt.Errorf("bastion creation: %w; save recovery: %w", err, saveErr)
-			}
-		}
-		return fmt.Errorf("failed to create bastion instance: %w", err)
+		return m.recordBastionCreationFailure(instance, bastionName, err)
 	}
 
 	// Save to state
@@ -176,6 +157,7 @@ func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) 
 	}
 
 	var match *cpi.Instance
+
 	for _, inst := range instances {
 		if inst == nil || inst.Name != bastionName {
 			continue
@@ -2267,3 +2249,27 @@ apt-get install -y build-essential zlib1g-dev ruby ruby-dev openssl libxslt1-dev
 // ==============================================================================
 // Display Functions
 // ==============================================================================
+
+func (m *Manager) recordBastionCreationFailure(instance *cpi.Instance, bastionName string, err error) error {
+	if instance != nil && instance.ID != "" {
+		if saveErr := m.saveBastionToState(instance, bastionName); saveErr != nil {
+			return fmt.Errorf("bastion creation: %w; record recovery: %w", err, saveErr)
+		}
+
+		res, getErr := m.stateManager.GetResource(state.ResourceTypeInstance, bastionName)
+		if getErr != nil {
+			return fmt.Errorf("bastion creation: %w; recovery state: %w", err, getErr)
+		}
+
+		res.Properties["creation_pending"] = true
+		if saveErr := m.stateManager.UpdateResource(res); saveErr != nil {
+			return fmt.Errorf("bastion creation: %w; recovery state: %w", err, saveErr)
+		}
+
+		if saveErr := m.stateManager.Save(); saveErr != nil {
+			return fmt.Errorf("bastion creation: %w; save recovery: %w", err, saveErr)
+		}
+	}
+
+	return fmt.Errorf("failed to create bastion instance: %w", err)
+}

@@ -645,7 +645,7 @@ func TestGCP_ConfigureSubnets_WritesThreeSubnets(t *testing.T) {
 	mock := &gcpMockSafe{}
 	cfg := gcpTestConfig()
 	p := newTestGCPProvider(cfg, mock, "test-bloc")
-	require.NoError(t, p.configureSubnets("ignored", "mgmt", nil, 1, 1))
+	require.NoError(t, p.configureSubnets("mgmt", nil, 1, 1))
 	for i, sub := range cfg.Subnets {
 		call := mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", i))
 		require.NotNil(t, call)
@@ -660,7 +660,7 @@ func TestGCP_ConfigureSubnets_NameIncludesBlocAndEnv(t *testing.T) {
 	mock := &gcpMockSafe{}
 	cfg := gcpTestConfig()
 	p := newTestGCPProvider(cfg, mock, "test-bloc")
-	require.NoError(t, p.configureSubnets("ignored", "ocf", nil, 1, 1))
+	require.NoError(t, p.configureSubnets("ocf", nil, 1, 1))
 	for i, sub := range cfg.Subnets {
 		call := mock.findCall(p.PathBuilder.GetSubnetPath("ocf", "ocfp", i))
 		require.NotNil(t, call)
@@ -680,7 +680,7 @@ func TestGCP_ConfigureSecurityGroups_MgmtHasThree(t *testing.T) {
 	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	require.NoError(t, p.configureSecurityGroups("ignored", "mgmt", nil, 1, 1))
+	require.NoError(t, p.configureSecurityGroups("mgmt", nil, 1, 1))
 	for _, name := range []string{"default", "ocfp", "bosh"} {
 		call := mock.findCall(p.PathBuilder.GetSecurityGroupPath("mgmt", name))
 		require.NotNil(t, call)
@@ -697,7 +697,7 @@ func TestGCP_ConfigureSecurityGroups_OCFHasCFExtra(t *testing.T) {
 	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
-	require.NoError(t, p.configureSecurityGroups("ignored", "ocf", nil, 1, 1))
+	require.NoError(t, p.configureSecurityGroups("ocf", nil, 1, 1))
 	for _, name := range []string{"default", "ocfp", "bosh"} {
 		call := mock.findCall(p.PathBuilder.GetSecurityGroupPath("ocf", name))
 		require.NotNil(t, call)
@@ -712,9 +712,8 @@ func TestGCP_ConfigureSecurityGroups_ReporterCalled(t *testing.T) {
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(gcpTestConfig(), mock, "test-bloc")
 	rep := &recordingReporter{}
-	envPath := p.PathBuilder.GetEnvironmentPath(MgmtEnvType)
 
-	err := p.configureSecurityGroups(envPath, MgmtEnvType, rep, 2, 10)
+	err := p.configureSecurityGroups(MgmtEnvType, rep, 2, 10)
 	require.NoError(t, err)
 
 	assert.Contains(t, rep.starts, "security-groups-mgmt")

@@ -460,6 +460,7 @@ func buildProviderConfig(cfg *config.Config, region string) map[string]interface
 		providerConfig["host_project_id"] = cfg.HostProjectID
 		providerConfig["network_name"] = cfg.Network.Name
 	}
+
 	addServiceAccountConfig(providerConfig, cfg)
 	addAPIEndpointConfig(providerConfig, cfg)
 	addPVEProviderConfig(providerConfig, cfg)

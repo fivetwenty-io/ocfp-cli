@@ -4,11 +4,10 @@ version: "2"
 # Run configuration
 run:
   timeout: 5m
-  # Production code only. Linting the large pre-existing test suite would
-  # surface ~150 test-style findings unrelated to shipped behavior. The
-  # side effect — test-only helpers looking "unused" — is handled by a
-  # scoped `unused` exclusion below.
-  tests: false
+  # Load test callers so unused/unparam see the complete call graph.
+  # Test-file diagnostics remain excluded below, preserving the existing
+  # production-code lint scope without hiding production unused findings.
+  tests: true
 
 # Linters configuration
 linters:
@@ -171,29 +170,8 @@ linters:
       - vendor
       - tmp
     rules:
-      # genesis env discovery is a single call-tree reached only from
-      # genesis_envs_test.go. With tests:false the linter cannot see those
-      # callers and falsely reports the whole tree as unused.
-      - path: internal/vault/genesis(_envs)?\.go
-        linters:
-          - unused
-      # newReservedIPGuard (and the reservedIPSchemeVersion default it
-      # passes) is now a thin delegating wrapper kept only so
-      # reserved_ip_guard_providers_test.go and reserved_ip_legacy_test.go's
-      # ~21 pre-existing call sites keep compiling unchanged, after
-      # production code moved to newReservedIPGuardWithScheme. With
-      # tests:false the linter cannot see those test-only callers and
-      # falsely reports both as unused.
-      - path: internal/vault/reserved_ip_guard\.go
-        linters:
-          - unused
-      # recycleSafetyCopyRationale is prose kept in the code so the reasoning
-      # behind taking the safety copy as an archive cannot quietly rot, and
-      # recycle_safety_test.go asserts on it. With tests:false the linter
-      # cannot see that caller and reports it as unused.
-      - path: internal/bootstrap/recycle_safety\.go
-        linters:
-          - unused
+      - path: _test\.go$
+        text: ".*"
       # Integration harness code is not shipped; relax shipping-grade checks.
       - path: tests/integration/
         linters:

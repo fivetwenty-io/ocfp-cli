@@ -163,6 +163,7 @@ func (m *Manager) resolveBastionDataVolume(ctx context.Context, instanceID strin
 	}
 
 	var match *cpi.Volume
+
 	for _, vol := range volumes {
 		if vol == nil {
 			continue
