@@ -415,6 +415,7 @@ func (m *SecurityManager) extractRulesFromFirewall(f *computepb.Firewall) []*cpi
 			}
 		}
 	}
+
 	return rules
 }
 func logicalTag(tags map[string]string, key string) string {

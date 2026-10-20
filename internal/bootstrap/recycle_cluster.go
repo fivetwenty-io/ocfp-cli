@@ -122,6 +122,7 @@ func (c *BastionRecycleCluster) Observe(ctx context.Context) (recycle.Observatio
 	if p := strings.ToLower(c.mgr.options.Provider); p == "aws" || p == "gcp" {
 		return recycle.Observation{}, fmt.Errorf("bastion recycle on %s requires cloud-native staged replacement; the PVE stopped-create sequence is unsupported (original left untouched)", p)
 	}
+
 	originalID, originalExists := c.findByName(ctx, c.finalName())
 	replacementID, replacementExists := c.findByName(ctx, c.transientName())
 

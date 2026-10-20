@@ -60,29 +60,9 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 		return nil, err
 	}
 
-	// Determine volume size
-	size := req.Size
-	if req.SizeGB > 0 {
-		size = req.SizeGB
-	}
-
-	if size == 0 {
-		size = 10 // Default 10GB
-	}
-
-	if size < ebsMinSizeGB || size > ebsMaxSizeGB {
-		return nil, fmt.Errorf("volume size %d GB out of range [%d, %d]",
-			size, ebsMinSizeGB, ebsMaxSizeGB)
-	}
-
-	// Determine volume type
-	volumeType := req.VolumeType
-	if volumeType == "" {
-		volumeType = req.Type
-	}
-
-	if volumeType == "" {
-		volumeType = "gp3" // Default to gp3 (general purpose SSD)
+	size, volumeType, err := volumeSizeAndType(req)
+	if err != nil {
+		return nil, err
 	}
 
 	// Derive disk locality from the actual VM, not the operator's default AZ.
@@ -116,7 +96,7 @@ func (m *StorageManager) CreateVolume(ctx context.Context, req *cpi.VolumeReques
 	// Build create volume input
 	input := &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(zone),
-		Size:             aws.Int32(int32(size)),
+		Size:             aws.Int32(size),
 		VolumeType:       types.VolumeType(volumeType),
 		Encrypted:        aws.Bool(req.Encrypted),
 	}
@@ -307,6 +287,7 @@ func (m *StorageManager) AttachVolume(ctx context.Context, volumeID, instanceID,
 			return m.waitForAttachment(ctx, cli, volumeID, instanceID, device)
 		}
 	}
+
 	input := &ec2.AttachVolumeInput{
 		VolumeId:   aws.String(volumeID),
 		InstanceId: aws.String(instanceID),
@@ -356,6 +337,7 @@ func (m *StorageManager) DetachVolume(ctx context.Context, volumeID, instanceID 
 			return fmt.Errorf("volume %s belongs to a different instance: %w", volumeID, ErrInvalidRequest)
 		}
 	}
+
 	input := &ec2.DetachVolumeInput{
 		VolumeId:   aws.String(volumeID),
 		InstanceId: aws.String(instanceID),
@@ -1191,4 +1173,33 @@ func (m *StorageManager) waitForVolumeState(ctx context.Context, volumeID string
 			}
 		}
 	}
+}
+
+func volumeSizeAndType(req *cpi.VolumeRequest) (int32, string, error) {
+	// Determine volume size
+	size := req.Size
+	if req.SizeGB > 0 {
+		size = req.SizeGB
+	}
+
+	if size == 0 {
+		size = 10 // Default 10GB
+	}
+
+	if size < ebsMinSizeGB || size > ebsMaxSizeGB {
+		return 0, "", fmt.Errorf("volume size %d GB out of range [%d, %d]",
+			size, ebsMinSizeGB, ebsMaxSizeGB)
+	}
+
+	// Determine volume type
+	volumeType := req.VolumeType
+	if volumeType == "" {
+		volumeType = req.Type
+	}
+
+	if volumeType == "" {
+		volumeType = "gp3" // Default to gp3 (general purpose SSD)
+	}
+
+	return int32(size), volumeType, nil
 }

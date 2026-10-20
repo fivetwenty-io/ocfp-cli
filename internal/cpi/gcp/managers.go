@@ -117,27 +117,3 @@ func (c *Client) getStorageClient() *storage.Client {
 
 	return c.storageClient
 }
-
-// getForwardingRulesClient returns the forwarding rules client.
-func (c *Client) getForwardingRulesClient() *compute.ForwardingRulesClient {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.forwardingRulesClient
-}
-
-// getBackendServicesClient returns the backend services client.
-func (c *Client) getBackendServicesClient() *compute.BackendServicesClient {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.backendServicesClient
-}
-
-// getHealthChecksClient returns the health checks client.
-func (c *Client) getHealthChecksClient() *compute.HealthChecksClient {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.healthChecksClient
-}

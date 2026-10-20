@@ -20,16 +20,8 @@ import (
 //
 //nolint:funlen // GCP instance creation with network, disk, and metadata configuration
 func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRequest) (*cpi.Instance, error) {
-	if req == nil {
-		return nil, errors.New("instance request is required")
-	}
-
-	if req.VCPUsOverride != 0 || req.MemoryMiBOverride != 0 {
-		return nil, fmt.Errorf("%w: GCP compute sizing uses Flavor; select a custom machine type instead of PVE CPU/RAM overrides", ErrNotImplemented)
-	}
-
-	if req.CreateStopped {
-		return nil, fmt.Errorf("%w: GCP cannot atomically create a stopped instance; safe recycle requires staged identity handover", ErrNotImplemented)
+	if err := validateInstanceRequest(req); err != nil {
+		return nil, err
 	}
 
 	err := m.client.ensureClientsLoaded(ctx)
@@ -52,35 +44,8 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 	request.SecurityGroupIDs = append([]string(nil), req.SecurityGroupIDs...)
 
 	req = &request
-	for _, groups := range [][]string{req.SecurityGroups, req.SecurityGroupIDs} {
-		for i, id := range groups {
-			if isNumericResource(id) {
-				group, err := (&SecurityManager{client: m.client}).GetSecurityGroup(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-
-				groups[i] = group.ID
-			}
-		}
-	}
-
-	if isNumericResource(req.NetworkID) {
-		network, err := (&NetworkManager{client: m.client}).GetNetwork(ctx, req.NetworkID)
-		if err != nil {
-			return nil, err
-		}
-
-		req.NetworkID = network.ID
-	}
-
-	if isNumericResource(req.SubnetID) {
-		subnet, err := (&NetworkManager{client: m.client}).GetSubnet(ctx, req.SubnetID)
-		if err != nil {
-			return nil, err
-		}
-
-		req.SubnetID = subnet.ID
+	if err := m.resolveInstanceNetworkIDs(ctx, req); err != nil {
+		return nil, err
 	}
 
 	labels := BuildLabels(req.Name, req.Tags)
@@ -750,10 +715,6 @@ func (m *ComputeManager) convertInstance(instance *computepb.Instance) *cpi.Inst
 	}
 }
 
-func (m *ComputeManager) convertDisk(disk *computepb.Disk) *cpi.Volume {
-	return (&StorageManager{client: m.client}).convertDisk(disk)
-}
-
 func (m *ComputeManager) convertImage(image *computepb.Image) *cpi.Image {
 	// Check if image is deprecated/deleted
 	isPublic := true
@@ -903,4 +864,55 @@ func instanceNetworksMatch(existing, desired []*computepb.NetworkInterface) bool
 	}
 
 	return true
+}
+
+func (m *ComputeManager) resolveInstanceNetworkIDs(ctx context.Context, req *cpi.InstanceRequest) error {
+	for _, groups := range [][]string{req.SecurityGroups, req.SecurityGroupIDs} {
+		for i, id := range groups {
+			if isNumericResource(id) {
+				group, err := (&SecurityManager{client: m.client}).GetSecurityGroup(ctx, id)
+				if err != nil {
+					return err
+				}
+
+				groups[i] = group.ID
+			}
+		}
+	}
+
+	if isNumericResource(req.NetworkID) {
+		network, err := (&NetworkManager{client: m.client}).GetNetwork(ctx, req.NetworkID)
+		if err != nil {
+			return err
+		}
+
+		req.NetworkID = network.ID
+	}
+
+	if isNumericResource(req.SubnetID) {
+		subnet, err := (&NetworkManager{client: m.client}).GetSubnet(ctx, req.SubnetID)
+		if err != nil {
+			return err
+		}
+
+		req.SubnetID = subnet.ID
+	}
+
+	return nil
+}
+
+func validateInstanceRequest(req *cpi.InstanceRequest) error {
+	if req == nil {
+		return errors.New("instance request is required")
+	}
+
+	if req.VCPUsOverride != 0 || req.MemoryMiBOverride != 0 {
+		return fmt.Errorf("%w: GCP compute sizing uses Flavor; select a custom machine type instead of PVE CPU/RAM overrides", ErrNotImplemented)
+	}
+
+	if req.CreateStopped {
+		return fmt.Errorf("%w: GCP cannot atomically create a stopped instance; safe recycle requires staged identity handover", ErrNotImplemented)
+	}
+
+	return nil
 }

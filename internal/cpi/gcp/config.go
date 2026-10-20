@@ -181,6 +181,7 @@ func GetRegionFromZone(zone string) string {
 	if len(zone) > 2 && zone[len(zone)-2] == '-' && zone[len(zone)-1] >= 'a' && zone[len(zone)-1] <= 'z' {
 		return zone[:len(zone)-2]
 	}
+
 	return zone
 }
 

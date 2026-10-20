@@ -43,7 +43,7 @@ type (
 			Name string   `json:"name" yaml:"name"`
 			CIDR string   `json:"cidr" yaml:"cidr"`
 			DNS  []string `json:"dns"  yaml:"dns"`
-		} `json:"network" yaml:"network"`
+		} `json:"network"             yaml:"network"`
 		Subnets        []subnetPreview `json:"subnets"             yaml:"subnets"`
 		PublicIPs      *publicIPPlan   `json:"publicIps,omitempty" yaml:"publicIPs,omitempty"`
 		SecurityGroups []sgPreview     `json:"securityGroups"      yaml:"securityGroups"`

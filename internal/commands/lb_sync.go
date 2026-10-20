@@ -9,7 +9,6 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/ui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -24,36 +23,6 @@ type syncLBConfig struct {
 	blocName     string
 	cfg          *config.Config
 	spec         config.LBService
-}
-
-// buildSyncLBDesiredIPs builds the desired IP set from the LB spec targets.
-func buildSyncLBDesiredIPs(config *syncLBConfig) map[string]bool {
-	log := logger.Get()
-	desired := map[string]bool{}
-
-	for _, t := range config.spec.Targets {
-		targetIP := t
-		if isToken(t) {
-			resolvedIP, err := ResolveTargetIP(config.blocName, t)
-			if err != nil {
-				log.Warnw("token unresolved", "token", t, "err", err)
-
-				continue
-			}
-
-			targetIP = resolvedIP
-		}
-
-		if net.ParseIP(targetIP) == nil {
-			log.Warnw("invalid target ip", "value", targetIP)
-
-			continue
-		}
-
-		desired[targetIP] = true
-	}
-
-	return desired
 }
 
 // renderSyncLBDryRunPlan generates and renders the dry-run plan for LB sync.
@@ -226,71 +195,6 @@ func getOutputFormat(output string) string {
 	}
 
 	return output
-}
-
-// executeSyncLBSync performs the actual load balancer synchronization.
-// getExistingBackendMembers retrieves existing backend member IPs from load balancer pools.
-func getExistingBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID string) map[string]bool {
-	existing := map[string]bool{}
-
-	pools, err := netMgr.GetBackendPools(ctx, lbID)
-	if err == nil {
-		for _, p := range pools {
-			for _, member := range p.Members {
-				existing[member.IPAddress] = true
-			}
-		}
-	}
-
-	return existing
-}
-
-// addMissingBackendMembers adds backend members that are in desired but not in existing.
-func addMissingBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired, existing map[string]bool, port int) {
-	log := logger.Get()
-
-	for memberIP := range desired {
-		if existing[memberIP] {
-			continue
-		}
-
-		member := &cpi.BackendMember{
-			ID:         "",
-			IPAddress:  memberIP,
-			Port:       port,
-			TargetPort: 0,
-			Weight:     1,
-			Status:     "",
-		}
-
-		err := netMgr.AddBackendMember(ctx, lbID, member)
-		if err != nil {
-			log.Warnw("failed add backend", "ip", memberIP, "err", err)
-		} else {
-			log.Infow("added backend", "ip", memberIP)
-		}
-	}
-}
-
-// removeUnusedBackendMembers removes backend members that are not in desired set.
-func removeUnusedBackendMembers(ctx context.Context, netMgr cpi.NetworkManager, lbID string, desired map[string]bool) {
-	log := logger.Get()
-
-	pools, err := netMgr.GetBackendPools(ctx, lbID)
-	if err == nil {
-		for _, p := range pools {
-			for _, member := range p.Members {
-				if !desired[member.IPAddress] {
-					err := netMgr.RemoveBackendMember(ctx, lbID, member.IPAddress)
-					if err != nil {
-						log.Warnw("failed remove backend", "ip", member.IPAddress, "err", err)
-					} else {
-						log.Infow("removed backend", "ip", member.IPAddress)
-					}
-				}
-			}
-		}
-	}
 }
 
 func executeSyncLBSync(ctx context.Context, cfg *syncLBConfig, lbMgr cpi.LoadBalancerManager, netMgr cpi.NetworkManager) error {

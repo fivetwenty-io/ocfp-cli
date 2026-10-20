@@ -85,6 +85,7 @@ func (m *TeardownManager) detachPreservedVolumes(ctx context.Context, resource *
 	if m.stateManager == nil {
 		return errors.New("cannot verify preserved volumes without bloc state")
 	}
+
 	resources, err := m.stateManager.GetResourcesByType(state.ResourceTypeVolume)
 	if err != nil {
 		return fmt.Errorf("read recorded volumes before deleting %s: %w", resource.ID, err)
@@ -104,6 +105,7 @@ func (m *TeardownManager) detachPreservedVolumes(ctx context.Context, resource *
 		if err := storage.DetachVolume(ctx, volID, resource.ID); err != nil {
 			return fmt.Errorf("refusing to delete %s: preserved volume %s could not be detached: %w", resource.ID, volID, err)
 		}
+
 		_, _ = fmt.Printf("    • Detached %s so it survives the teardown of %s\n", volID, resource.Name)
 		logger.Infof("Detached preserved volume %s from instance %s", volID, resource.ID)
 	}
