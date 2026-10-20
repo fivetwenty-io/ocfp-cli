@@ -144,6 +144,12 @@ jobs:
           go-version: '1.27.3'
           cache: false
 
+      # Guest-boot regression tests execute the real watchdog shell script.
+      - name: Install shell test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends jq
+
       - name: Download dependencies
         run: go mod download
 
