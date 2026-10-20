@@ -107,7 +107,7 @@ Pin or replace:
 cd ~/w/fivetwenty/studios/ocfp/src/clis/ocfp
 
 # Standard pin (recommended)
-go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.9.2
+go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.11.0
 go mod tidy
 
 # OR local replace (use unreleased fixes from HEAD)
@@ -464,7 +464,7 @@ Do **not** pass `--public-ips` or `--routers` to `ocfp bootstrap` against a PVE 
 |---------|-------|-----|
 | `failed to create provider pve: pve: host URL is required` | `api_endpoint` missing or generic-map field aliases not wired. | Confirm `api_endpoint` is set; ensure ocfp is built from a tree where `internal/cpi/pve/register.go` reads `base_url`/`region`/`auth_token` aliases. |
 | `pve: API token or username/password required` | Auth fields didn't propagate from bloc to provider. | Confirm `auth_token` AND `token_secret` are both set (or `username` + `password`). Verify `internal/commands/bootstrap.go::addPVEProviderConfig` adds them to the provider config map. |
-| TLS verification errors with `verify_ssl: false` set | Using `pve-apiclient-go v3.1.0` — iota bug leaves `InsecureSkipVerify=false`. | Switch the import path to the renamed module and pin it: rewrite `pve-apiclient-go/v3` imports to `proxmox-apiclient-go/v3`, then `go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.9.2`. A `go get` alone leaves the old imports (and the bug) in place. |
+| TLS verification errors with `verify_ssl: false` set | Using `pve-apiclient-go v3.1.0` — iota bug leaves `InsecureSkipVerify=false`. | Switch the import path to the renamed module and pin it: rewrite `pve-apiclient-go/v3` imports to `proxmox-apiclient-go/v3`, then `go get github.com/fivetwenty-io/proxmox-apiclient-go/v3@v3.11.0`. A `go get` alone leaves the old imports (and the bug) in place. |
 | TLS verification errors with verification intentionally enabled | PVE cert is self-signed or hostname in `api_endpoint` doesn't match cert SAN. | Set `verify_ssl: false`, or replace the PVE cert with one whose SAN matches `api_endpoint`. |
 | `authentication failed: ... 401 Unauthorized` | `auth_token` and `token_secret` not split correctly — both halves passed as one string. | `auth_token` is the token ID (`user@realm!name`); `token_secret` is the UUID **only**. The `=` separator is constructed by the client. |
 | `failed to resolve image ID for <name>` | Template VM doesn't exist or isn't marked as a template, AND the name is not in the auto-provision catalog. | Either rename the bloc's `bastion.image` to a catalog entry (e.g. `ubuntu-noble-template`), or create the template manually per §3 fallback. |
