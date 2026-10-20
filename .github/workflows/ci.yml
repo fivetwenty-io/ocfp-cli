@@ -64,7 +64,7 @@ jobs:
     name: Lint
     runs-on: self-hosted
     container:
-      image: golang:1.27
+      image: golang:1.27.3
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -83,7 +83,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
 
       - name: Run go fmt
@@ -106,21 +106,8 @@ jobs:
           echo "version=$(tr -d '[:space:]' < .golangci-version)" >> "$GITHUB_OUTPUT"
           echo "gotoolchain=$(tr -d '[:space:]' < .lint-gotoolchain)" >> "$GITHUB_OUTPUT"
 
-      # The pinned release must be built with a Go toolchain at least as new
-      # as go.mod's target: golangci-lint parses the standard library with
-      # its own go/types, and one built against an older toolchain refuses
-      # to load the config outright. v2.12.2 (built with go1.26) died that
-      # way on "the Go language version (go1.26) used to build golangci-lint
-      # is lower than the targeted Go version (1.27.0)"; v2.13.1 is built
-      # with go1.27.0. Bump .golangci-version in lockstep with the container
-      # image.
-      #
-      # golangci-lint also runs under its own Go toolchain, which can trail
-      # go.mod's toolchain line. Go 1.27.2 writes export data in a format
-      # that no golangci-lint release can load yet, even one built with
-      # 1.27.2, so lint stays on go1.27.0 while everything else builds with
-      # 1.27.2. Set .lint-gotoolchain back in step with go.mod once a
-      # golangci-lint release loads 1.27.2's packages.
+      # Keep the linter and its package-loading toolchain current together.
+      # The release must support go.mod's Go version and export format.
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
@@ -134,7 +121,7 @@ jobs:
     name: Test
     runs-on: self-hosted
     container:
-      image: golang:1.27
+      image: golang:1.27.3
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -154,7 +141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
 
       - name: Download dependencies
@@ -170,7 +157,7 @@ jobs:
       # only ever fail. The profile ships as an artifact instead, so coverage
       # is still inspectable per run.
       - name: Upload coverage profile
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage
@@ -194,7 +181,7 @@ jobs:
     name: Build
     runs-on: self-hosted
     container:
-      image: golang:1.27
+      image: golang:1.27.3
       volumes:
         - /home/runner/gha-container-cache/go:/go
     env:
@@ -216,7 +203,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
 
       # One job cross-compiling in sequence, not a matrix. The lab runners
@@ -234,7 +221,7 @@ jobs:
         run: bash scripts/ci/build-all.sh
 
       - name: Upload binaries
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ocfp-binaries
           path: dist/ocfp-*
@@ -244,7 +231,7 @@ jobs:
     name: Integration Tests
     runs-on: self-hosted
     container:
-      image: golang:1.27
+      image: golang:1.27.3
     timeout-minutes: 20
     needs: build
     steps:
@@ -258,7 +245,7 @@ jobs:
           persist-credentials: false
 
       - name: Download binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ocfp-binaries
           path: dist
@@ -273,7 +260,7 @@ jobs:
     name: Security Scan
     runs-on: self-hosted
     container:
-      image: golang:1.27
+      image: golang:1.27.3
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -293,7 +280,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
 
       # govulncheck is the gate; gosec is a report that never blocks a merge
@@ -303,7 +290,7 @@ jobs:
         run: bash scripts/ci/security-scan.sh
 
       - name: Upload gosec report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: gosec-results

@@ -12,24 +12,16 @@ export GOBIN="$gobin"
 
 # The real gate: govulncheck reports only advisories on code paths this
 # binary reaches, so a finding here is always actionable.
-go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 "$gobin/govulncheck" ./...
 
-# gosec reports zero findings: the tree suppresses it with #nosec, which this
-# binary and golangci-lint both honour, so the two now agree. Still a report
-# rather than a gate: the trailing || true keeps a newly introduced finding
-# from blocking a merge, and it surfaces in the SARIF instead. Code scanning
-# is unavailable on this private repository, so ci.yml ships the SARIF as an
-# artifact instead of an upload.
-#
-# Pinned like govulncheck above: at @latest this step could change behaviour
-# with no commit behind it.
-#
-# gosec type-checks every package the way golangci-lint does, and under a Go
-# release newer than the loader it bundles, every package fails to load and
-# the report comes back empty. It runs under golangci-lint's toolchain, from
-# .lint-gotoolchain. govulncheck keeps the build toolchain, because the
-# standard library it checks must be the one the binary ships with.
-lint_toolchain="$(tr -d '[:space:]' <"$(dirname "${BASH_SOURCE[0]}")/../../.lint-gotoolchain")"
-go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
-GOTOOLCHAIN="$lint_toolchain" "$gobin/gosec" -fmt sarif -out gosec-results.sarif ./... || true
+# Use gosec v2.29.0 through the pinned golangci-lint distribution. Its
+# golang.org/x/tools loader supports Go 1.27.3; standalone gosec bundles an
+# older loader and silently skips SSA analysis after package-load errors.
+# Findings remain advisory, but tool or package-loading failures must fail.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+lint_toolchain="$(tr -d '[:space:]' <"$repo_root/.lint-gotoolchain")"
+bash "$script_dir/install-golangci-lint.sh" "$repo_root/.golangci-version" "$gobin"
+GOTOOLCHAIN="$lint_toolchain" "$gobin/golangci-lint" run --enable-only gosec \
+  --issues-exit-code 0 --output.sarif.path gosec-results.sarif ./...
