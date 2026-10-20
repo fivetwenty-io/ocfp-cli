@@ -1,5 +1,5 @@
 # Development container for OCFP CLI Go implementation
-FROM golang:1.27-alpine
+FROM golang:1.27.3-alpine
 
 # Install development tools
 RUN apk add --no-cache \
@@ -17,14 +17,14 @@ RUN apk add --no-cache \
     ca-certificates
 
 # Install Go development tools
-RUN go install golang.org/x/tools/gopls@latest && \
-    go install github.com/go-delve/delve/cmd/dlv@latest && \
-    go install github.com/golang/mock/mockgen@latest && \
-    go install golang.org/x/vuln/cmd/govulncheck@latest && \
-    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+RUN go install golang.org/x/tools/gopls@v0.24.0 && \
+    go install github.com/go-delve/delve/cmd/dlv@v1.27.2 && \
+    go install go.uber.org/mock/mockgen@v0.6.0 && \
+    go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && \
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 # Install trivy for security scanning
-RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.76.0
 
 # Set up workspace
 WORKDIR /workspace

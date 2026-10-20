@@ -217,10 +217,8 @@ bench: ## Run benchmarks
 # The one place the golangci-lint version is set; ci.yml reads the same file.
 GOLANGCI_LINT_VERSION = $(shell tr -d '[:space:]' < .golangci-version)
 GOLANGCI_LINT_BIN := $(CURDIR)/.bin/golangci-lint
-# The Go toolchain golangci-lint and gosec run under. ci.yml and
-# scripts/ci/security-scan.sh read the same file. It can trail go.mod's
-# toolchain line, because neither tool can load packages compiled by a Go
-# release newer than the type checker it bundles.
+# Keep lint and security package loading on the build toolchain.
+# ci.yml and scripts/ci/security-scan.sh read the same file.
 LINT_GOTOOLCHAIN = $(shell tr -d '[:space:]' < .lint-gotoolchain)
 HOST_BINARY = dist/ocfp-$(shell go env GOOS)-$(shell go env GOARCH)
 
@@ -307,7 +305,7 @@ lint: ## Run golangci-lint
 	@echo "$(GREEN)Running golangci-lint...$(RESET)"
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
 	}
 	@golangci-lint cache clean
 	@golangci-lint run --timeout=5m ./...
@@ -321,7 +319,7 @@ golangci-autofix: ## Run golangci-lint auto-fixers for specific linters
 	@echo "$(GREEN)Running golangci-lint auto-fixers...$(RESET)"
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
 	}
 	@for target in canonicalheader copyloopvar dupword errorlint exptostd fatcontext ginkgolinter godot goheader importas intrange mirror misspell nakedret nlreturn perfsprint protogetter sloglint tagalign usestdlibvars usetesting wsl_v5; do \
 		echo "$(WHITE)  Fixing $$target...$(RESET)"; \
@@ -334,7 +332,7 @@ staticcheck: ## Run staticcheck static analysis
 	@echo "$(GREEN)Running staticcheck...$(RESET)"
 	@command -v staticcheck >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing staticcheck...$(RESET)"; \
-		go install honnef.co/go/tools/cmd/staticcheck@latest; \
+		go install honnef.co/go/tools/cmd/staticcheck@v0.8.2; \
 	}
 	@staticcheck $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Staticcheck analysis complete$(RESET)"
@@ -344,7 +342,7 @@ gocyclo: ## Run gocyclo complexity analysis
 	@echo "$(GREEN)Running gocyclo complexity analysis...$(RESET)"
 	@command -v gocyclo >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing gocyclo...$(RESET)"; \
-		go install github.com/fzipp/gocyclo/cmd/gocyclo@latest; \
+		go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0; \
 	}
 	@gocyclo -over 15 $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
 	@echo "$(GREEN)✓ Gocyclo analysis complete$(RESET)"
@@ -354,7 +352,7 @@ ineffassign: ## Run ineffassign to detect ineffectual assignments
 	@echo "$(GREEN)Running ineffassign...$(RESET)"
 	@command -v ineffassign >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing ineffassign...$(RESET)"; \
-		go install github.com/gordonklaus/ineffassign@latest; \
+		go install github.com/gordonklaus/ineffassign@v0.2.0; \
 	}
 	@ineffassign ./...
 	@echo "$(GREEN)✓ Ineffassign analysis complete$(RESET)"
@@ -364,7 +362,7 @@ errcheck: ## Run errcheck to find unchecked errors
 	@echo "$(GREEN)Running errcheck...$(RESET)"
 	@command -v errcheck >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing errcheck...$(RESET)"; \
-		go install github.com/kisielk/errcheck@latest; \
+		go install github.com/kisielk/errcheck@v1.30.0; \
 	}
 	@errcheck -ignoretests $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Errcheck analysis complete$(RESET)"
@@ -374,7 +372,7 @@ goimports: ## Run goimports to check import formatting
 	@echo "$(GREEN)Running goimports...$(RESET)"
 	@command -v goimports >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing goimports...$(RESET)"; \
-		go install golang.org/x/tools/cmd/goimports@latest; \
+		go install golang.org/x/tools/cmd/goimports@v0.52.0; \
 	}
 	@goimports -l $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*") | (! grep . || (echo "$(RED)✗ Files need goimports formatting$(RESET)" && false))
 	@echo "$(GREEN)✓ Goimports check complete$(RESET)"
@@ -384,7 +382,7 @@ revive: ## Run revive linter
 	@echo "$(GREEN)Running revive linter...$(RESET)"
 	@command -v revive >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing revive...$(RESET)"; \
-		go install github.com/mgechev/revive@latest; \
+		go install github.com/mgechev/revive@v1.17.1; \
 	}
 	@revive -config revive.toml -formatter friendly ./...
 	@echo "$(GREEN)✓ Revive linter complete$(RESET)"
@@ -394,7 +392,7 @@ deadcode: ## Run deadcode to find unused code
 	@echo "$(GREEN)Running deadcode analysis...$(RESET)"
 	@command -v deadcode >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing deadcode...$(RESET)"; \
-		go install golang.org/x/tools/cmd/deadcode@latest; \
+		go install golang.org/x/tools/cmd/deadcode@v0.52.0; \
 	}
 	@deadcode -test $(shell go list ./... | grep -v vendor | grep -v tmp) || true
 	@echo "$(GREEN)✓ Deadcode analysis complete$(RESET)"
@@ -414,19 +412,15 @@ govulncheck: ## Run vulnerability check on dependencies
 	@echo "$(GREEN)Checking for vulnerabilities (govulncheck)...$(RESET)"
 	@command -v govulncheck >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing govulncheck...$(RESET)"; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		go install golang.org/x/vuln/cmd/govulncheck@v1.9.0; \
 	}
 	@govulncheck $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Vulnerability check complete$(RESET)"
 
 .PHONY: gosec
-gosec: ## Run security scanner on source code
+gosec: $(GOLANGCI_LINT_BIN) ## Run security scanner on source code
 	@echo "$(GREEN)Running security scan (gosec)...$(RESET)"
-	@command -v gosec >/dev/null 2>&1 || { \
-		echo "$(YELLOW)Installing gosec...$(RESET)"; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
-	}
-	@gosec -quiet -fmt text -exclude-dir=tmp ./...
+	@GOTOOLCHAIN="$(LINT_GOTOOLCHAIN)" $(GOLANGCI_LINT_BIN) run --enable-only gosec ./...
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
 
 .PHONY: trivy
@@ -470,7 +464,7 @@ mocks: ## Generate mock interfaces for testing
 	@echo "$(GREEN)Generating mocks...$(RESET)"
 	@command -v mockgen >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing mockgen...$(RESET)"; \
-		go install github.com/golang/mock/mockgen@latest; \
+		go install go.uber.org/mock/mockgen@v0.6.0; \
 	}
 	@go generate ./...
 	@echo "$(GREEN)✓ Mocks generated$(RESET)"
@@ -487,27 +481,25 @@ docs: ## Generate documentation
 tools: ## Install/update all Go development tools
 	@echo "$(GREEN)Installing/updating Go development tools...$(RESET)"
 	@echo "$(WHITE)  golangci-lint$(RESET)"
-	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin
+	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION)
 	@echo "$(WHITE)  staticcheck$(RESET)"
-	@go install honnef.co/go/tools/cmd/staticcheck@latest
+	@go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
 	@echo "$(WHITE)  gocyclo$(RESET)"
-	@go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+	@go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0
 	@echo "$(WHITE)  ineffassign$(RESET)"
-	@go install github.com/gordonklaus/ineffassign@latest
+	@go install github.com/gordonklaus/ineffassign@v0.2.0
 	@echo "$(WHITE)  errcheck$(RESET)"
-	@go install github.com/kisielk/errcheck@latest
+	@go install github.com/kisielk/errcheck@v1.30.0
 	@echo "$(WHITE)  goimports$(RESET)"
-	@go install golang.org/x/tools/cmd/goimports@latest
+	@go install golang.org/x/tools/cmd/goimports@v0.52.0
 	@echo "$(WHITE)  revive$(RESET)"
-	@go install github.com/mgechev/revive@latest
+	@go install github.com/mgechev/revive@v1.17.1
 	@echo "$(WHITE)  deadcode$(RESET)"
-	@go install golang.org/x/tools/cmd/deadcode@latest
+	@go install golang.org/x/tools/cmd/deadcode@v0.52.0
 	@echo "$(WHITE)  govulncheck$(RESET)"
-	@go install golang.org/x/vuln/cmd/govulncheck@latest
-	@echo "$(WHITE)  gosec$(RESET)"
-	@go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 	@echo "$(WHITE)  mockgen$(RESET)"
-	@go install github.com/golang/mock/mockgen@latest
+	@go install go.uber.org/mock/mockgen@v0.6.0
 	@echo "$(GREEN)✓ All tools installed/updated$(RESET)"
 
 .PHONY: deps
