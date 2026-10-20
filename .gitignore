@@ -55,3 +55,4 @@ completions/
 .bin/
 coverage.txt
 gosec-results.sarif
+plans/
