@@ -565,6 +565,7 @@ was resized to 8 vCPU / 16 GiB / 128 GiB.
 - Go 1.27.3 or later
 - Make
 - Git
+- Bash and jq (for guest-boot shell regression tests)
 
 ### Building
 
