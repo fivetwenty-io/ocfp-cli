@@ -137,3 +137,57 @@ func TestRestoreKeyFromConfigResolvesUnderXDGDataHome(t *testing.T) {
 		t.Errorf("expected %q, got %q", want, got)
 	}
 }
+
+func TestRestoreKeyFromConfigRejectsUnsafeBlocNames(t *testing.T) {
+	for _, bloc := range []string{"../escape", "nested/bloc", "/absolute", ".", "..", "", `nested\bloc`} {
+		t.Run(bloc, func(t *testing.T) {
+			base := t.TempDir()
+			t.Setenv("HOME", base)
+			t.Setenv("OCFP_HOME", "")
+			t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "config"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
+			path, err := NewKeyManager().RestoreKeyFromConfig(bloc, "private-key")
+			if err == nil || path != "" {
+				t.Fatalf("unsafe bloc %q accepted: path=%q err=%v", bloc, path, err)
+			}
+			entries, err := os.ReadDir(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("unsafe bloc wrote files: %v", entries)
+			}
+		})
+	}
+}
+
+func TestRestoreKeyFromConfigRejectsEscapingKeySymlink(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
+	target := filepath.Join(base, "other-key")
+	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyDir := config.OcfpSSHKeyDir("bloc")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(keyDir, "id_ed25519")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewKeyManager().RestoreKeyFromConfig("bloc", "replacement"); err == nil {
+		t.Fatal("accepted key symlink outside key directory")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("overwrote symlink target: %q", got)
+	}
+}
