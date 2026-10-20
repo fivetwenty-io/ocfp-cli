@@ -322,6 +322,10 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", nil
 	}
 
+	if !filepath.IsLocal(blocName) || blocName == "." || strings.ContainsAny(blocName, `/\`) {
+		return "", fmt.Errorf("invalid bloc name %q: expected a single directory name", blocName)
+	}
+
 	// Restore to primary location: config.OcfpSSHKeyDir(blocName)/id_ed25519
 	keyDir := config.OcfpSSHKeyDir(blocName)
 	keyPath := filepath.Join(keyDir, "id_ed25519")
@@ -332,8 +336,14 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", fmt.Errorf("failed to create SSH key directory: %w", err)
 	}
 
-	// Write the private key from config
-	err = os.WriteFile(keyPath, []byte(privateKeyPEM), privateKeyMode)
+	// Constrain writes to this directory, including when a key is a symlink.
+	root, err := os.OpenRoot(keyDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to open SSH key directory: %w", err)
+	}
+	defer func() { _ = root.Close() }() // Directory handle only; no buffered writes.
+
+	err = root.WriteFile("id_ed25519", []byte(privateKeyPEM), privateKeyMode)
 	if err != nil {
 		return "", fmt.Errorf("failed to write private key: %w", err)
 	}
