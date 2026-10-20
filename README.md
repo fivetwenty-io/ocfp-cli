@@ -562,7 +562,7 @@ was resized to 8 vCPU / 16 GiB / 128 GiB.
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.27.3 or later
 - Make
 - Git
 
