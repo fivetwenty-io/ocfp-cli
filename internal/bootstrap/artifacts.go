@@ -82,35 +82,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	vmName := m.options.BlocName + "-artifacts"
 
 	if existing, _ := m.stateManager.GetResource(artifactsResourceType, vmName); existing != nil {
-		_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; converging\n", vmName)
-		logger.Infof("Artifacts VM %s already recorded; converging", vmName)
-
-		if pending, _ := existing.Properties["creation_pending"].(bool); pending {
-			return fmt.Errorf("artifacts VM %s was created but provider initialization failed; inspect the recorded VM and reconcile creation_pending before retry", vmName)
-		}
-
-		if pending, _ := existing.Properties["attachment_pending"].(bool); pending {
-			vmID, _ := existing.Properties["vm_id"].(string)
-
-			vol, err := m.attachArtifactsDataVolume(ctx, vmID, vmName)
-			if err != nil {
-				return fmt.Errorf("converge artifacts disk: %w", err)
-			}
-
-			existing.Properties["data_volume_id"] = vol.ID
-			delete(existing.Properties, "attachment_pending")
-
-			if err := m.stateManager.UpdateResource(existing); err != nil {
-				return err
-			}
-
-			if err := m.stateManager.Save(); err != nil {
-				return err
-			}
-		}
-		m.convergeExistingArtifacts(ctx, existing)
-
-		return nil
+		return m.reconcileArtifactsState(ctx, existing, vmName)
 	}
 
 	networkID, subnetInfo, err := m.resolveBastionNetworking()
@@ -142,52 +114,9 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		return fmt.Errorf("artifacts: resolve credentials: %w", err)
 	}
 
-	var (
-		tlsMat *artifacts.TLSMaterial
-		caPEM  string
-	)
-
-	switch m.config.Artifacts.TLS.Mode {
-	case config.ArtifactsTLSModeSelfSigned:
-		cn := m.config.Artifacts.TLS.CommonName
-		if cn == "" {
-			cn = vmName
-		}
-
-		mat, err := artifacts.GenerateSelfSignedTLS(cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
-		if err != nil {
-			return fmt.Errorf("artifacts: generate self-signed TLS: %w", err)
-		}
-
-		tlsMat = &mat
-		caPEM = mat.CertPEM
-	case config.ArtifactsTLSModeInternalCA:
-		if m.safe == nil {
-			return artifacts.InternalCAVaultError(m.options.BlocName, ErrArtifactsVaultUnavailable)
-		}
-
-		ca, caErr := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
-		if caErr != nil {
-			return fmt.Errorf("artifacts: load bloc CA: %w", caErr)
-		}
-
-		cn := m.config.Artifacts.TLS.CommonName
-		if cn == "" {
-			cn = vmName
-		}
-
-		leaf, leafErr := artifacts.IssueLeafCert(ca, cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
-		if leafErr != nil {
-			return fmt.Errorf("artifacts: issue leaf cert: %w", leafErr)
-		}
-
-		tlsMat = &leaf
-		// caPEM is the CA cert (what genesis kits pin), NOT the leaf cert.
-		caPEM = ca.CertPEM
-	case config.ArtifactsTLSModeDisabled:
-		// Plain HTTP on :9000; no TLS material.
-	default:
-		return fmt.Errorf("artifacts: unsupported TLS mode %q", m.config.Artifacts.TLS.Mode)
+	tlsMat, caPEM, err := m.artifactsTLS(vmName, ip)
+	if err != nil {
+		return err
 	}
 
 	ciInputs := provision.ArtifactsCloudInitInputs{
@@ -261,31 +190,10 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 		public := m.config.CloudPublicIP()
 		req.PublicIP = &public
 	}
+
 	inst, err := m.provider.ComputeManager().CreateInstance(ctx, req)
 	if err != nil {
-		if inst != nil && inst.ID != "" {
-			ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
-			if recordErr := m.recordArtifactsState(vmName, inst, &cpi.Volume{}, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
-				return fmt.Errorf("artifacts create: %w; record recovery state: %w", err, recordErr)
-			}
-
-			r, getErr := m.stateManager.GetResource(artifactsResourceType, vmName)
-			if getErr != nil {
-				return errors.Join(err, getErr)
-			}
-
-			r.Properties["attachment_pending"] = true
-
-			r.Properties["creation_pending"] = true
-			if updateErr := m.stateManager.UpdateResource(r); updateErr != nil {
-				return errors.Join(err, updateErr)
-			}
-
-			if saveErr := m.stateManager.Save(); saveErr != nil {
-				return fmt.Errorf("artifacts create: %w; save recovery state: %w", err, saveErr)
-			}
-		}
-		return fmt.Errorf("artifacts: create instance: %w", err)
+		return m.recordArtifactsCreationFailure(vmName, inst, ip, creds, tlsMat, caPEM, err)
 	}
 
 	// Journal the VM before disk allocation or attachment can block. A process
@@ -311,25 +219,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 
 	vol, attachErr := m.attachArtifactsDataVolume(ctx, inst.ID, vmName)
 	if attachErr != nil {
-		// An attach response can be lost after the disk is attached. Keep the
-		// guest and disk recorded for retry; deleting either risks data loss.
-		pending := &cpi.Volume{ID: m.preservedArtifactsVolume(vmName)}
-
-		ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
-		if recordErr := m.recordArtifactsState(vmName, inst, pending, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
-			return fmt.Errorf("artifacts attach: %w; record recovery state: %w", attachErr, recordErr)
-		}
-
-		if r, _ := m.stateManager.GetResource(artifactsResourceType, vmName); r != nil {
-			r.Properties["attachment_pending"] = true
-			_ = m.stateManager.UpdateResource(r)
-		}
-
-		if saveErr := m.stateManager.Save(); saveErr != nil {
-			return fmt.Errorf("artifacts attach: %w; save recovery state: %w", attachErr, saveErr)
-		}
-
-		return fmt.Errorf("artifacts: attach data volume (resources preserved): %w", attachErr)
+		return m.recordArtifactsAttachmentFailure(vmName, inst, ip, creds, tlsMat, caPEM, attachErr)
 	}
 
 	// Record the VM and its data volume, and save to disk, before the
@@ -481,6 +371,7 @@ func (m *Manager) artifactsDataAttachSpec() string {
 	case "gcp":
 		return "ocfp-artifacts-data"
 	}
+
 	return artifactsDataDeviceHint
 }
 
@@ -884,4 +775,138 @@ func buildArtifactsEndpoint(ip net.IP, cfg config.ArtifactsConfig, caPEM string)
 // their call shape.
 func artifactsBucketList(blocName string, _cfg *config.Config) []artifacts.BucketSpec {
 	return artifacts.CanonicalBuckets(blocName)
+}
+
+func (m *Manager) reconcileArtifactsState(ctx context.Context, existing *state.Resource, vmName string) error {
+	_, _ = fmt.Fprintf(os.Stdout, "    • Artifacts VM %s already in state; converging\n", vmName)
+	logger.Infof("Artifacts VM %s already recorded; converging", vmName)
+
+	if pending, _ := existing.Properties["creation_pending"].(bool); pending {
+		return fmt.Errorf("artifacts VM %s was created but provider initialization failed; inspect the recorded VM and reconcile creation_pending before retry", vmName)
+	}
+
+	if pending, _ := existing.Properties["attachment_pending"].(bool); pending {
+		vmID, _ := existing.Properties["vm_id"].(string)
+
+		vol, err := m.attachArtifactsDataVolume(ctx, vmID, vmName)
+		if err != nil {
+			return fmt.Errorf("converge artifacts disk: %w", err)
+		}
+
+		existing.Properties["data_volume_id"] = vol.ID
+		delete(existing.Properties, "attachment_pending")
+
+		if err := m.stateManager.UpdateResource(existing); err != nil {
+			return err
+		}
+
+		if err := m.stateManager.Save(); err != nil {
+			return err
+		}
+	}
+
+	m.convergeExistingArtifacts(ctx, existing)
+
+	return nil
+}
+
+func (m *Manager) recordArtifactsCreationFailure(vmName string, inst *cpi.Instance, ip net.IP, creds artifacts.Credentials, tlsMat *artifacts.TLSMaterial, caPEM string, err error) error {
+	if inst != nil && inst.ID != "" {
+		ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+		if recordErr := m.recordArtifactsState(vmName, inst, &cpi.Volume{}, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
+			return fmt.Errorf("artifacts create: %w; record recovery state: %w", err, recordErr)
+		}
+
+		r, getErr := m.stateManager.GetResource(artifactsResourceType, vmName)
+		if getErr != nil {
+			return errors.Join(err, getErr)
+		}
+
+		r.Properties["attachment_pending"] = true
+
+		r.Properties["creation_pending"] = true
+		if updateErr := m.stateManager.UpdateResource(r); updateErr != nil {
+			return errors.Join(err, updateErr)
+		}
+
+		if saveErr := m.stateManager.Save(); saveErr != nil {
+			return fmt.Errorf("artifacts create: %w; save recovery state: %w", err, saveErr)
+		}
+	}
+
+	return fmt.Errorf("artifacts: create instance: %w", err)
+}
+
+func (m *Manager) artifactsTLS(vmName string, ip net.IP) (*artifacts.TLSMaterial, string, error) {
+	var (
+		tlsMat *artifacts.TLSMaterial
+		caPEM  string
+	)
+
+	switch m.config.Artifacts.TLS.Mode {
+	case config.ArtifactsTLSModeSelfSigned:
+		cn := m.config.Artifacts.TLS.CommonName
+		if cn == "" {
+			cn = vmName
+		}
+
+		mat, err := artifacts.GenerateSelfSignedTLS(cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
+		if err != nil {
+			return nil, "", fmt.Errorf("artifacts: generate self-signed TLS: %w", err)
+		}
+
+		tlsMat = &mat
+		caPEM = mat.CertPEM
+	case config.ArtifactsTLSModeInternalCA:
+		if m.safe == nil {
+			return nil, "", artifacts.InternalCAVaultError(m.options.BlocName, ErrArtifactsVaultUnavailable)
+		}
+
+		ca, caErr := vault.LoadOrGenerateBlocCA(m.safe, m.options.BlocName)
+		if caErr != nil {
+			return nil, "", fmt.Errorf("artifacts: load bloc CA: %w", caErr)
+		}
+
+		cn := m.config.Artifacts.TLS.CommonName
+		if cn == "" {
+			cn = vmName
+		}
+
+		leaf, leafErr := artifacts.IssueLeafCert(ca, cn, []string{cn, vmName}, artifacts.ArtifactsLeafSANIPs(ip))
+		if leafErr != nil {
+			return nil, "", fmt.Errorf("artifacts: issue leaf cert: %w", leafErr)
+		}
+
+		tlsMat = &leaf
+		// caPEM is the CA cert (what genesis kits pin), NOT the leaf cert.
+		caPEM = ca.CertPEM
+	case config.ArtifactsTLSModeDisabled:
+		// Plain HTTP on :9000; no TLS material.
+	default:
+		return nil, "", fmt.Errorf("artifacts: unsupported TLS mode %q", m.config.Artifacts.TLS.Mode)
+	}
+
+	return tlsMat, caPEM, nil
+}
+
+func (m *Manager) recordArtifactsAttachmentFailure(vmName string, inst *cpi.Instance, ip net.IP, creds artifacts.Credentials, tlsMat *artifacts.TLSMaterial, caPEM string, attachErr error) error {
+	// An attach response can be lost after the disk is attached. Keep the
+	// guest and disk recorded for retry; deleting either risks data loss.
+	pending := &cpi.Volume{ID: m.preservedArtifactsVolume(vmName)}
+
+	ep := buildArtifactsEndpoint(ip, m.config.Artifacts, caPEM)
+	if recordErr := m.recordArtifactsState(vmName, inst, pending, ip, creds, ep, tlsMat, leafNotAfterRFC3339(tlsMat)); recordErr != nil {
+		return fmt.Errorf("artifacts attach: %w; record recovery state: %w", attachErr, recordErr)
+	}
+
+	if r, _ := m.stateManager.GetResource(artifactsResourceType, vmName); r != nil {
+		r.Properties["attachment_pending"] = true
+		_ = m.stateManager.UpdateResource(r)
+	}
+
+	if saveErr := m.stateManager.Save(); saveErr != nil {
+		return fmt.Errorf("artifacts attach: %w; save recovery state: %w", attachErr, saveErr)
+	}
+
+	return fmt.Errorf("artifacts: attach data volume (resources preserved): %w", attachErr)
 }

@@ -63,72 +63,7 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return nil, err
 	}
 
-	// Build RunInstances input
-	input := &ec2.RunInstancesInput{
-		ImageId:      aws.String(req.Image),
-		InstanceType: types.InstanceType(req.Flavor),
-		MinCount:     aws.Int32(1),
-		MaxCount:     aws.Int32(1),
-		TagSpecifications: []types.TagSpecification{
-			{
-				ResourceType: types.ResourceTypeInstance,
-				Tags:         buildTags(req.Name, req.Tags),
-			},
-		},
-		MetadataOptions: &types.InstanceMetadataOptionsRequest{
-			HttpTokens:   types.HttpTokensStateRequired, // IMDSv2 required
-			HttpEndpoint: types.InstanceMetadataEndpointStateEnabled,
-		},
-	}
-
-	// Key pair
-	keyPairName := req.KeyPair
-	if keyPairName == "" {
-		keyPairName = req.KeyPairName
-	}
-
-	if keyPairName != "" {
-		input.KeyName = aws.String(keyPairName)
-	}
-
-	input.DisableApiTermination = aws.Bool(req.Protected)
-
-	// User data (must be base64 encoded)
-	if req.UserData != "" {
-		encoded := base64.StdEncoding.EncodeToString([]byte(req.UserData))
-		input.UserData = aws.String(encoded)
-	}
-
-	// Security groups
-	securityGroups := req.SecurityGroups
-	if len(securityGroups) == 0 {
-		securityGroups = req.SecurityGroupIDs
-	}
-
-	// Network configuration
-	// When SubnetID is provided, use NetworkInterfaces to enable public IP assignment
-	// This is the AWS best practice for instances that need public IPs
-	if req.SubnetID != "" {
-		input.NetworkInterfaces = []types.InstanceNetworkInterfaceSpecification{
-			{
-				DeviceIndex:              aws.Int32(0),
-				SubnetId:                 aws.String(req.SubnetID),
-				AssociatePublicIpAddress: aws.Bool(req.PublicIP == nil || *req.PublicIP),
-				PrivateIpAddress:         optionalString(req.StaticPrivateIP),
-				Groups:                   securityGroups,
-			},
-		}
-	} else if len(securityGroups) > 0 {
-		// If no subnet specified, use legacy configuration
-		input.SecurityGroupIds = securityGroups
-	}
-
-	// Availability zone
-	if req.AvailabilityZone != "" {
-		input.Placement = &types.Placement{
-			AvailabilityZone: aws.String(req.AvailabilityZone),
-		}
-	}
+	input := buildRunInstancesInput(req)
 
 	// Source/destination checks must be disabled for a routed subnet gateway.
 	forward := req.IPForwarding || req.Tailscale != nil || req.Ingress != nil
@@ -138,32 +73,8 @@ func (m *ComputeManager) CreateInstance(ctx context.Context, req *cpi.InstanceRe
 		return nil, fmt.Errorf("AWS forwarding attribute API unavailable: %w", ErrUnsupportedFeature)
 	}
 
-	// Root device size configuration
-	if req.BootVolumeSize > 0 {
-		if req.BootVolumeSize < ebsMinSizeGB || req.BootVolumeSize > ebsMaxSizeGB {
-			return nil, fmt.Errorf("boot volume size %d GB out of range [%d, %d]",
-				req.BootVolumeSize, ebsMinSizeGB, ebsMaxSizeGB)
-		}
-
-		images, imageErr := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{req.Image}})
-		if imageErr != nil {
-			return nil, fmt.Errorf("resolve AMI root device: %w", imageErr)
-		}
-
-		if len(images.Images) != 1 || aws.ToString(images.Images[0].RootDeviceName) == "" {
-			return nil, fmt.Errorf("AMI %s has no unambiguous root device: %w", req.Image, ErrInvalidRequest)
-		}
-		input.BlockDeviceMappings = []types.BlockDeviceMapping{
-			{
-				DeviceName: images.Images[0].RootDeviceName,
-				Ebs: &types.EbsBlockDevice{
-					VolumeSize:          aws.Int32(int32(req.BootVolumeSize)),
-					VolumeType:          types.VolumeTypeGp3,
-					DeleteOnTermination: aws.Bool(true),
-					Encrypted:           aws.Bool(true),
-				},
-			},
-		}
+	if err := configureRootDevice(ctx, client, req, input); err != nil {
+		return nil, err
 	}
 
 	// Run the instance
@@ -903,4 +814,108 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID st
 		case <-ticker.C:
 		}
 	}
+}
+
+func buildRunInstancesInput(req *cpi.InstanceRequest) *ec2.RunInstancesInput {
+	// Build RunInstances input
+	input := &ec2.RunInstancesInput{
+		ImageId:      aws.String(req.Image),
+		InstanceType: types.InstanceType(req.Flavor),
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		TagSpecifications: []types.TagSpecification{
+			{
+				ResourceType: types.ResourceTypeInstance,
+				Tags:         buildTags(req.Name, req.Tags),
+			},
+		},
+		MetadataOptions: &types.InstanceMetadataOptionsRequest{
+			HttpTokens:   types.HttpTokensStateRequired, // IMDSv2 required
+			HttpEndpoint: types.InstanceMetadataEndpointStateEnabled,
+		},
+	}
+
+	// Key pair
+	keyPairName := req.KeyPair
+	if keyPairName == "" {
+		keyPairName = req.KeyPairName
+	}
+
+	if keyPairName != "" {
+		input.KeyName = aws.String(keyPairName)
+	}
+
+	input.DisableApiTermination = aws.Bool(req.Protected)
+
+	// User data (must be base64 encoded)
+	if req.UserData != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte(req.UserData))
+		input.UserData = aws.String(encoded)
+	}
+
+	// Security groups
+	securityGroups := req.SecurityGroups
+	if len(securityGroups) == 0 {
+		securityGroups = req.SecurityGroupIDs
+	}
+
+	// Network configuration
+	// When SubnetID is provided, use NetworkInterfaces to enable public IP assignment
+	// This is the AWS best practice for instances that need public IPs
+	if req.SubnetID != "" {
+		input.NetworkInterfaces = []types.InstanceNetworkInterfaceSpecification{
+			{
+				DeviceIndex:              aws.Int32(0),
+				SubnetId:                 aws.String(req.SubnetID),
+				AssociatePublicIpAddress: aws.Bool(req.PublicIP == nil || *req.PublicIP),
+				PrivateIpAddress:         optionalString(req.StaticPrivateIP),
+				Groups:                   securityGroups,
+			},
+		}
+	} else if len(securityGroups) > 0 {
+		// If no subnet specified, use legacy configuration
+		input.SecurityGroupIds = securityGroups
+	}
+
+	// Availability zone
+	if req.AvailabilityZone != "" {
+		input.Placement = &types.Placement{
+			AvailabilityZone: aws.String(req.AvailabilityZone),
+		}
+	}
+
+	return input
+}
+
+func configureRootDevice(ctx context.Context, client EC2API, req *cpi.InstanceRequest, input *ec2.RunInstancesInput) error {
+	// Root device size configuration
+	if req.BootVolumeSize > 0 {
+		if req.BootVolumeSize < ebsMinSizeGB || req.BootVolumeSize > ebsMaxSizeGB {
+			return fmt.Errorf("boot volume size %d GB out of range [%d, %d]",
+				req.BootVolumeSize, ebsMinSizeGB, ebsMaxSizeGB)
+		}
+
+		images, imageErr := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{req.Image}})
+		if imageErr != nil {
+			return fmt.Errorf("resolve AMI root device: %w", imageErr)
+		}
+
+		if len(images.Images) != 1 || aws.ToString(images.Images[0].RootDeviceName) == "" {
+			return fmt.Errorf("AMI %s has no unambiguous root device: %w", req.Image, ErrInvalidRequest)
+		}
+
+		input.BlockDeviceMappings = []types.BlockDeviceMapping{
+			{
+				DeviceName: images.Images[0].RootDeviceName,
+				Ebs: &types.EbsBlockDevice{
+					VolumeSize:          aws.Int32(int32(req.BootVolumeSize)),
+					VolumeType:          types.VolumeTypeGp3,
+					DeleteOnTermination: aws.Bool(true),
+					Encrypted:           aws.Bool(true),
+				},
+			},
+		}
+	}
+
+	return nil
 }

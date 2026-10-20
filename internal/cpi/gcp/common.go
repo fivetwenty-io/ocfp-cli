@@ -162,6 +162,7 @@ func FormatZoneURL(project, zone string) string {
 	if strings.Contains(zone, "/") {
 		return zone
 	}
+
 	return fmt.Sprintf("projects/%s/zones/%s", project, zone)
 }
 
@@ -170,6 +171,7 @@ func FormatRegionURL(project, region string) string {
 	if strings.Contains(region, "/") {
 		return region
 	}
+
 	return fmt.Sprintf("projects/%s/regions/%s", project, region)
 }
 
@@ -178,6 +180,7 @@ func FormatNetworkURL(project, network string) string {
 	if strings.Contains(network, "/") {
 		return network
 	}
+
 	return fmt.Sprintf("projects/%s/global/networks/%s", project, network)
 }
 
@@ -186,6 +189,7 @@ func FormatSubnetworkURL(project, region, subnetwork string) string {
 	if strings.Contains(subnetwork, "/") {
 		return subnetwork
 	}
+
 	return fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, subnetwork)
 }
 
@@ -194,6 +198,7 @@ func FormatFirewallURL(project, firewall string) string {
 	if strings.Contains(firewall, "/") {
 		return firewall
 	}
+
 	return fmt.Sprintf("projects/%s/global/firewalls/%s", project, firewall)
 }
 
@@ -202,6 +207,7 @@ func FormatInstanceURL(project, zone, instance string) string {
 	if strings.Contains(instance, "/") {
 		return instance
 	}
+
 	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, instance)
 }
 
@@ -210,6 +216,7 @@ func FormatDiskURL(project, zone, disk string) string {
 	if strings.Contains(disk, "/") {
 		return disk
 	}
+
 	return fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, disk)
 }
 
@@ -218,6 +225,7 @@ func FormatImageURL(project, image string) string {
 	if strings.Contains(image, "/") {
 		return image
 	}
+
 	return fmt.Sprintf("projects/%s/global/images/%s", project, image)
 }
 
@@ -226,6 +234,7 @@ func FormatMachineTypeURL(project, zone, machineType string) string {
 	if strings.Contains(machineType, "/") {
 		return machineType
 	}
+
 	return fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, machineType)
 }
 
@@ -234,6 +243,7 @@ func FormatAddressURL(project, region, address string) string {
 	if strings.Contains(address, "/") {
 		return address
 	}
+
 	return fmt.Sprintf("projects/%s/regions/%s/addresses/%s", project, region, address)
 }
 
@@ -242,6 +252,7 @@ func FormatGlobalAddressURL(project, address string) string {
 	if strings.Contains(address, "/") {
 		return address
 	}
+
 	return fmt.Sprintf("projects/%s/global/addresses/%s", project, address)
 }
 
@@ -250,6 +261,7 @@ func FormatRouterURL(project, region, router string) string {
 	if strings.Contains(router, "/") {
 		return router
 	}
+
 	return fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, router)
 }
 

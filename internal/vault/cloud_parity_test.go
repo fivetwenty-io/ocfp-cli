@@ -37,7 +37,7 @@ func TestCloudParityGCPTopology(t *testing.T) {
 	require.NoError(t, sm.Save())
 	mock := &gcpMockSafe{}
 	p := newTestGCPProvider(&config.Config{Provider: "gcp", Region: "us-central1-b", Network: config.NetworkConfig{CIDR: "10.80.0.0/20"}}, mock, "test-bloc")
-	require.NoError(t, p.configureSubnets("unused", "mgmt", nil, 1, 1))
+	require.NoError(t, p.configureSubnets("mgmt", nil, 1, 1))
 	call := mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", 0))
 	require.NotNil(t, call)
 	require.Equal(t, "10.80.4.0/22", call.data["cidr_block"])
@@ -320,7 +320,7 @@ func TestGCPCanonicalExportsUseObservedTopology(t *testing.T) {
 	require.Equal(t, "host-project", mock.findCall(p.PathBuilder.GetNetPath("mgmt")).data["project"])
 	require.Equal(t, "10.80.0.2", mock.findCall(p.PathBuilder.GetNetPath("mgmt")).data["dns"])
 	require.Equal(t, "PRIVATE KEY", mock.findCall(p.PathBuilder.GetBOSHKeyPath("mgmt")).data["private"])
-	require.NoError(t, p.configureSubnets("", "mgmt", nil, 1, 1))
+	require.NoError(t, p.configureSubnets("mgmt", nil, 1, 1))
 	require.Equal(t, "10.80.0.2", mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", 0)).data["dns"])
 	require.Equal(t, "actual-subnet", mock.findCall(p.PathBuilder.GetSubnetPath("mgmt", "ocfp", 0)).data["cloud_name"])
 	require.NoError(t, p.ConfigureBlobstores("", "mgmt", nil, 1, 1))

@@ -251,15 +251,10 @@ func (a *ArtifactsConfig) Validate(provider string, bastionEnabled bool, interna
 		return fmt.Errorf("%w: got %q", ErrArtifactsRequiresPVE, provider)
 	}
 
-	if p := strings.ToLower(strings.TrimSpace(provider)); p == "aws" || p == "gcp" {
-		if strings.TrimSpace(a.Template) == "" || strings.HasSuffix(a.Template, "-template") {
-			return fmt.Errorf("artifacts on %s requires a native cloud image in artifacts.template or bastion.image", p)
-		}
-
-		if a.CPU != 0 || a.MemoryMiB != 0 {
-			return fmt.Errorf("artifacts on %s uses artifacts.flavor for sizing; cpu and memory_mib overrides are PVE-only", p)
-		}
+	if err := a.validateCloudSizing(provider); err != nil {
+		return err
 	}
+
 	if !bastionEnabled {
 		return ErrArtifactsRequiresBastion
 	}
@@ -441,4 +436,18 @@ func (a *ArtifactsConfig) CloudDefaults(provider, image string) {
 			a.Data.StoragePool = "pd-balanced"
 		}
 	}
+}
+
+func (a *ArtifactsConfig) validateCloudSizing(provider string) error {
+	if p := strings.ToLower(strings.TrimSpace(provider)); p == "aws" || p == "gcp" {
+		if strings.TrimSpace(a.Template) == "" || strings.HasSuffix(a.Template, "-template") {
+			return fmt.Errorf("artifacts on %s requires a native cloud image in artifacts.template or bastion.image", p)
+		}
+
+		if a.CPU != 0 || a.MemoryMiB != 0 {
+			return fmt.Errorf("artifacts on %s uses artifacts.flavor for sizing; cpu and memory_mib overrides are PVE-only", p)
+		}
+	}
+
+	return nil
 }

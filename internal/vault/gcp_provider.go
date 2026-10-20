@@ -22,8 +22,9 @@ import (
 
 // GCPVaultProvider implements vault operations for GCP.
 type GCPVaultProvider struct {
-	blobstoreOptions *PopulateOptions
 	*providers.BaseVaultProvider
+
+	blobstoreOptions *PopulateOptions
 
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
@@ -155,6 +156,7 @@ func (g *GCPVaultProvider) ConfigureIAAS(_envPath, envType string, reporter prov
 	if err := g.awsStateReader().configureKeys(envType); err != nil {
 		return err
 	}
+
 	if reporter != nil {
 		reporter.ReportPhaseComplete(phaseName, time.Since(phaseStart))
 	}
@@ -253,13 +255,6 @@ func (g *GCPVaultProvider) ConfigureLoadBalancers(envPath, envType string, repor
 	return writeCloudLoadBalancers(g.Safe, g.PathBuilder, g.awsStateReader().loadStateManager(), envType)
 }
 
-type loadBalancerConfig struct {
-	name    string
-	lbType  string
-	port    int
-	backend string
-}
-
 // ConfigureFQDNs configures DNS domain names.
 func (g *GCPVaultProvider) ConfigureFQDNs(envPath, envType string, reporter providers.ProgressReporter, phaseNum, totalPhases int) error {
 	if err := validateCloudState(g.BlocName); err != nil {
@@ -274,12 +269,6 @@ func (g *GCPVaultProvider) ConfigureFQDNs(envPath, envType string, reporter prov
 	}
 
 	return g.Safe.SetMultiple(g.PathBuilder.GetFQDNsPath(envType), record)
-}
-
-type fqdnConfig struct {
-	name   string
-	fqdn   string
-	system string
 }
 
 // ConfigureCertificates configures TLS certificates.
@@ -335,12 +324,6 @@ func (g *GCPVaultProvider) ConfigurePublicIPs(reporter providers.ProgressReporte
 	}
 
 	return g.Safe.SetMultiple(g.PathBuilder.GetPublicIPsPath(), data)
-}
-
-type publicIPConfig struct {
-	job     string
-	address string
-	index   int
 }
 
 // SaveConfigToVault saves the OCFP configuration to vault.
@@ -421,7 +404,7 @@ func (g *GCPVaultProvider) configureEnvironment(envType string, reporter provide
 	*phaseIndex++
 
 	// Configure subnets
-	err = g.configureSubnets(envPath, envType, reporter, *phaseIndex, totalPhases)
+	err = g.configureSubnets(envType, reporter, *phaseIndex, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure subnets for %s: %w", envType, err)
 	}
@@ -429,7 +412,7 @@ func (g *GCPVaultProvider) configureEnvironment(envType string, reporter provide
 	*phaseIndex++
 
 	// Configure security groups
-	err = g.configureSecurityGroups(envPath, envType, reporter, *phaseIndex, totalPhases)
+	err = g.configureSecurityGroups(envType, reporter, *phaseIndex, totalPhases)
 	if err != nil {
 		return fmt.Errorf("failed to configure security groups for %s: %w", envType, err)
 	}
@@ -472,7 +455,7 @@ func (g *GCPVaultProvider) configureEnvironment(envType string, reporter provide
 }
 
 // configureSubnets configures subnet settings.
-func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
+func (g *GCPVaultProvider) configureSubnets(envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
 	defer cloudPhase(reporter, "subnets-"+envType, phaseNum, totalPhases)()
 
 	subnets, err := cloudSubnets(g.Config, g.awsStateReader().loadStateManager())
@@ -514,7 +497,7 @@ func (g *GCPVaultProvider) configureSubnets(envPath, envType string, reporter pr
 }
 
 // configureSecurityGroups configures firewall rules.
-func (g *GCPVaultProvider) configureSecurityGroups(envPath, envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
+func (g *GCPVaultProvider) configureSecurityGroups(envType string, reporter providers.ProgressReporter, phaseNum int, totalPhases int) error {
 	defer cloudPhase(reporter, "security-groups-"+envType, phaseNum, totalPhases)()
 
 	return writeCloudSecurityGroups(g.Safe, g.PathBuilder, g.awsStateReader().loadStateManager(), g.BlocName, envType, true)
@@ -553,56 +536,8 @@ func (g *GCPVaultProvider) getBlobstoresForSystem(system, envType string) map[st
 		blob["name"] = blob["bucket_name"]
 		blob["type"] = "gcs"
 	}
+
 	return blobstores
-}
-func (g *GCPVaultProvider) getLoadBalancersForEnv(envType string) []loadBalancerConfig {
-	var lbs []loadBalancerConfig
-
-	if envType == MgmtEnvType {
-		lbs = []loadBalancerConfig{
-			{name: "concourse", lbType: "https", port: 443, backend: "concourse"},   //nolint:mnd
-			{name: "vault", lbType: "https", port: 443, backend: "vault"},           //nolint:mnd
-			{name: "prometheus", lbType: "https", port: 443, backend: "prometheus"}, //nolint:mnd
-		}
-	} else {
-		lbs = []loadBalancerConfig{
-			{name: "router", lbType: "https", port: 443, backend: "router"},        //nolint:mnd
-			{name: "tcp-router", lbType: "tcp", port: 1024, backend: "tcp-router"}, //nolint:mnd
-			{name: "ssh", lbType: "tcp", port: 2222, backend: "diego-ssh"},         //nolint:mnd
-		}
-	}
-
-	return lbs
-}
-func (g *GCPVaultProvider) getFQDNsForEnv(envType string) []fqdnConfig {
-	baseDomain := ""
-	if g.Config.FQDNs != nil && g.Config.FQDNs.Base != "" {
-		baseDomain = g.Config.FQDNs.Base
-	}
-
-	if baseDomain == "" {
-		baseDomain = g.BlocName + ".example.com"
-	}
-
-	var fqdns []fqdnConfig
-
-	if envType == MgmtEnvType {
-		fqdns = []fqdnConfig{
-			{name: "concourse", fqdn: "concourse." + baseDomain, system: "concourse"},
-			{name: "vault", fqdn: "vault." + baseDomain, system: "vault"},
-			{name: "prometheus", fqdn: "prometheus." + baseDomain, system: "prometheus"},
-		}
-	} else {
-		fqdns = []fqdnConfig{
-			{name: "system", fqdn: "sys." + baseDomain, system: "cf"},
-			{name: "apps", fqdn: "apps." + baseDomain, system: "cf"},
-			{name: "login", fqdn: "login." + baseDomain, system: "cf"},
-			{name: "uaa", fqdn: "uaa." + baseDomain, system: "cf"},
-			{name: "api", fqdn: "api." + baseDomain, system: "cf"},
-		}
-	}
-
-	return fqdns
 }
 
 // configureSharedComponents configures components shared across environments.
@@ -624,15 +559,6 @@ func (g *GCPVaultProvider) configureSharedComponents(reporter providers.Progress
 	*phaseIndex++
 
 	return nil
-}
-func (g *GCPVaultProvider) getPublicIPs() []publicIPConfig {
-	// In production, this would query the GCP API or state for actual IPs
-	// For now, return placeholder configuration
-	return []publicIPConfig{
-		{job: "bastion", address: "", index: 0},
-		{job: "router", address: "", index: 0},
-		{job: "tcp-router", address: "", index: 0},
-	}
 }
 
 // Ensure imports are used.
@@ -679,4 +605,68 @@ func cloudPhase(reporter providers.ProgressReporter, name string, number, total 
 			reporter.ReportPhaseComplete(name, time.Since(start))
 		}
 	}
+}
+
+type loadBalancerConfig struct {
+	name    string
+	lbType  string
+	port    int
+	backend string
+}
+
+type fqdnConfig struct {
+	name   string
+	fqdn   string
+	system string
+}
+
+func (g *GCPVaultProvider) getLoadBalancersForEnv(envType string) []loadBalancerConfig {
+	var lbs []loadBalancerConfig
+
+	if envType == MgmtEnvType {
+		lbs = []loadBalancerConfig{
+			{name: "concourse", lbType: "https", port: 443, backend: "concourse"},   //nolint:mnd
+			{name: "vault", lbType: "https", port: 443, backend: "vault"},           //nolint:mnd
+			{name: "prometheus", lbType: "https", port: 443, backend: "prometheus"}, //nolint:mnd
+		}
+	} else {
+		lbs = []loadBalancerConfig{
+			{name: "router", lbType: "https", port: 443, backend: "router"},        //nolint:mnd
+			{name: "tcp-router", lbType: "tcp", port: 1024, backend: "tcp-router"}, //nolint:mnd
+			{name: "ssh", lbType: "tcp", port: 2222, backend: "diego-ssh"},         //nolint:mnd
+		}
+	}
+
+	return lbs
+}
+
+func (g *GCPVaultProvider) getFQDNsForEnv(envType string) []fqdnConfig {
+	baseDomain := ""
+	if g.Config.FQDNs != nil && g.Config.FQDNs.Base != "" {
+		baseDomain = g.Config.FQDNs.Base
+	}
+
+	if baseDomain == "" {
+		baseDomain = g.BlocName + ".example.com"
+	}
+
+	var fqdns []fqdnConfig
+
+	if envType == MgmtEnvType {
+		fqdns = []fqdnConfig{
+			{name: "concourse", fqdn: "concourse." + baseDomain, system: "concourse"},
+			{name: "vault", fqdn: "vault." + baseDomain, system: "vault"},
+			{name: "prometheus", fqdn: "prometheus." + baseDomain, system: "prometheus"},
+		}
+	} else {
+		fqdns = []fqdnConfig{
+			{name: "system", fqdn: "sys." + baseDomain, system: "cf"},
+			{name: "apps", fqdn: "apps." + baseDomain, system: "cf"},
+			{name: "login", fqdn: "login." + baseDomain, system: "cf"},
+			{name: "uaa", fqdn: "uaa." + baseDomain, system: "cf"},
+			{name: "api", fqdn: "api." + baseDomain, system: "cf"},
+		}
+	}
+
+	return fqdns
 }

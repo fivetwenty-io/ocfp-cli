@@ -510,8 +510,8 @@ func (pm *PolicyManager) generatePolicyHCL(template *PolicyTemplate) string {
 
 		if len(rule.Capabilities) > 0 {
 			caps := make([]string, len(rule.Capabilities))
-			for i, cap := range rule.Capabilities {
-				caps[i] = fmt.Sprintf("\"%s\"", cap)
+			for i, capability := range rule.Capabilities {
+				caps[i] = fmt.Sprintf("\"%s\"", capability)
 			}
 
 			fmt.Fprintf(&builder, "  capabilities = [%s]\n", strings.Join(caps, ", "))

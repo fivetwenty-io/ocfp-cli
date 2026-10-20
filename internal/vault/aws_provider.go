@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/netip"
 	"sort"
 	"strings"
@@ -29,9 +27,6 @@ const (
 	// boshSystem is the BOSH system identifier for blobstore configuration.
 	boshSystem = "bosh"
 
-	// rdsGlobalCAURL is the URL for the AWS RDS Global CA certificate bundle.
-	rdsGlobalCAURL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
-
 	// PublicIPStatusPending is written to vault when no EIPs exist in state yet.
 	// Downstream consumers (Genesis CPI configs) must treat this value as "not yet provisioned"
 	// and must not use it as a real hostname or allocation ID.
@@ -41,8 +36,9 @@ const (
 // AWSVaultProvider implements vault operations for AWS.
 // This provider follows the same pattern as StackitVaultProvider to maintain consistency.
 type AWSVaultProvider struct {
-	blobstoreOptions *PopulateOptions
 	*providers.BaseVaultProvider
+
+	blobstoreOptions *PopulateOptions
 
 	Safe        SafeInterface
 	PathBuilder *PathBuilder
@@ -433,32 +429,6 @@ func (a *AWSVaultProvider) resolveAWSCredentials() (string, string) {
 	}
 
 	return accessKeyID, secretAccessKey
-}
-
-// fetchRDSGlobalCA downloads the AWS RDS Global CA certificate bundle.
-func (a *AWSVaultProvider) fetchRDSGlobalCA() (string, error) {
-	// #nosec -- trusted AWS URL
-	resp, err := http.Get(rdsGlobalCAURL) //nolint:noctx // trusted AWS URL
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch RDS CA: %w", err)
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read RDS CA response: %w", err)
-	}
-
-	return string(body), nil
-}
-
-// buildDeploymentDBPath constructs the deployment vault path for database config.
-// Converts region (e.g., "us-east-1") to path segments (e.g., "us/east/1").
-func (a *AWSVaultProvider) buildDeploymentDBPath(envType string) string {
-	regionParts := strings.ReplaceAll(a.Config.Region, "-", "/")
-
-	return fmt.Sprintf("secret/ocfp/aws/%s/%s/bosh/db/bosh", envType, regionParts)
 }
 
 // shouldSkipCFForEnvType determines if a CF-related system should be skipped for the given environment type.
@@ -1594,4 +1564,12 @@ func (b *awsLBServiceBuilder) addCFSSHService() {
 		"port":     SSHAltPort,
 		"targets":  targets,
 	}
+}
+
+// buildDeploymentDBPath constructs the deployment vault path for database config.
+// Converts region (e.g., "us-east-1") to path segments (e.g., "us/east/1").
+func (a *AWSVaultProvider) buildDeploymentDBPath(envType string) string {
+	regionParts := strings.ReplaceAll(a.Config.Region, "-", "/")
+
+	return fmt.Sprintf("secret/ocfp/aws/%s/%s/bosh/db/bosh", envType, regionParts)
 }

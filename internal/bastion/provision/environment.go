@@ -159,6 +159,7 @@ func (em *EnvironmentManager) generateProfileDScript(envVars map[string]string) 
 	if em.provider == providerGCP {
 		lines = append(lines, gcpCredentialProfile)
 	}
+
 	lines = append(lines, "PROFILE_EOF")
 	lines = append(lines, "    sudo install -m 0644 /tmp/ocfp_profile.sh /etc/profile.d/ocfp.sh")
 	lines = append(lines, "    # Verify write")
