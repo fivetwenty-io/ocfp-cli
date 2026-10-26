@@ -19,6 +19,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewSCPCmd())
 	root.AddCommand(commands.NewRSyncCmd())
 	root.AddCommand(commands.NewEnvCmd())
+	root.AddCommand(commands.NewBlocCmd())
 
 	// Operational commands
 	root.AddCommand(commands.NewInitCmd())
