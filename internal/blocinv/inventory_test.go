@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -190,4 +191,122 @@ func TestFind(t *testing.T) {
 
 	_, ok = Find(entries, "")
 	assert.False(t, ok)
+}
+
+// writeState writes a state file for bloc under home in the layout
+// home/<bloc>/state/<bloc>.json and returns its path.
+func writeState(t *testing.T, home, bloc, content string) string {
+	t.Helper()
+
+	return writeFile(t, filepath.Join(home, bloc, "state"), bloc+".json", content)
+}
+
+func stateJSON(provider, region, updatedAt string) string {
+	return `{"version":"1.0","provider":"` + provider + `","region":"` + region +
+		`","createdAt":"2026-01-02T03:04:05Z","updatedAt":"` + updatedAt + `"}`
+}
+
+func TestCollect_StateOnlyBloc(t *testing.T) {
+	home := t.TempDir()
+	path := writeState(t, home, "old-bloc", stateJSON("aws", "us-east-1", "2026-08-01T09:00:00Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{home}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	old := entries[0]
+	assert.Equal(t, "old-bloc", old.Name)
+	assert.True(t, old.HasState)
+	assert.False(t, old.HasConfig)
+	assert.Equal(t, path, old.StatePath)
+	assert.Equal(t, "aws", old.Provider, "state supplies the provider when no config does")
+	assert.Equal(t, "us-east-1", old.Region)
+	assert.True(t, old.UpdatedAt.Equal(time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)))
+}
+
+func TestCollect_IgnoresNonBlocStateEntries(t *testing.T) {
+	home := t.TempDir()
+
+	for _, dir := range []string{"checkpoints", "logs", "state", "empty-dir"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, dir, "nested"), 0o750))
+	}
+
+	writeFile(t, home, "state.yml", "current_bloc: real\n")
+	writeFile(t, home, "state.yml.lock", "")
+	writeFile(t, filepath.Join(home, "logs"), "real.log", "log line\n")
+	writeState(t, home, "real", stateJSON("pve", "lab", "2026-10-25T18:02:11Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{home}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "real", entries[0].Name)
+}
+
+func TestCollect_MergesConfigAndState(t *testing.T) {
+	cfgDir := t.TempDir()
+	home := t.TempDir()
+
+	cfgPath := writeFile(t, cfgDir, "config.yml", "blocs:\n  lab:\n    provider: pve\n    region: lab\n")
+	statePath := writeState(t, home, "lab", stateJSON("aws", "elsewhere", "2026-10-25T18:02:11Z"))
+
+	entries, err := Collect(Options{ConfigDirs: []string{cfgDir}, StateHomes: []string{home}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	lab := entries[0]
+	assert.True(t, lab.HasConfig)
+	assert.True(t, lab.HasState)
+	assert.Equal(t, cfgPath, lab.ConfigFile)
+	assert.Equal(t, statePath, lab.StatePath)
+	assert.Equal(t, "pve", lab.Provider, "config wins over state")
+	assert.Equal(t, "lab", lab.Region)
+	assert.False(t, lab.UpdatedAt.IsZero())
+}
+
+func TestCollect_ConfigWithoutStateHasZeroUpdatedAt(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeFile(t, cfgDir, "config.yml", "blocs:\n  fresh:\n    provider: pve\n")
+
+	entries, err := Collect(Options{ConfigDirs: []string{cfgDir}, StateHomes: []string{t.TempDir()}})
+	require.NoError(t, err)
+
+	fresh := byName(t, entries, "fresh")
+	assert.False(t, fresh.HasState)
+	assert.Empty(t, fresh.StatePath)
+	assert.True(t, fresh.UpdatedAt.IsZero())
+}
+
+func TestCollect_FirstStateHomeWinsCollision(t *testing.T) {
+	xdg := t.TempDir()
+	legacy := t.TempDir()
+
+	xdgPath := writeState(t, xdg, "both", stateJSON("pve", "xdg-region", "2026-10-25T00:00:00Z"))
+	writeState(t, legacy, "both", stateJSON("aws", "legacy-region", "2026-01-01T00:00:00Z"))
+	legacyOnly := writeState(t, legacy, "legacy-only", stateJSON("aws", "us-east-1", "2026-02-01T00:00:00Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{xdg, legacy}})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	both := byName(t, entries, "both")
+	assert.Equal(t, xdgPath, both.StatePath)
+	assert.Equal(t, "xdg-region", both.Region)
+
+	only := byName(t, entries, "legacy-only")
+	assert.Equal(t, legacyOnly, only.StatePath)
+}
+
+func TestCollect_SameStateHomeListedTwice(t *testing.T) {
+	home := t.TempDir()
+	writeState(t, home, "solo", stateJSON("pve", "lab", "2026-10-25T00:00:00Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{home, home}})
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+}
+
+func TestCollect_MissingStateHomeIsNotAnError(t *testing.T) {
+	entries, err := Collect(Options{StateHomes: []string{filepath.Join(t.TempDir(), "nope"), ""}})
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
