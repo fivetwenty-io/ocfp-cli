@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -262,7 +263,7 @@ func formatUpdated(updated time.Time) string {
 }
 
 func newBlocShowCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, live bool
 
 	cmd := &cobra.Command{
 		Use:   "show [bloc]",
@@ -281,10 +282,17 @@ output value other than the bastion addresses is ever printed.
 
 A bloc whose state file cannot be parsed is shown with the source broken
 instead of failing the command. With --json, the same data is emitted as one
-object.`,
+object.
+
+With --live, the command also makes read-only provider calls to report the
+power state of the bastion and artifacts VMs, and to find the artifacts VM
+when the state does not name it. It starts, stops, and changes nothing. A live
+call that fails, or a bloc with artifacts disabled, shows up as an error in
+the Live section and never fails the local part of the output.`,
 		Example: `  ocfp bloc show
   ocfp bloc show ocfp-lab-wayneeseguin
-  ocfp bloc show ocfp-lab-wayneeseguin --json`,
+  ocfp bloc show ocfp-lab-wayneeseguin --json
+  ocfp bloc show ocfp-lab-wayneeseguin --live`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -294,11 +302,17 @@ object.`,
 				name = args[0]
 			}
 
-			return runBlocShow(cmd.OutOrStdout(), name, asJSON)
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			return runBlocShow(ctx, cmd.OutOrStdout(), name, asJSON, live)
 		},
 	}
 
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit output as JSON")
+	cmd.Flags().BoolVar(&live, "live", false, "Also read bastion and artifacts VM power state from the provider (read-only)")
 
 	return cmd
 }
@@ -311,9 +325,10 @@ type blocShowReport struct {
 	BrokenError string                 `json:"broken_error,omitempty"`
 	Config      *blocinv.ConfigSummary `json:"config,omitempty"`
 	State       *blocinv.StateSummary  `json:"state,omitempty"`
+	Live        *blocLiveReport        `json:"live,omitempty"`
 }
 
-func runBlocShow(out io.Writer, name string, asJSON bool) error {
+func runBlocShow(ctx context.Context, out io.Writer, name string, asJSON, live bool) error {
 	opts := blocInventoryOptions()
 
 	if name == "" {
@@ -346,6 +361,10 @@ func runBlocShow(out io.Writer, name string, asJSON bool) error {
 		BrokenError: entry.BrokenError,
 		Config:      summary.Config,
 		State:       summary.State,
+	}
+
+	if live {
+		report.Live = collectBlocLive(ctx, entry, summary)
 	}
 
 	if asJSON {
@@ -407,6 +426,10 @@ func writeBlocShowText(out io.Writer, entry blocinv.Entry, report blocShowReport
 	_, err := io.WriteString(out, text.String())
 	if err != nil {
 		return fmt.Errorf("writing bloc summary: %w", err)
+	}
+
+	if report.Live != nil {
+		return writeBlocLiveText(out, report.Live)
 	}
 
 	return nil

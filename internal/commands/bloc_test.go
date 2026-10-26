@@ -2,13 +2,16 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -371,4 +374,244 @@ func TestBlocShow_TooManyArgs(t *testing.T) {
 
 	_, err := runBloc(t, "show", "a", "b")
 	require.Error(t, err)
+}
+
+// fakeComputeReader stands in for the provider's compute manager. It holds
+// only the two read calls bloc show may make.
+type fakeComputeReader struct {
+	instances map[string]*cpi.Instance
+	getErrs   map[string]error
+	listed    []*cpi.Instance
+	listErr   error
+	gets      []string
+	lists     int
+}
+
+func (f *fakeComputeReader) GetInstance(_ context.Context, id string) (*cpi.Instance, error) {
+	f.gets = append(f.gets, id)
+
+	if err := f.getErrs[id]; err != nil {
+		return nil, err
+	}
+
+	inst, ok := f.instances[id]
+	if !ok {
+		return nil, errors.New("instance " + id + " not found")
+	}
+
+	return inst, nil
+}
+
+func (f *fakeComputeReader) ListInstances(_ context.Context, _ map[string]string) ([]*cpi.Instance, error) {
+	f.lists++
+
+	return f.listed, f.listErr
+}
+
+// useBlocLive swaps the live reader factory for one that returns reader, and
+// reports how many times the factory ran.
+func useBlocLive(t *testing.T, reader blocComputeReader, factoryErr error) *int {
+	t.Helper()
+
+	calls := 0
+	original := newBlocLiveSource
+	newBlocLiveSource = func(_ context.Context, _ string) (blocLiveSource, error) {
+		calls++
+
+		if factoryErr != nil {
+			return blocLiveSource{}, factoryErr
+		}
+
+		return blocLiveSource{Reader: reader, ArtifactsEnabled: true, Close: func() {}}, nil
+	}
+
+	t.Cleanup(func() { newBlocLiveSource = original })
+
+	return &calls
+}
+
+const liveState = `{
+  "version": "1.0",
+  "provider": "pve",
+  "region": "lab-region",
+  "updatedAt": "2026-10-25T18:02:11Z",
+  "resources": {
+    "compute_instance.lab-bastion": {"id": "100", "type": "compute_instance", "name": "lab-bastion"},
+    "artifacts.lab-artifacts": {"id": "101", "type": "artifacts", "name": "lab-artifacts", "properties": {
+      "vm_id": "101", "endpoint": "https://10.20.0.7:9000", "tls_mode": "internal-ca",
+      "access_key": "FAKE-TOKEN-DO-NOT-USE-AK", "secret_key": "FAKE-TOKEN-DO-NOT-USE-SK"}}
+  },
+  "outputs": {"bastion_id": "100", "bastion_private_ip": "10.20.0.5"}
+}`
+
+func seedLiveBloc(t *testing.T) {
+	t.Helper()
+
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", liveState)
+}
+
+func liveJSON(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+
+	out, err := runBloc(t, append([]string{"show", "lab", "--json", "--live"}, args...)...)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "FAKE-TOKEN-DO-NOT-USE")
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got), out)
+
+	return got
+}
+
+func TestBlocShowLive_Success(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+		"100": {ID: "100", State: cpi.ResourceState("running")},
+		"101": {ID: "101", State: cpi.ResourceState("stopped")},
+	}}
+	useBlocLive(t, reader, nil)
+
+	got := liveJSON(t)
+
+	live, ok := got["live"].(map[string]any)
+	require.True(t, ok, "live object")
+	assert.Equal(t,
+		map[string]any{"vm_id": "100", "power": "running", "error": ""},
+		live["bastion"])
+	assert.Equal(t,
+		map[string]any{"vm_id": "101", "power": "stopped", "endpoint": "https://10.20.0.7:9000", "tls_mode": "internal-ca", "error": ""},
+		live["artifacts"])
+	assert.ElementsMatch(t, []string{"100", "101"}, reader.gets)
+	assert.Zero(t, reader.lists, "the state already names the artifacts VM")
+
+	text, err := runBloc(t, "show", "lab", "--live")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Live")
+	assert.Contains(t, text, "running")
+	assert.Contains(t, text, "stopped")
+	assert.NotContains(t, text, "FAKE-TOKEN-DO-NOT-USE")
+}
+
+func TestBlocShowLive_NotCalledWithoutFlag(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	calls := useBlocLive(t, &fakeComputeReader{}, nil)
+
+	out, err := runBloc(t, "show", "lab", "--json")
+	require.NoError(t, err)
+	assert.Zero(t, *calls)
+	assert.NotContains(t, out, `"live"`)
+}
+
+func TestBlocShowLive_BastionFailureKeepsTheRest(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": errors.New("proxmox: connection refused")},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	got := liveJSON(t)
+	live := got["live"].(map[string]any)
+
+	bastion := live["bastion"].(map[string]any)
+	assert.Equal(t, "100", bastion["vm_id"])
+	assert.Equal(t, "", bastion["power"])
+	assert.Contains(t, bastion["error"], "connection refused")
+
+	artifacts := live["artifacts"].(map[string]any)
+	assert.Equal(t, "running", artifacts["power"])
+	assert.Equal(t, "", artifacts["error"])
+
+	assert.Contains(t, got, "config", "the local part is intact")
+	assert.Contains(t, got, "state", "the local part is intact")
+}
+
+func TestBlocShowLive_ArtifactsDisabledIsALiveError(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}}}
+
+	original := newBlocLiveSource
+	newBlocLiveSource = func(_ context.Context, _ string) (blocLiveSource, error) {
+		return blocLiveSource{Reader: reader, ArtifactsEnabled: false, Close: func() {}}, nil
+	}
+
+	t.Cleanup(func() { newBlocLiveSource = original })
+
+	got := liveJSON(t)
+	live := got["live"].(map[string]any)
+
+	assert.Equal(t, "running", live["bastion"].(map[string]any)["power"], "the bastion is still read")
+
+	artifacts := live["artifacts"].(map[string]any)
+	assert.Contains(t, artifacts["error"], "disabled")
+	assert.Equal(t, "", artifacts["power"])
+	assert.Equal(t, []string{"100"}, reader.gets, "the artifacts VM is not read")
+}
+
+func TestBlocShowLive_ProviderSetupFailure(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+	useBlocLive(t, nil, errors.New("creating provider: bad endpoint"))
+
+	got := liveJSON(t)
+	live := got["live"].(map[string]any)
+
+	for _, part := range []string{"bastion", "artifacts"} {
+		assert.Contains(t, live[part].(map[string]any)["error"], "bad endpoint", part)
+	}
+
+	assert.Contains(t, got, "state")
+}
+
+func TestBlocShowLive_ArtifactsFoundByTagWhenStateLacksThem(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			"100": {ID: "100", State: cpi.ResourceState("running")},
+			"555": {ID: "555", State: cpi.ResourceState("running")},
+		},
+		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts"}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "555", artifacts["vm_id"])
+	assert.Equal(t, "running", artifacts["power"])
+	assert.Equal(t, 1, reader.lists)
+}
+
+func TestBlocShowLive_NothingToRead(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+
+	reader := &fakeComputeReader{}
+	useBlocLive(t, reader, nil)
+
+	live := liveJSON(t)["live"].(map[string]any)
+	assert.Contains(t, live["bastion"].(map[string]any)["error"], "no bastion")
+	assert.Contains(t, live["artifacts"].(map[string]any)["error"], "no ocfp-artifacts VM")
+	assert.Empty(t, reader.gets)
+}
+
+func TestBlocShowLive_NoConfigEntry(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocState(t, "lab", liveState)
+
+	calls := useBlocLive(t, &fakeComputeReader{}, nil)
+
+	live := liveJSON(t)["live"].(map[string]any)
+	assert.Contains(t, live["bastion"].(map[string]any)["error"], "no config entry")
+	assert.Zero(t, *calls, "no provider can be built without a config entry")
 }
