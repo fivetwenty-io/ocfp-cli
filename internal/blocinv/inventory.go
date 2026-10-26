@@ -41,6 +41,10 @@ type Entry struct {
 	ConfigFiles []string  // every file that defines the bloc, in search order
 	StatePath   string    // the state file, empty when the bloc has none
 	UpdatedAt   time.Time // zero when there is no state
+
+	// cfg is the first definition of the bloc as written in config. Summarize
+	// reads it through an allowlist and nothing else exposes it.
+	cfg *config.Config
 }
 
 // Options tells Collect where to look.
@@ -205,6 +209,10 @@ func mergeBloc(byName map[string]*Entry, name string, cfg *config.Config, path s
 		return
 	}
 
+	if entry.cfg == nil {
+		entry.cfg = cfg
+	}
+
 	if entry.Provider == "" {
 		entry.Provider = providerOf(cfg)
 	}
@@ -314,6 +322,13 @@ func (e Entry) Source() string {
 // loadState reads one bloc's state file through the state manager so the
 // inventory parses state exactly as every other command does.
 func loadState(name, statePath string) (*state.State, error) {
+	// Manager.Load answers a missing file with a fresh empty state, which
+	// would hide a file that vanished after the inventory found it.
+	_, err := os.Stat(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("checking state file: %w", err)
+	}
+
 	manager, err := state.NewManager(filepath.Dir(statePath))
 	if err != nil {
 		return nil, fmt.Errorf("opening state directory: %w", err)
