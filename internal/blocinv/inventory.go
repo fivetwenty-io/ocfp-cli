@@ -34,6 +34,7 @@ type Entry struct {
 	Region      string
 	HasConfig   bool
 	HasState    bool
+	Current     bool      // the bloc the CLI resolves as current
 	Broken      bool      // the state file exists but cannot be loaded
 	BrokenError string    // why it cannot be loaded, never the file's contents
 	ConfigFile  string    // the first file that defines the bloc
@@ -52,6 +53,10 @@ type Options struct {
 	// StateHomes are the directories that hold <bloc>/state/<bloc>.json, in
 	// priority order. When several hold the same bloc, the first wins.
 	StateHomes []string
+	// Current is the name of the current bloc, resolved by the caller. The
+	// inventory cannot resolve it itself because the resolution order lives
+	// in a package that imports this one. Empty marks no entry.
+	Current string
 }
 
 // Collect merges every source into one entry per bloc, sorted by name.
@@ -69,6 +74,7 @@ func Collect(opts Options) ([]Entry, error) {
 
 	entries := make([]Entry, 0, len(byName))
 	for _, entry := range byName {
+		entry.Current = opts.Current != "" && entry.Name == opts.Current
 		entries = append(entries, *entry)
 	}
 
