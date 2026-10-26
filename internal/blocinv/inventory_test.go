@@ -310,3 +310,83 @@ func TestCollect_MissingStateHomeIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 }
+
+func TestCollect_UnparsableStateIsBroken(t *testing.T) {
+	home := t.TempDir()
+
+	writeState(t, home, "alpha", stateJSON("pve", "lab", "2026-10-25T00:00:00Z"))
+	badPath := writeState(t, home, "bad", `{"provider": "FAKE-TOKEN-DO-NOT-USE",,, [unterminated`)
+	writeState(t, home, "zulu", stateJSON("pve", "lab", "2026-10-25T00:00:00Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{home}})
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+
+	names := []string{entries[0].Name, entries[1].Name, entries[2].Name}
+	assert.Equal(t, []string{"alpha", "bad", "zulu"}, names, "a broken bloc stays in sorted order")
+
+	bad := entries[1]
+	assert.True(t, bad.Broken)
+	assert.True(t, bad.HasState)
+	assert.Equal(t, badPath, bad.StatePath)
+	assert.NotEmpty(t, bad.BrokenError)
+	assert.NotContains(t, bad.BrokenError, "FAKE-TOKEN-DO-NOT-USE", "the error never carries the file's contents")
+	assert.Equal(t, "broken", bad.Source())
+
+	assert.False(t, entries[0].Broken)
+	assert.False(t, entries[2].Broken)
+}
+
+func TestCollect_BrokenStateKeepsConfigFields(t *testing.T) {
+	cfgDir := t.TempDir()
+	home := t.TempDir()
+
+	writeFile(t, cfgDir, "config.yml", "blocs:\n  lab:\n    provider: pve\n    region: lab\n")
+	writeState(t, home, "lab", "{{{ not state")
+
+	entries, err := Collect(Options{ConfigDirs: []string{cfgDir}, StateHomes: []string{home}})
+	require.NoError(t, err)
+
+	lab := byName(t, entries, "lab")
+	assert.True(t, lab.Broken)
+	assert.True(t, lab.HasConfig)
+	assert.Equal(t, "pve", lab.Provider)
+	assert.True(t, lab.UpdatedAt.IsZero())
+}
+
+func TestCollect_UnreadableStateIsBroken(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file modes do not restrict root")
+	}
+
+	home := t.TempDir()
+	path := writeState(t, home, "locked", stateJSON("pve", "lab", "2026-10-25T00:00:00Z"))
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	entries, err := Collect(Options{StateHomes: []string{home}})
+	require.NoError(t, err)
+
+	locked := byName(t, entries, "locked")
+	assert.True(t, locked.Broken)
+	assert.Contains(t, locked.BrokenError, "cannot be read")
+}
+
+func TestEntrySource(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry Entry
+		want  string
+	}{
+		{"config only", Entry{HasConfig: true}, "config"},
+		{"state only", Entry{HasState: true}, "state"},
+		{"both", Entry{HasConfig: true, HasState: true}, "both"},
+		{"broken wins", Entry{HasConfig: true, HasState: true, Broken: true}, "broken"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.entry.Source())
+		})
+	}
+}
