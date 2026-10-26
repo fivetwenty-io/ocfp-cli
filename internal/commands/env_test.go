@@ -1,12 +1,15 @@
 package commands
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,4 +114,64 @@ func TestConfigSearchPaths_DedupesUnderOCFPHomeOverride(t *testing.T) {
 
 	assert.Contains(t, paths, filepath.Join(override, "configs"))
 	assert.Contains(t, paths, override)
+}
+
+// runEnvListCmd runs `env list` and returns its stdout split into lines.
+func runEnvListCmd(t *testing.T) []string {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	cmd := newEnvListCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(nil)
+
+	require.NoError(t, cmd.Execute())
+
+	return strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+}
+
+// TestEnvList_ReadsTheBlocInventory asserts env list shows blocs defined in a
+// blocs: map and blocs that exist only as state, alongside flat config files,
+// with the columns and the ACTIVE marker it has always had.
+func TestEnvList_ReadsTheBlocInventory(t *testing.T) {
+	isolateXDGHome(t)
+	t.Setenv("OCFP_BLOC", "mapped")
+	t.Chdir(t.TempDir())
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	cfgPath := writeBlocsConfig(t, "blocs:\n  mapped:\n    provider: pve\n    region: lab\n")
+	writeEnvConfig(t, filepath.Join(config.ConfigHome(), "configs"), "flat.yml", "flat", "aws")
+	writeBlocState(t, "state-only", `{"provider":"stackit","region":"eu01"}`)
+
+	lines := runEnvListCmd(t)
+	require.Len(t, lines, 5, strings.Join(lines, "\n"))
+
+	assert.Equal(t, []string{"NAME", "PROVIDER", "REGION", "STATUS", "CONFIG"}, strings.Fields(lines[0]))
+	assert.Equal(t, []string{"----", "--------", "------", "------", "------"}, strings.Fields(lines[1]))
+
+	rows := map[string][]string{}
+	for _, line := range lines[2:] {
+		fields := strings.Fields(line)
+		rows[fields[0]] = fields
+	}
+
+	assert.Equal(t, []string{"mapped", "pve", "lab", "ACTIVE", cfgPath}, rows["mapped"])
+	assert.Equal(t, []string{"state-only", "stackit", "eu01", "-"}, rows["state-only"])
+	assert.Equal(t, "aws", rows["flat"][1])
+	assert.Contains(t, rows["flat"], filepath.Join(config.ConfigHome(), "configs", "flat.yml"))
+	assert.NotContains(t, rows["flat"], "ACTIVE")
+}
+
+// TestEnvList_Empty asserts env list keeps its message when nothing is known.
+func TestEnvList_Empty(t *testing.T) {
+	isolateXDGHome(t)
+	t.Setenv("OCFP_BLOC", "")
+	t.Chdir(t.TempDir())
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	assert.Equal(t, []string{"No environments found"}, runEnvListCmd(t))
 }

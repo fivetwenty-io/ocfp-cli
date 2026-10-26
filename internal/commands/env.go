@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/goccy/go-yaml"
+	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
@@ -103,38 +104,47 @@ If no environment is specified, exports the current environment.`,
 	return cmd
 }
 
-// runEnvList lists all available environments.
-func runEnvList(_cmd *cobra.Command, _args []string) error {
+// runEnvList lists all available environments. It reads the shared bloc
+// inventory, so it shows blocs defined in a blocs: map and blocs that exist
+// only as state, not just flat config files.
+func runEnvList(cmd *cobra.Command, _args []string) error {
 	log := logger.WithOperation("env-list")
+	out := cmd.OutOrStdout()
 
-	// Find all configuration files
-	envs := findEnvironments()
-
-	if len(envs) == 0 {
-		_, _ = fmt.Fprint(os.Stdout, "No environments found\n")
-
-		return nil
-	}
-
-	// Get current environment
+	// The ACTIVE marker follows the --bloc flag, then OCFP_BLOC, as it
+	// always has.
 	currentEnv := viper.GetString("bloc")
 	if currentEnv == "" {
 		currentEnv = os.Getenv("OCFP_BLOC")
 	}
 
+	opts := blocInventoryOptions()
+	opts.Current = currentEnv
+
+	envs, err := blocinv.Collect(opts)
+	if err != nil {
+		return fmt.Errorf("failed to list environments: %w", err)
+	}
+
+	if len(envs) == 0 {
+		_, _ = fmt.Fprint(out, "No environments found\n")
+
+		return nil
+	}
+
 	// Create table writer
-	tableWriter := tabwriter.NewWriter(os.Stdout, 0, 0, TabwriterPadding, ' ', 0)
+	tableWriter := tabwriter.NewWriter(out, 0, 0, TabwriterPadding, ' ', 0)
 	_, _ = fmt.Fprintln(tableWriter, "NAME\tPROVIDER\tREGION\tSTATUS\tCONFIG")
 	_, _ = fmt.Fprintln(tableWriter, "----\t--------\t------\t------\t------")
 
 	for _, env := range envs {
 		status := ""
-		if env.Name == currentEnv {
+		if env.Current {
 			status = "ACTIVE"
 		}
 
 		_, _ = fmt.Fprintf(tableWriter, "%s\t%s\t%s\t%s\t%s\n",
-			env.Name, env.Provider, env.Region, status, env.ConfigFile)
+			env.Name, env.Provider, env.Region, status, hyphenIfEmpty(env.ConfigFile))
 	}
 
 	_ = tableWriter.Flush()
