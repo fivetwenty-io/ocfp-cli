@@ -132,6 +132,28 @@ ocfp env show
 eval $(ocfp env export)
 ```
 
+### Inspecting blocs
+
+Before we change anything, it helps to see which blocs ocfp knows about. The `bloc` command is read-only, so we can run it any time without touching config, state, or infrastructure.
+
+```bash
+# List every bloc found in config and state
+ocfp bloc list
+
+# The same data as JSON, for scripts
+ocfp bloc list --json
+
+# Summarize one bloc, or the current bloc when we leave the name off
+ocfp bloc show ocfp-lab-wayneeseguin
+
+# Add the power state of the bastion and artifacts VMs from the provider
+ocfp bloc show ocfp-lab-wayneeseguin --live
+```
+
+`ocfp bloc list` merges every place a bloc can be defined into one row per bloc. Those places are the `blocs:` map in each config file the CLI searches, flat config files with a top-level `name` and `provider`, and the per-bloc state directories under both the XDG state home and the legacy `~/.ocfp` home. The SOURCE column says whether a bloc has `config`, `state`, or `both`, and a state file that exists but cannot be parsed shows up as `broken` instead of disappearing. The CURRENT column marks the bloc ocfp resolves as current. `ocfp env list` reads the same inventory, so the two commands agree.
+
+`ocfp bloc show` prints a Bloc, Config, and State section. The Config section lists only an allowlist of safe fields, and the State section reports counts and a few names, so the output never includes tokens, keys, or passwords. With `--live`, the command makes read-only provider calls and adds a Live section. A live call that fails appears in that section and never hides the local output, and `--live` still works when artifacts is disabled for the bloc. Both commands accept `--json`.
+
 ### Unicode vs ASCII Tables
 
 The CLI renders rich Unicode box-drawn tables by default. If your terminal/font does not display these cleanly, enable ASCII-only tables globally with either of:
@@ -166,6 +188,7 @@ The CLI renders rich Unicode box-drawn tables by default. If your terminal/font 
 | `scp` | Copy files to/from bastion |
 | `rsync` | Synchronize files with bastion |
 | `env` | Manage deployment environments |
+| `bloc` | List the blocs ocfp knows about and show a safe summary of one, with optional read-only live provider checks |
 
 ### Management Commands
 
