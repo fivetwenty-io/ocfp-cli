@@ -390,3 +390,35 @@ func TestEntrySource(t *testing.T) {
 		})
 	}
 }
+
+func TestCollect_MarksCurrentBloc(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "blocs:\n  one:\n    provider: pve\n  two:\n    provider: pve\n")
+
+	tests := []struct {
+		name    string
+		current string
+		want    []string
+	}{
+		{"match", "two", []string{"two"}},
+		{"no match", "unknown", nil},
+		{"empty name", "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries, err := Collect(Options{ConfigDirs: []string{dir}, Current: tt.current})
+			require.NoError(t, err)
+
+			var got []string
+
+			for _, e := range entries {
+				if e.Current {
+					got = append(got, e.Name)
+				}
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
