@@ -5,7 +5,9 @@
 package blocinv
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,6 +34,8 @@ type Entry struct {
 	Region      string
 	HasConfig   bool
 	HasState    bool
+	Broken      bool      // the state file exists but cannot be loaded
+	BrokenError string    // why it cannot be loaded, never the file's contents
 	ConfigFile  string    // the first file that defines the bloc
 	ConfigFiles []string  // every file that defines the bloc, in search order
 	StatePath   string    // the state file, empty when the bloc has none
@@ -267,8 +271,11 @@ func mergeState(byName map[string]*Entry, name, statePath string) {
 	entry.HasState = true
 	entry.StatePath = statePath
 
-	st := loadState(name, statePath)
-	if st == nil {
+	st, err := loadState(name, statePath)
+	if err != nil {
+		entry.Broken = true
+		entry.BrokenError = describeStateError(err)
+
 		return
 	}
 
@@ -283,23 +290,48 @@ func mergeState(byName map[string]*Entry, name, statePath string) {
 	}
 }
 
+// Source says where the entry's data came from: config, state, both, or
+// broken when the state file cannot be loaded.
+func (e Entry) Source() string {
+	switch {
+	case e.Broken:
+		return "broken"
+	case e.HasConfig && e.HasState:
+		return "both"
+	case e.HasState:
+		return "state"
+	default:
+		return "config"
+	}
+}
+
 // loadState reads one bloc's state file through the state manager so the
-// inventory parses state exactly as every other command does. It returns nil
-// when the file cannot be loaded.
-func loadState(name, statePath string) *state.State {
+// inventory parses state exactly as every other command does.
+func loadState(name, statePath string) (*state.State, error) {
 	manager, err := state.NewManager(filepath.Dir(statePath))
 	if err != nil {
-		logger.Debugf("bloc inventory: state manager for %s: %v", statePath, err)
-
-		return nil
+		return nil, fmt.Errorf("opening state directory: %w", err)
 	}
 
 	st, err := manager.Load(name)
 	if err != nil {
 		logger.Debugf("bloc inventory: loading %s: %v", statePath, err)
 
-		return nil
+		return nil, fmt.Errorf("loading state: %w", err)
 	}
 
-	return st
+	return st, nil
+}
+
+// describeStateError turns a state load failure into a fixed phrase. The
+// parser's own message can quote the offending line of the file, and a state
+// file can hold secrets, so the inventory never repeats it.
+func describeStateError(err error) string {
+	var pathErr *fs.PathError
+
+	if errors.As(err, &pathErr) {
+		return "state file cannot be read"
+	}
+
+	return "state file does not parse as JSON or YAML"
 }
