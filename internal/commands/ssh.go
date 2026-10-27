@@ -808,18 +808,36 @@ func sshOptionsSetBatchMode(lists ...[]string) bool {
 				continue
 			}
 
-			name, value, found := strings.Cut(args[i+1], "=")
-			if !found {
-				name, value, _ = strings.Cut(args[i+1], " ")
-			}
-
-			if strings.EqualFold(strings.TrimSpace(name), "BatchMode") {
-				return strings.EqualFold(strings.TrimSpace(value), "yes")
+			name, value := splitSSHOption(args[i+1])
+			if strings.EqualFold(name, "BatchMode") {
+				return strings.EqualFold(value, "yes")
 			}
 		}
 	}
 
 	return false
+}
+
+// splitSSHOption splits an ssh_config style option into its name and value.
+// As in ssh_config(5), the name ends at the first space, tab, or equals
+// sign, and the value follows any run of spaces and tabs with at most one
+// equals sign among them. Leading whitespace before the name is ignored.
+func splitSSHOption(opt string) (name, value string) {
+	const blanks = " \t"
+
+	opt = strings.TrimLeft(opt, blanks)
+
+	end := strings.IndexAny(opt, blanks+"=")
+	if end < 0 {
+		return opt, ""
+	}
+
+	name = opt[:end]
+	rest := strings.TrimLeft(opt[end:], blanks)
+	rest = strings.TrimPrefix(rest, "=")
+	rest = strings.TrimLeft(rest, blanks)
+
+	return name, strings.TrimRight(rest, blanks)
 }
 
 // assembleSSHCommand builds the ssh argument vector from inputs the caller
