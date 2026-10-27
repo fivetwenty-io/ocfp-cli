@@ -551,17 +551,27 @@ func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	return "", errors.Join(problems...)
 }
 
+// openSSHKeyFile opens a candidate key to prove this process can read it.
+// Tests replace it to fail after the candidate has been found.
+var openSSHKeyFile = os.Open
+
 // checkSSHKeyCandidate returns nil for a non-empty regular file this process
-// can open, an error wrapping fs.ErrNotExist when nothing is at keyPath, and
-// an error that does not wrap it for anything else.
+// can open, an error wrapping fs.ErrNotExist only when no directory entry
+// exists at keyPath, and an error that never wraps it for anything else. A
+// dangling symlink is an entry, so it is broken rather than absent.
 func checkSSHKeyCandidate(keyPath string) error {
-	info, err := os.Stat(keyPath) // #nosec -- path components are from trusted config
+	_, err := os.Lstat(keyPath) // #nosec -- path components are from trusted config
 	if errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 
 	if err != nil {
 		return fmt.Errorf("SSH key at %s cannot be inspected: %w", keyPath, err)
+	}
+
+	info, err := os.Stat(keyPath) // #nosec -- path components are from trusted config
+	if err != nil {
+		return unusableSSHKey("SSH key at %s cannot be inspected", keyPath, err)
 	}
 
 	if !info.Mode().IsRegular() {
@@ -572,14 +582,25 @@ func checkSSHKeyCandidate(keyPath string) error {
 		return fmt.Errorf("%w: %s exists but is empty (0 bytes)", ErrSSHKeyUnusable, keyPath)
 	}
 
-	file, err := os.Open(keyPath) // #nosec -- path components are from trusted config
+	file, err := openSSHKeyFile(keyPath) // #nosec -- path components are from trusted config
 	if err != nil {
-		return fmt.Errorf("SSH key at %s cannot be read: %w", keyPath, err)
+		return unusableSSHKey("SSH key at %s cannot be read", keyPath, err)
 	}
 
 	_ = file.Close()
 
 	return nil
+}
+
+// unusableSSHKey reports a failure on a candidate that was found. It marks
+// the key unusable and keeps the cause's text, but drops fs.ErrNotExist from
+// the chain so a vanished or dangling key is never read as an absent one.
+func unusableSSHKey(format, keyPath string, cause error) error {
+	if errors.Is(cause, fs.ErrNotExist) {
+		return fmt.Errorf("%w: "+format+": %v", ErrSSHKeyUnusable, keyPath, cause)
+	}
+
+	return fmt.Errorf("%w: "+format+": %w", ErrSSHKeyUnusable, keyPath, cause)
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.

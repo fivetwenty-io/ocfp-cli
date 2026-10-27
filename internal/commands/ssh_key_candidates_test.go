@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -125,4 +126,37 @@ func TestResolveOperatorSSHKeyUsesTheSoundCandidateBesideABrokenOne(t *testing.T
 			assert.Equal(t, want, got)
 		})
 	}
+}
+
+// A symlink whose target is gone is a broken bloc key, not an absent one,
+// even when the other candidate is missing too.
+func TestResolveOperatorSSHKeyDanglingSymlinkIsAnError(t *testing.T) { //nolint:paralleltest // t.Setenv
+	for _, name := range blocKeyCandidates {
+		t.Run(name, func(t *testing.T) {
+			dir := isolateKeyDirs(t, "ocfp-lab-x")
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+			require.NoError(t, os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, name)))
+
+			requireNoFallback(t, "ocfp-lab-x")
+		})
+	}
+}
+
+// A candidate that disappears between the stat and the open is unusable,
+// and the error never claims the key was absent.
+func TestFindSSHKeyFailureAfterStatIsUnusableNotAbsent(t *testing.T) { //nolint:paralleltest // t.Setenv
+	dir := isolateKeyDirs(t, "ocfp-lab-x")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "id_ed25519"), []byte("key"), 0o600))
+
+	orig := openSSHKeyFile
+	openSSHKeyFile = func(string) (*os.File, error) { return nil, fs.ErrNotExist }
+
+	t.Cleanup(func() { openSSHKeyFile = orig })
+
+	got, err := findSSHKey("ocfp-lab-x", nil)
+	require.Error(t, err)
+	assert.Empty(t, got)
+	assert.ErrorIs(t, err, ErrSSHKeyUnusable)
+	assert.NotErrorIs(t, err, fs.ErrNotExist)
 }
