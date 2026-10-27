@@ -27,7 +27,11 @@ func newSSHConfigCmd() *cobra.Command {
 
 Output is suitable for appending to ~/.ssh/config. Internal hosts are
 discovered from state outputs and configured with ProxyJump through the
-bastion.`,
+bastion.
+
+When the bloc's SSH key is not on this machine, the blocks leave out
+IdentityFile and IdentitiesOnly, so your own ssh-agent, default keys, and
+ssh config decide how to log in.`,
 		Example: `  # Generate SSH config for a bloc
   ocfp ssh config --bloc production
 
@@ -42,7 +46,7 @@ bastion.`,
 	return cmd
 }
 
-func runSSHConfig(_cmd *cobra.Command, _args []string) error {
+func runSSHConfig(cmd *cobra.Command, _args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("ssh-config")
 
@@ -67,12 +71,9 @@ func runSSHConfig(_cmd *cobra.Command, _args []string) error {
 		return fmt.Errorf("failed to discover bastion IP: %w", err)
 	}
 
-	keyPath := sshCfg.KeyPath
-	if keyPath == "" {
-		keyPath, err = findSSHKey(blocName, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to find SSH key: %w", err)
-		}
+	keyPath, err := resolveOperatorSSHKey(sshCfg.KeyPath, blocName, cfg, cmd.ErrOrStderr())
+	if err != nil {
+		return err
 	}
 
 	user := sshCfg.User
@@ -234,7 +235,12 @@ func writeHostBlock(sb *strings.Builder, hostAlias, hostName, user, keyPath, pro
 	fmt.Fprintf(sb, "Host %s\n", hostAlias)
 	fmt.Fprintf(sb, "    HostName %s\n", hostName)
 	fmt.Fprintf(sb, "    User %s\n", user)
-	fmt.Fprintf(sb, "    IdentityFile %s\n", keyPath)
+
+	// Without a bloc key, leave identity selection to the rest of the
+	// user's ssh config and agent.
+	if keyPath != "" {
+		fmt.Fprintf(sb, "    IdentityFile %s\n", keyPath)
+	}
 
 	if proxyJump != "" {
 		fmt.Fprintf(sb, "    ProxyJump %s\n", proxyJump)
@@ -243,5 +249,8 @@ func writeHostBlock(sb *strings.Builder, hostAlias, hostName, user, keyPath, pro
 	fmt.Fprint(sb, "    StrictHostKeyChecking no\n")
 	fmt.Fprint(sb, "    UserKnownHostsFile /dev/null\n")
 	fmt.Fprint(sb, "    LogLevel ERROR\n")
-	fmt.Fprint(sb, "    IdentitiesOnly yes\n")
+
+	if keyPath != "" {
+		fmt.Fprint(sb, "    IdentitiesOnly yes\n")
+	}
 }

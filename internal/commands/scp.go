@@ -46,7 +46,10 @@ SSH keys are searched in the following order:
 2. ~/.local/share/ocfp/{bloc}/ssh/id_rsa (fallback)
 3. ~/.ocfp/{bloc}/ssh/id_ed25519 or id_rsa (legacy, used only if the above are absent)
 
-Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
+Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.
+
+--key names a private key to use instead. With neither --key nor a bloc key, scp runs
+without -i, so your ssh-agent, default keys, and ssh config apply.`,
 		Example: `  # Copy file to bastion
   ocfp scp --bloc production /local/file.txt bastion:/tmp/
 
@@ -83,7 +86,7 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
 	return cmd
 }
 
-func runSCP(_cmd *cobra.Command, args []string) error {
+func runSCP(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	log := logger.WithOperation("scp")
 
@@ -102,20 +105,20 @@ func runSCP(_cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	keyPath, err := resolveSCPKey(scpConfig, cfg)
+	keyPath, err := resolveOperatorSSHKey(scpConfig.KeyPath, scpConfig.BlocName, cfg, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 
-	err = verifySSHKey(keyPath)
+	err = verifyResolvedSSHKey(keyPath)
 	if err != nil {
-		return fmt.Errorf("SSH key verification failed: %w", err)
+		return err
 	}
 
 	scpCmd := prepareSCPCommand(scpConfig, bastionIP, keyPath)
 
 	log.Infof("Copying files: %s -> %s", scpConfig.Source, scpConfig.Destination)
-	log.Debugf("Using SSH key: %s", keyPath)
+	logResolvedSSHKey(log, keyPath)
 	log.Debugf("Bastion IP: %s", bastionIP)
 
 	return executeSCP(ctx, scpCmd)
@@ -170,19 +173,6 @@ func setupSCPProvider(ctx context.Context, scpCfg *scpConfig) (*config.Config, c
 	}
 
 	return cfg, provider, nil
-}
-
-func resolveSCPKey(scpCfg *scpConfig, cfg *config.Config) (string, error) {
-	if scpCfg.KeyPath != "" {
-		return scpCfg.KeyPath, nil
-	}
-
-	keyPath, err := findSSHKey(scpCfg.BlocName, cfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to find SSH key: %w", err)
-	}
-
-	return keyPath, nil
 }
 
 func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) []string {
