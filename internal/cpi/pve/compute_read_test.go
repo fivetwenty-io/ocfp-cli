@@ -105,3 +105,73 @@ func TestGetInstance_OtherFailuresAreNotVMNotFound(t *testing.T) {
 		})
 	}
 }
+
+// twoNodes is the /nodes answer for a cluster of two online nodes.
+func twoNodes() []interface{} {
+	return []interface{}{
+		map[string]interface{}{"node": "pve1", "status": "online"},
+		map[string]interface{}{"node": "pve2", "status": "online"},
+	}
+}
+
+func TestGetInstance_NodeProbeKeepsAFailureThatIsNotNotFound(t *testing.T) {
+	t.Parallel()
+
+	fake := &readFakePVE{
+		fakePVEClient: fakePVEClient{getResponses: map[string]interface{}{"/nodes": twoNodes()}},
+		errs: map[string]error{
+			"/nodes/pve1/qemu/100/status/current": pveAPIError(403, "Permission check failed (/vms/100, VM.Audit)"),
+			"/nodes/pve2/qemu/100/status/current": configMissing("pve2", 100),
+		},
+	}
+
+	_, err := newReadTestManager(fake, "").GetInstance(context.Background(), "100")
+	if err == nil || errors.Is(err, ErrVMNotFound) {
+		t.Fatalf("GetInstance error = %v, want the refused probe, not ErrVMNotFound", err)
+	}
+
+	if !errors.Is(err, pveapierrors.ErrForbidden) {
+		t.Fatalf("GetInstance error = %v, want it to wrap the 403", err)
+	}
+}
+
+func TestGetInstance_NodeProbeIsNotFoundOnlyWhenEveryNodeSaysSo(t *testing.T) {
+	t.Parallel()
+
+	fake := &readFakePVE{
+		fakePVEClient: fakePVEClient{getResponses: map[string]interface{}{"/nodes": twoNodes()}},
+		errs: map[string]error{
+			"/nodes/pve1/qemu/100/status/current": configMissing("pve1", 100),
+			"/nodes/pve2/qemu/100/status/current": pveAPIError(404, "no such VM"),
+		},
+	}
+
+	_, err := newReadTestManager(fake, "").GetInstance(context.Background(), "100")
+	if !errors.Is(err, ErrVMNotFound) {
+		t.Fatalf("GetInstance error = %v, want ErrVMNotFound", err)
+	}
+}
+
+func TestGetInstance_NodeProbeFindsTheVMPastARefusedNode(t *testing.T) {
+	t.Parallel()
+
+	fake := &readFakePVE{
+		fakePVEClient: fakePVEClient{getResponses: map[string]interface{}{
+			"/nodes":                              twoNodes(),
+			"/nodes/pve2/qemu/100/status/current": map[string]interface{}{"status": "stopped"},
+			"/nodes/pve2/qemu/100/config":         map[string]interface{}{"name": "lab-bastion"},
+		}},
+		errs: map[string]error{
+			"/nodes/pve1/qemu/100/status/current": pveAPIError(403, "Permission check failed"),
+		},
+	}
+
+	inst, err := newReadTestManager(fake, "").GetInstance(context.Background(), "100")
+	if err != nil {
+		t.Fatalf("GetInstance: %v", err)
+	}
+
+	if inst.AvailabilityZone != "pve2" {
+		t.Fatalf("GetInstance node = %q, want pve2", inst.AvailabilityZone)
+	}
+}
