@@ -213,3 +213,56 @@ func TestParseBastionKeySpecRejectsUsernamesThatLeaveThePath(t *testing.T) {
 		}
 	}
 }
+
+// Security-key public keys built for tests: no private key exists for
+// either one.
+const (
+	testSKEd25519Key = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gAAAABHNzaDo= yubikey"
+	testSKECDSAKey   = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT+NC4v4af5uO5+tKfA+eFivOM1drMV7Oy7ZAaDe/UfUAAAAEc3NoOg=="
+)
+
+func TestParseBastionKeySpecAcceptsSecurityKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{testSKEd25519Key, testSKECDSAKey} {
+		got, err := config.ParseBastionKeySpec(key)
+		require.NoError(t, err, key)
+		assert.Equal(t, config.BastionKeyLiteral, got.Source, key)
+		assert.Equal(t, key, got.Value, key)
+	}
+}
+
+func TestParseBastionKeySpecRejectsMalformedLiteralKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range []string{
+		"ssh-ed25519 not-a-key",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6",
+		"ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+		"sk-ssh-ed25519@openssh.com not-a-key",
+		`command="/bin/true" ` + testEd25519Key,
+		testEd25519Key + "\n" + testSKEd25519Key,
+		"garbage line\n" + testEd25519Key,
+	} {
+		_, err := config.ParseBastionKeySpec(spec)
+		require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid, "%q must not parse", spec)
+	}
+}
+
+// A malformed literal key is a warning at load, like any other entry that
+// cannot be read.
+func TestBastionKeyWarningsNameAMalformedLiteralKey(t *testing.T) {
+	t.Parallel()
+
+	b := config.Bastion{Keys: map[string]string{
+		"bad": "ssh-ed25519 not-a-key",
+		"sk":  testSKEd25519Key,
+	}}
+
+	require.NoError(t, b.Validate())
+
+	warnings := b.KeyWarnings("lab1")
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "keys.bad")
+	assert.Contains(t, warnings[0], "not a valid OpenSSH public key")
+}

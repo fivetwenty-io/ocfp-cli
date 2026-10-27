@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // BastionKeySource says where a bastion.keys entry's public keys come from.
@@ -39,36 +41,35 @@ var ErrBastionKeySpecInvalid = errors.New(
 // or whitespace, matches; a run of dots is refused separately.
 var bastionKeyUserPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 
+// bastionKeyTypeDSA is the OpenSSH DSA key type, which current OpenSSH
+// releases no longer accept.
+const bastionKeyTypeDSA = "ssh-dss"
+
 // bastionKeyErrPreviewLen caps how much of a bad entry an error repeats.
 const bastionKeyErrPreviewLen = 40
-
-// ValidSSHPublicKeyPrefixes returns the OpenSSH public key types a literal
-// bastion.keys entry may start with.
-func ValidSSHPublicKeyPrefixes() []string {
-	return []string{
-		"ssh-rsa",
-		"ssh-ed25519",
-		"ecdsa-sha2-nistp256",
-		"ecdsa-sha2-nistp384",
-		"ecdsa-sha2-nistp521",
-	}
-}
 
 // ParseBastionKeySpec reads one bastion.keys value. It accepts github/<user>
 // and gitlab/<user>, which keep the username exactly as written, the host
 // forms github.com/<user> and gitlab.com/<user> with an optional https:// in
-// front and an optional trailing .keys, and a literal OpenSSH public key. Anything else is an error wrapping
-// ErrBastionKeySpecInvalid, so no entry is ever dropped quietly.
+// front and an optional trailing .keys, and a literal OpenSSH public key of
+// any type ssh.ParseAuthorizedKey reads, security keys included. Anything
+// else is an error wrapping ErrBastionKeySpecInvalid, so no entry is ever
+// dropped quietly.
 func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return BastionKeySpec{}, fmt.Errorf("empty entry: %w", ErrBastionKeySpecInvalid)
 	}
 
-	for _, prefix := range ValidSSHPublicKeyPrefixes() {
-		if strings.HasPrefix(spec, prefix+" ") {
-			return BastionKeySpec{Source: BastionKeyLiteral, Value: spec}, nil
+	// No username or host form holds whitespace, so an entry that does is
+	// a literal key or nothing.
+	if strings.ContainsAny(spec, " \t\r\n") {
+		err := checkLiteralBastionKey(spec)
+		if err != nil {
+			return BastionKeySpec{}, err
 		}
+
+		return BastionKeySpec{Source: BastionKeyLiteral, Value: spec}, nil
 	}
 
 	rest, hasScheme := strings.CutPrefix(spec, "https://")
@@ -105,11 +106,35 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 		return BastionKeySpec{Source: form.source, Value: trimmed}, nil
 	}
 
-	if !strings.ContainsAny(spec, "/ \t") {
+	if !strings.Contains(spec, "/") {
 		return BastionKeySpec{}, fmt.Errorf("names no key source: %w", ErrBastionKeySpecInvalid)
 	}
 
 	return BastionKeySpec{}, ErrBastionKeySpecInvalid
+}
+
+// checkLiteralBastionKey accepts one authorized_keys line holding a single
+// OpenSSH public key with no options in front, such as a from= or command=
+// restriction the entry was never meant to carry. DSA keys, which OpenSSH
+// no longer accepts, and certificates, which authorized_keys does not take
+// as keys, are refused too.
+func checkLiteralBastionKey(spec string) error {
+	errNotAKey := fmt.Errorf("not a valid OpenSSH public key: %w", ErrBastionKeySpecInvalid)
+
+	if strings.ContainsAny(spec, "\r\n") {
+		return errNotAKey
+	}
+
+	pub, _, options, rest, err := gossh.ParseAuthorizedKey([]byte(spec))
+	if err != nil || len(options) > 0 || len(strings.TrimSpace(string(rest))) > 0 {
+		return errNotAKey
+	}
+
+	if _, isCert := pub.(*gossh.Certificate); isCert || pub.Type() == bastionKeyTypeDSA {
+		return fmt.Errorf("%s keys are not accepted: %w", pub.Type(), ErrBastionKeySpecInvalid)
+	}
+
+	return nil
 }
 
 // KeyWarnings returns one warning line for each keys entry that
