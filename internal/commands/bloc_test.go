@@ -794,3 +794,26 @@ func TestBlocShowLive_ReadsTheSameStateFileTheInventoryShowed(t *testing.T) {
 	assert.Equal(t, "stopped", artifacts["power"])
 	assert.Zero(t, reader.lists, "no provider query is needed when the state names the VM")
 }
+
+func TestBlocAndEnvList_SurviveAStateHomeThatCannotBeListed(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, labConfig)
+	writeBlocState(t, "lab-state", `{"provider":"aws","region":"us-east-1"}`)
+
+	// The legacy home is a regular file, so listing it fails with ENOTDIR.
+	require.NoError(t, os.WriteFile(config.OcfpHome(), []byte("not a directory\n"), 0o600))
+
+	out, err := runBloc(t, "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "lab-state")
+
+	var envOut bytes.Buffer
+
+	cmd := newEnvListCmd()
+	cmd.SetOut(&envOut)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(nil)
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, envOut.String(), "lab-state")
+}

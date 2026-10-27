@@ -68,7 +68,9 @@ type Options struct {
 	Current string
 }
 
-// Collect merges every source into one entry per bloc, sorted by name.
+// Collect merges every source into one entry per bloc, sorted by name. A
+// config file or state home it cannot read is logged and skipped rather than
+// reported as an error.
 func Collect(opts Options) ([]Entry, error) {
 	byName := make(map[string]*Entry)
 
@@ -76,10 +78,7 @@ func Collect(opts Options) ([]Entry, error) {
 		mergeConfigFile(byName, path)
 	}
 
-	err := mergeStateHomes(byName, opts.StateHomes)
-	if err != nil {
-		return nil, err
-	}
+	mergeStateHomes(byName, opts.StateHomes)
 
 	entries := make([]Entry, 0, len(byName))
 	for _, entry := range byName {
@@ -255,8 +254,10 @@ func providerOf(cfg *config.Config) string {
 
 // mergeStateHomes adds the blocs found under each state home. A directory
 // counts as a bloc only when <dir>/state/<dir>.json exists, which leaves out
-// the checkpoints, logs, and state entries and the CLI's own state files.
-func mergeStateHomes(byName map[string]*Entry, homes []string) error {
+// the checkpoints, logs, and state entries and the CLI's own state files. A
+// home that cannot be listed, because it is not a directory or is not
+// readable, is skipped with a debug log so one bad home never hides the rest.
+func mergeStateHomes(byName map[string]*Entry, homes []string) {
 	seen := make(map[string]bool, len(homes))
 
 	for _, home := range homes {
@@ -268,11 +269,11 @@ func mergeStateHomes(byName map[string]*Entry, homes []string) error {
 
 		dirEntries, err := os.ReadDir(home)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
+			if !os.IsNotExist(err) {
+				logger.Debugf("bloc inventory: skipping state home %s: %s", home, SafeMessage(err, home))
 			}
 
-			return fmt.Errorf("reading state home %s: %w", home, err)
+			continue
 		}
 
 		for _, dirEntry := range dirEntries {
@@ -287,8 +288,6 @@ func mergeStateHomes(byName map[string]*Entry, homes []string) error {
 			mergeState(byName, name, statePath)
 		}
 	}
-
-	return nil
 }
 
 // mergeState records the state file of one bloc. A bloc that an earlier state

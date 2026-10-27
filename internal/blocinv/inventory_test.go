@@ -487,3 +487,39 @@ func TestCollect_UnparsablePrimaryDoesNotHideAnAlternateDefinition(t *testing.T)
 
 	assert.Equal(t, alternate, byName(t, entries, "lab").ConfigFile)
 }
+
+func TestCollect_StateHomeThatIsAFileIsSkippedAndLogged(t *testing.T) {
+	readLog := captureDebugLog(t)
+	good := t.TempDir()
+	writeState(t, good, "real", stateJSON("pve", "lab", "2026-10-25T18:02:11Z"))
+
+	notADir := writeFile(t, t.TempDir(), "ocfp-home", "this is a file, not a directory\n")
+
+	entries, err := Collect(Options{StateHomes: []string{notADir, good}})
+	require.NoError(t, err, "an unlistable state home never fails the inventory")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "real", entries[0].Name)
+
+	assert.Contains(t, readLog(), notADir, "the log names the home it skipped")
+}
+
+func TestCollect_UnreadableStateHomeIsSkippedAndLogged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file modes do not restrict root")
+	}
+
+	readLog := captureDebugLog(t)
+	good := t.TempDir()
+	writeState(t, good, "real", stateJSON("pve", "lab", "2026-10-25T18:02:11Z"))
+
+	locked := t.TempDir()
+	writeState(t, locked, "hidden", stateJSON("pve", "lab", "2026-10-25T18:02:11Z"))
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	entries, err := Collect(Options{StateHomes: []string{locked, good}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "real", entries[0].Name)
+	assert.Contains(t, readLog(), locked)
+}
