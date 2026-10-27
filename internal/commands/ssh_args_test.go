@@ -221,7 +221,13 @@ func TestAddSSHStandardOptions(t *testing.T) {
 		assert.Contains(t, result, "UserKnownHostsFile=/dev/null")
 		assert.Contains(t, result, "StrictHostKeyChecking=no")
 		assert.Contains(t, result, "LogLevel=ERROR")
-		assert.Contains(t, result, "IdentitiesOnly=yes")
+	})
+
+	t.Run("IdentitiesOnlyOnlyWithKey", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+
+		assert.Contains(t, addSSHStandardOptions([]string{"ssh"}, "/path/to/key"), "IdentitiesOnly=yes")
+		assert.NotContains(t, addSSHStandardOptions([]string{"ssh"}, ""), "IdentitiesOnly=yes")
 	})
 }
 

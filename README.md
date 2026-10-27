@@ -116,6 +116,8 @@ ocfp rsync --archive /local/dir/ bastion:/remote/dir/
 ocfp rsync /local/dir/ bastion:/remote/dir/ -- --itemize-changes --info=progress2
 ```
 
+These commands log in with the bloc's own SSH key when it is on your machine, and `--key <path>` picks another key. When neither is there, they say so in one line and fall back to plain ssh, so your ssh-agent, your default keys, and your ssh config decide how to log in, for example your own key on the bastion or Tailscale SSH.
+
 ### 4. Environment management
 
 ```bash

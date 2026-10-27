@@ -103,6 +103,20 @@ func TestBastionProxyCommand_RelaxedJumpHop(t *testing.T) {
 	}
 }
 
+func TestBastionProxyCommand_WithoutKeyLeavesAuthToTheUser(t *testing.T) {
+	t.Parallel()
+
+	got := BastionProxyCommand("", "ubuntu", "100.109.226.53")
+
+	want := "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" +
+		" -o LogLevel=ERROR -o ConnectTimeout=15" +
+		" -W %h:%p ubuntu@100.109.226.53"
+
+	if got != want {
+		t.Errorf("BastionProxyCommand:\n got: %s\nwant: %s", got, want)
+	}
+}
+
 func TestBuildArtifactsProvisionSSHArgs_SharesBastionProxyCommand(t *testing.T) {
 	t.Parallel()
 
