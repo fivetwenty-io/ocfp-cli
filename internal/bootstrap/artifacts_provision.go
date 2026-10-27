@@ -62,7 +62,7 @@ type artifactsProvisionConn struct {
 // host key. The ProxyCommand re-passes the same relaxed host-key flags to the
 // jump hop so a churned bastion key never blocks provisioning.
 func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
-	proxyCommand := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost)
+	proxyCommand := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
 
 	return []string{
 		"-i", c.KeyPath,
@@ -86,14 +86,22 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 // validated values.
 //
 // An empty keyPath leaves authentication to the operator's own ssh setup.
-// The jump hop then drops -i, IdentitiesOnly, and BatchMode, so the agent,
-// the default keys, the ssh config, and any passphrase prompt all apply,
-// while the host-key options stay exactly as they are with a key.
-func BastionProxyCommand(keyPath, user, bastionHost string) string {
+// The jump hop then drops -i and IdentitiesOnly, so the agent, the default
+// keys, and the ssh config apply, while the host-key options stay exactly as
+// they are with a key. It keeps BatchMode=yes only when batchMode is set,
+// which callers do for any run that is not interactive, so a passphrase or
+// password prompt can reach a person but never stalls a script. With a key
+// the jump hop is always in batch mode and batchMode is ignored.
+func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) string {
 	if keyPath == "" {
+		batch := ""
+		if batchMode {
+			batch = "-o BatchMode=yes "
+		}
+
 		return fmt.Sprintf(
-			"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-			os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
+			"ssh %s-o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+			batch, os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
 		)
 	}
 

@@ -91,7 +91,7 @@ func TestBuildArtifactsProvisionSSHArgs_RemoteCommandLast(t *testing.T) {
 func TestBastionProxyCommand_RelaxedJumpHop(t *testing.T) {
 	t.Parallel()
 
-	got := BastionProxyCommand("/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519", "ubuntu", "100.109.226.53")
+	got := BastionProxyCommand("/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519", "ubuntu", "100.109.226.53", false)
 
 	want := "ssh -i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519" +
 		" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" +
@@ -106,7 +106,7 @@ func TestBastionProxyCommand_RelaxedJumpHop(t *testing.T) {
 func TestBastionProxyCommand_WithoutKeyLeavesAuthToTheUser(t *testing.T) {
 	t.Parallel()
 
-	got := BastionProxyCommand("", "ubuntu", "100.109.226.53")
+	got := BastionProxyCommand("", "ubuntu", "100.109.226.53", false)
 
 	want := "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" +
 		" -o LogLevel=ERROR -o ConnectTimeout=15" +
@@ -117,13 +117,39 @@ func TestBastionProxyCommand_WithoutKeyLeavesAuthToTheUser(t *testing.T) {
 	}
 }
 
+// Without a key, a non-interactive run must not let the jump hop prompt for
+// a passphrase or password, so it gets BatchMode=yes.
+func TestBastionProxyCommand_WithoutKeyInBatchModeNeverPrompts(t *testing.T) {
+	t.Parallel()
+
+	got := BastionProxyCommand("", "ubuntu", "100.109.226.53", true)
+
+	want := "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" +
+		" -o LogLevel=ERROR -o ConnectTimeout=15" +
+		" -W %h:%p ubuntu@100.109.226.53"
+
+	if got != want {
+		t.Errorf("BastionProxyCommand:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// With a key the jump hop is always in batch mode, whatever the caller says.
+func TestBastionProxyCommand_WithKeyIsAlwaysBatchMode(t *testing.T) {
+	t.Parallel()
+
+	key := "/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519"
+	if BastionProxyCommand(key, "ubuntu", "100.109.226.53", false) != BastionProxyCommand(key, "ubuntu", "100.109.226.53", true) {
+		t.Error("the keyed jump hop must not depend on batchMode")
+	}
+}
+
 func TestBuildArtifactsProvisionSSHArgs_SharesBastionProxyCommand(t *testing.T) {
 	t.Parallel()
 
 	c := testProvisionConn()
 	args := buildArtifactsProvisionSSHArgs(c)
 
-	want := "ProxyCommand=" + BastionProxyCommand(c.KeyPath, c.User, c.BastionHost)
+	want := "ProxyCommand=" + BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
 
 	found := false
 

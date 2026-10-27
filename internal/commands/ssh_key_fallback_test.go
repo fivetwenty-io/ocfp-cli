@@ -109,13 +109,13 @@ func TestBuildSSHCommandForRouteWithoutKeyLeavesBothHopsToTheUser(t *testing.T) 
 	t.Setenv("SSH_AUTH_SOCK", "")
 
 	route := sshRoute{Host: "10.64.64.11", Bastion: "100.109.226.53"}
-	got := buildSSHCommandForRoute(route, "ubuntu", "", "", []string{}, nil)
+	got := buildSSHCommandForRouteWith(route, "ubuntu", "", "", []string{}, nil, true)
 	joined := strings.Join(got, " ")
 
 	require.NotEqual(t, []string{"ssh", "--help"}, got)
 	assert.NotContains(t, got, "-i")
 	assert.NotContains(t, joined, "IdentitiesOnly")
-	assert.Contains(t, got, "ProxyCommand="+bootstrap.BastionProxyCommand("", "ubuntu", "100.109.226.53"))
+	assert.Contains(t, got, "ProxyCommand="+bootstrap.BastionProxyCommand("", "ubuntu", "100.109.226.53", false))
 	assert.Equal(t, "ubuntu@10.64.64.11", got[len(got)-1])
 }
 
