@@ -28,6 +28,10 @@ var (
 	ErrLoadBalancerNameRequired                = errors.New("load balancer name is required")
 	ErrLoadBalancerNameRequiredOrUseAll        = errors.New("load balancer name required (or use --all)")
 	ErrInvalidReservedFormat                   = errors.New("invalid reserved format; expected reserved:<key>[:index]")
+
+	// ErrSSHKeyUnusable marks a bloc SSH key that exists but cannot be
+	// used, such as an empty file or something other than a regular file.
+	ErrSSHKeyUnusable                          = errors.New("bloc SSH key is unusable")
 	ErrInvalidPublicIPToken                    = errors.New("invalid public-ip token; expected public-ip:<job>[:index]")
 	ErrNameIsRequired                          = errors.New("--name is required")
 	ErrBlocFlagOrEnvVarRequired                = errors.New("--bloc flag or OCFP_BLOC environment variable required")

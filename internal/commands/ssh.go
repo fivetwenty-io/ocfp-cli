@@ -442,13 +442,14 @@ func lookupArtifactsIPForSSH(ctx context.Context, provider cpi.Provider, blocNam
 
 // resolveOperatorSSHKey picks the private key that ssh, scp, rsync, and
 // ssh config hand to ssh. An explicit key (--key) wins. Otherwise the bloc
-// key is used when it exists. When the bloc has no key on this machine, which
-// is the normal case for anyone but the operator who bootstrapped it, the
-// result is the empty path: the caller then runs ssh without -i and without
+// key is used when it exists. When neither id_ed25519 nor id_rsa exists in the
+// bloc's key directory, which is the normal case for anyone but the operator
+// who bootstrapped it, the result is the empty path: the caller then runs ssh without -i and without
 // IdentitiesOnly, so the user's ssh-agent, default keys, and ssh config decide
-// how to log in. One line on notice says so. A bloc key that exists but is
-// unusable, such as an empty file, stays an error, because falling back would
-// hide a broken key.
+// how to log in. One line on notice says so. If either candidate exists but
+// is unusable, such as an empty or unreadable file, or stat fails on it for
+// any reason other than its absence, and no other candidate is sound, the
+// result is an error, because falling back would hide a broken key.
 func resolveOperatorSSHKey(explicit, blocName string, cfg *config.Config, notice io.Writer) (string, error) {
 	if explicit != "" {
 		return explicit, nil
@@ -501,38 +502,80 @@ func getBastionIP(ctx context.Context, provider cpi.Provider, blocName string) (
 	return findBastionIP(ctx, provider, blocName)
 }
 
-// findSSHKey locates the SSH private key for the bastion.
+// findSSHKey locates the SSH private key for the bastion. It tries
+// id_ed25519, then id_rsa, in the bloc's key directory and returns the
+// first that is a non-empty regular file this process can open. The error
+// wraps fs.ErrNotExist only when every candidate is absent. A candidate that
+// is empty, unreadable, not a regular file, or that stat fails on for any
+// other reason is reported instead, so a broken bloc key is never mistaken
+// for a missing one.
 //
 //nolint:unparam // cfg reserved for future use in provider-specific key resolution
 func findSSHKey(blocName string, _cfg *config.Config) (string, error) {
 	log := logger.WithOperation("findSSHKey")
+	dir := config.OcfpSSHKeyDir(blocName)
 
-	// Try Ed25519 key first (preferred)
-	keyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_ed25519")
+	var (
+		paths    []string
+		problems []error
+	)
 
-	info, err := os.Stat(keyPath) // #nosec -- path components are from trusted config
-	if err == nil && info.Size() > 0 {
+	for _, name := range []string{"id_ed25519", "id_rsa"} {
+		keyPath := filepath.Join(dir, name)
+		paths = append(paths, keyPath)
+
+		err := checkSSHKeyCandidate(keyPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			problems = append(problems, err)
+
+			continue
+		}
+
 		log.Debugf("Found SSH key at: %s", keyPath)
 
 		return keyPath, nil
 	}
 
-	// Fall back to RSA key
-	rsaKeyPath := filepath.Join(config.OcfpSSHKeyDir(blocName), "id_rsa")
-
-	rsaInfo, rsaErr := os.Stat(rsaKeyPath) // #nosec -- path components are from trusted config
-	if rsaErr == nil && rsaInfo.Size() > 0 {
-		log.Debugf("Found SSH key at: %s", rsaKeyPath)
-
-		return rsaKeyPath, nil
+	if len(problems) == 0 {
+		return "", fmt.Errorf("SSH key not found at %s: %w", strings.Join(paths, " or "), fs.ErrNotExist)
 	}
 
-	// Distinguish between missing keys and empty keys for clearer diagnostics
+	return "", errors.Join(problems...)
+}
+
+// checkSSHKeyCandidate returns nil for a non-empty regular file this process
+// can open, an error wrapping fs.ErrNotExist when nothing is at keyPath, and
+// an error that does not wrap it for anything else.
+func checkSSHKeyCandidate(keyPath string) error {
+	info, err := os.Stat(keyPath) // #nosec -- path components are from trusted config
+	if errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
 	if err != nil {
-		return "", fmt.Errorf("SSH key not found at %s or %s: %w", keyPath, rsaKeyPath, err)
+		return fmt.Errorf("SSH key at %s cannot be inspected: %w", keyPath, err)
 	}
 
-	return "", fmt.Errorf("SSH key at %s exists but is empty (0 bytes); no valid key found at %s either", keyPath, rsaKeyPath) //nolint:err113 // dynamic error with context
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s is not a regular file", ErrSSHKeyUnusable, keyPath)
+	}
+
+	if info.Size() == 0 {
+		return fmt.Errorf("%w: %s exists but is empty (0 bytes)", ErrSSHKeyUnusable, keyPath)
+	}
+
+	file, err := os.Open(keyPath) // #nosec -- path components are from trusted config
+	if err != nil {
+		return fmt.Errorf("SSH key at %s cannot be read: %w", keyPath, err)
+	}
+
+	_ = file.Close()
+
+	return nil
 }
 
 // verifySSHKey checks if the SSH key exists and has correct permissions.
