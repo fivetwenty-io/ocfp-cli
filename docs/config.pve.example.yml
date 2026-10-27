@@ -179,7 +179,8 @@ blocs:
       # Authorized SSH keys injected via cloud-init.
       # Values: literal public key, "github/<username>", "gitlab/<username>",
       # or "github.com/<username>" / "gitlab.com/<username>" (https:// and a
-      # trailing .keys are accepted). An entry that matches none fails config load.
+      # trailing .keys are accepted). An entry that matches none prints a warning
+      # when the config loads, and ocfp init bastion refuses to run until it is fixed.
       keys:
         wayne: "github/wayneeseguin"
 
