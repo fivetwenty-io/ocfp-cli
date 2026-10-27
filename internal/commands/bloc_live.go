@@ -12,6 +12,8 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -25,9 +27,9 @@ var (
 	ErrBlocLiveNoConfig  = errors.New("no config defines this bloc, so no provider can be reached")
 	ErrBlocLiveNoBastion = errors.New("no bastion id in state")
 
-	// errBlocLiveAmbiguousBastion means several VMs carry the bastion's exact
-	// name, so none can be chosen safely.
-	errBlocLiveAmbiguousBastion = errors.New("more than one VM has the bastion's name")
+	// errBlocLiveAmbiguousVM means several of the bloc's VMs carry the exact
+	// name searched for, so none can be chosen safely.
+	errBlocLiveAmbiguousVM = errors.New("more than one VM is named")
 )
 
 // blocComputeReader is the read-only slice of the provider's compute manager
@@ -173,7 +175,7 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 	found, listErr := findBastionByName(ctx, reader, blocName)
 
 	switch {
-	case errors.Is(listErr, errBlocLiveAmbiguousBastion):
+	case errors.Is(listErr, errBlocLiveAmbiguousVM):
 		bastion.Error = fmt.Sprintf("VM %s not found, and %v", stateID, listErr)
 	case listErr != nil:
 		bastion.Error = fmt.Sprintf("VM %s not found, and the search by name failed: %s", stateID, blocinv.SafeMessage(listErr, ""))
@@ -191,28 +193,52 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 	}
 }
 
-// findBastionByName finds the bloc's bastion among the provider's VMs the way
-// bootstrap does, by the bloc and managed-by tags and then the exact name
-// "<bloc>-bastion". A prefix or substring match could pick another bloc's VM,
-// so only the exact name counts. It returns nil with no error when no VM
-// matches, and an error when more than one VM does.
+// blocOwnerTags are the tags bootstrap puts on every VM it creates for a
+// bloc.
+func blocOwnerTags(blocName string) map[string]string {
+	return map[string]string{"bloc": blocName, "managed-by": "ocfp"}
+}
+
+// artifactsOwnerTags are the tags bootstrap adds to a bloc's artifacts VM.
+func artifactsOwnerTags(blocName string) map[string]string {
+	return map[string]string{"ocfp:role": "artifacts", "ocfp:bloc": blocName}
+}
+
+// findBastionByName finds the bloc's bastion among the provider's VMs by the
+// bloc's ownership tags and the exact name "<bloc>-bastion". A prefix or
+// substring match could pick another bloc's VM, so only the exact name
+// counts. It returns nil with no error when no VM matches, and an error when
+// more than one VM does.
 func findBastionByName(ctx context.Context, reader blocComputeReader, blocName string) (*cpi.Instance, error) {
-	instances, err := reader.ListInstances(ctx, map[string]string{"bloc": blocName, "managed-by": "ocfp"})
+	return findOwnedVM(ctx, reader, blocName+"-bastion", blocOwnerTags(blocName))
+}
+
+// findOwnedVM lists the VMs that carry tags and returns the one named vmName.
+// Each provider reads a "label.<key>" filter as a tag or label to match, and
+// PVE reads no other form, so the filters use that prefix. A provider can
+// still return a VM the filters should have excluded, so each VM must carry
+// the tags itself to count. It returns nil with no error when no VM matches,
+// and errBlocLiveAmbiguousVM when VMs with different ids do.
+func findOwnedVM(ctx context.Context, reader blocComputeReader, vmName string, tags map[string]string) (*cpi.Instance, error) {
+	filters := make(map[string]string, len(tags))
+	for key, value := range tags {
+		filters["label."+key] = value
+	}
+
+	instances, err := reader.ListInstances(ctx, filters)
 	if err != nil {
 		return nil, classifyProviderError(err, blocinv.KindProviderRequest, "")
 	}
 
-	vmName := blocName + "-bastion"
-
 	var match *cpi.Instance
 
 	for _, inst := range instances {
-		if inst == nil || inst.Name != vmName {
+		if inst == nil || inst.Name != vmName || !instanceCarriesTags(inst, tags) {
 			continue
 		}
 
 		if match != nil && match.ID != inst.ID {
-			return nil, errBlocLiveAmbiguousBastion
+			return nil, fmt.Errorf("%w %s", errBlocLiveAmbiguousVM, vmName)
 		}
 
 		match = inst
@@ -221,8 +247,37 @@ func findBastionByName(ctx context.Context, reader blocComputeReader, blocName s
 	return match, nil
 }
 
-// readArtifacts finds the artifacts VM the way `ocfp artifacts` does, state
-// first and then a provider tag query, and fills in its power state.
+// instanceCarriesTags reports whether inst carries every key=value in tags.
+func instanceCarriesTags(inst *cpi.Instance, tags map[string]string) bool {
+	for key, value := range tags {
+		if !instanceHasTag(inst, key, value) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// instanceHasTag reports whether inst carries key=value in any form a
+// provider returns tags in. AWS, Azure, and STACKIT keep the key and value as
+// written. PVE turns the pair into one tag identifier with an empty value.
+// GCP sanitizes both the key and the value of a label.
+func instanceHasTag(inst *cpi.Instance, key, value string) bool {
+	if got, ok := inst.Tags[key]; ok && got == value {
+		return true
+	}
+
+	if _, ok := inst.Tags[pve.FormatTag(key, value)]; ok {
+		return true
+	}
+
+	got, ok := inst.Tags[gcp.SanitizeLabel(key)]
+
+	return ok && got == gcp.SanitizeLabel(value)
+}
+
+// readArtifacts finds the artifacts VM from state first and then by a
+// provider tag query, and fills in its power state.
 func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Entry, part *blocLiveArtifacts) {
 	if !source.ArtifactsEnabled {
 		part.Error = ErrArtifactsDisabled.Error()
@@ -231,7 +286,13 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 	}
 
 	lookup, err := lookupBlocArtifacts(ctx, source.Reader, entry)
-	if err != nil {
+
+	switch {
+	case errors.Is(err, errBlocLiveAmbiguousVM):
+		part.Error = err.Error()
+
+		return
+	case err != nil:
 		part.Error = blocinv.SafeMessage(err, entry.StatePath)
 
 		return
@@ -259,7 +320,8 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 
 // lookupBlocArtifacts resolves the artifacts VM from the bloc's state record,
 // falling back to the provider's tag query when state has none. It returns nil
-// with no error when neither knows of one.
+// with no error when neither knows of one, and an error when more than one of
+// the bloc's VMs has the artifacts VM's name.
 func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry blocinv.Entry) (*artifacts.LookupResult, error) {
 	if entry.HasState && !entry.Broken && entry.StatePath != "" {
 		// Read the directory of the file the inventory showed. Resolving the
@@ -286,23 +348,16 @@ func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry bl
 		}
 	}
 
-	vmName := entry.Name + "-artifacts"
-
-	instances, err := reader.ListInstances(ctx, map[string]string{
-		"ocfp:role": "artifacts",
-		"ocfp:bloc": entry.Name,
-	})
+	found, err := findOwnedVM(ctx, reader, entry.Name+"-artifacts", artifactsOwnerTags(entry.Name))
 	if err != nil {
-		return nil, classifyProviderError(err, blocinv.KindProviderRequest, "")
+		return nil, err
 	}
 
-	for _, inst := range instances {
-		if inst.Name == vmName {
-			return &artifacts.LookupResult{VMID: inst.ID, Name: inst.Name, PrivateIP: inst.PrivateIP}, nil
-		}
+	if found == nil {
+		return nil, nil //nolint:nilnil // no artifacts VM is a normal answer, reported by the caller
 	}
 
-	return nil, nil //nolint:nilnil // no artifacts VM is a normal answer, reported by the caller
+	return &artifacts.LookupResult{VMID: found.ID, Name: found.Name, PrivateIP: found.PrivateIP}, nil
 }
 
 // writeBlocLiveText prints the Live section.
