@@ -143,8 +143,11 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 }
 
 // readBastion fills in the bastion's power state from the provider. When the
-// VM id in state no longer exists, it looks the bastion up by its name, since a
-// bastion that was moved or rebuilt gets a new id while state keeps the old one.
+// provider says the VM id in state does not exist, it looks the bastion up by
+// its name, since a bastion that was moved or rebuilt gets a new id while
+// state keeps the old one. Any other failure, such as a refused permission or
+// a timeout, says nothing about whether the VM exists, so it is reported as it
+// is and no search is made.
 func readBastion(ctx context.Context, reader blocComputeReader, blocName string, bastion *blocLiveBastion) {
 	if bastion.VMID == "" {
 		bastion.Error = ErrBlocLiveNoBastion.Error()
@@ -161,16 +164,26 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 		return
 	}
 
+	if !isInstanceNotFound(err) {
+		bastion.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
+
+		return
+	}
+
 	found, listErr := findBastionByName(ctx, reader, blocName)
 
 	switch {
 	case errors.Is(listErr, errBlocLiveAmbiguousBastion):
 		bastion.Error = fmt.Sprintf("VM %s not found, and %v", stateID, listErr)
 	case listErr != nil:
-		// The provider cannot be asked, so the first failure is the real one.
-		bastion.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
+		bastion.Error = fmt.Sprintf("VM %s not found, and the search by name failed: %s", stateID, blocinv.SafeMessage(listErr, ""))
 	case found == nil:
 		bastion.Error = fmt.Sprintf("VM %s not found", stateID)
+	case found.ID == stateID:
+		// The list has the VM the direct read could not find, so state is
+		// right and the read failed for some other reason.
+		bastion.Power = string(found.State)
+		bastion.Note = fmt.Sprintf("VM %s could not be read directly, so its power comes from the provider's VM list", stateID)
 	default:
 		bastion.VMID = found.ID
 		bastion.Power = string(found.State)
@@ -186,7 +199,7 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 func findBastionByName(ctx context.Context, reader blocComputeReader, blocName string) (*cpi.Instance, error) {
 	instances, err := reader.ListInstances(ctx, map[string]string{"bloc": blocName, "managed-by": "ocfp"})
 	if err != nil {
-		return nil, fmt.Errorf("listing bastion candidates: %w", err)
+		return nil, classifyProviderError(err, blocinv.KindProviderRequest, "")
 	}
 
 	vmName := blocName + "-bastion"

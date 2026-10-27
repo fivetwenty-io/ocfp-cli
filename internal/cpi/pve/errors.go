@@ -92,9 +92,22 @@ func ErrInvalidConfigType(config interface{}) error {
 	return fmt.Errorf("pve: invalid config type: %T", config) //nolint:err113 // dynamic error with context
 }
 
+// vmIDNotFoundError names the VM id that does not exist. It matches
+// ErrVMNotFound through errors.Is so callers can tell a missing VM from other
+// failures without reading the message.
+type vmIDNotFoundError struct {
+	vmid int
+}
+
+func (e *vmIDNotFoundError) Error() string {
+	return fmt.Sprintf("pve: VM with ID %d not found", e.vmid)
+}
+
+func (e *vmIDNotFoundError) Is(target error) bool { return target == ErrVMNotFound }
+
 // ErrVMIDNotFound returns an error when a VM ID is not found.
 func ErrVMIDNotFound(vmid int) error {
-	return fmt.Errorf("pve: VM with ID %d not found", vmid) //nolint:err113 // dynamic error with context
+	return &vmIDNotFoundError{vmid: vmid}
 }
 
 // ErrVMNameNotFound returns an error when a VM by name is not found.
