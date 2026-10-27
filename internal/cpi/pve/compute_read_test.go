@@ -175,3 +175,44 @@ func TestGetInstance_NodeProbeFindsTheVMPastARefusedNode(t *testing.T) {
 		t.Fatalf("GetInstance node = %q, want pve2", inst.AvailabilityZone)
 	}
 }
+
+func TestGetInstance_ReturnsTheVMsOwnTags(t *testing.T) {
+	t.Parallel()
+
+	fake := &readFakePVE{fakePVEClient: fakePVEClient{getResponses: map[string]interface{}{
+		"/nodes/pve1/qemu/100/status/current": map[string]interface{}{"status": "running"},
+		"/nodes/pve1/qemu/100/config": map[string]interface{}{
+			"name": "lab-bastion",
+			"tags": "bloc--lab; managed-by--ocfp;;ocfp_role--artifacts",
+		},
+	}}}
+
+	inst, err := newReadTestManager(fake, "pve1").GetInstance(context.Background(), "100")
+	if err != nil {
+		t.Fatalf("GetInstance: %v", err)
+	}
+
+	want := map[string]string{"bloc--lab": "", "managed-by--ocfp": "", "ocfp_role--artifacts": ""}
+	if len(inst.Tags) != len(want) {
+		t.Fatalf("Tags = %v, want %v", inst.Tags, want)
+	}
+
+	for tag := range want {
+		if _, ok := inst.Tags[tag]; !ok {
+			t.Fatalf("Tags = %v, want %v", inst.Tags, want)
+		}
+	}
+
+	if !MatchesLabelFilters(tagSet(inst.Tags), map[string]string{"label.bloc": "lab", "label.managed-by": "ocfp"}) {
+		t.Fatalf("Tags %v do not satisfy the bloc's ownership filters", inst.Tags)
+	}
+}
+
+func tagSet(tags map[string]string) []string {
+	out := make([]string, 0, len(tags))
+	for tag := range tags {
+		out = append(out, tag)
+	}
+
+	return out
+}

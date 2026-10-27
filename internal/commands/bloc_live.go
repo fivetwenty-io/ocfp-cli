@@ -106,6 +106,9 @@ type blocLiveArtifacts struct {
 	Endpoint string `json:"endpoint"`
 	TLSMode  string `json:"tls_mode"`
 	Error    string `json:"error"`
+	// Note explains a result that is right but unexpected, such as an
+	// artifacts VM found under a different VM id than state records.
+	Note string `json:"note,omitempty"`
 }
 
 // collectBlocLive makes the read-only provider calls. It never returns an
@@ -146,12 +149,8 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 	return report
 }
 
-// readBastion fills in the bastion's power state from the provider. When the
-// provider says the VM id in state does not exist, it looks the bastion up by
-// its name, since a bastion that was moved or rebuilt gets a new id while
-// state keeps the old one. Any other failure, such as a refused permission or
-// a timeout, says nothing about whether the VM exists, so it is reported as it
-// is and no search is made.
+// readBastion fills in the bastion's power state from the provider, from the
+// VM id state records when that VM is still the bloc's bastion.
 func readBastion(ctx context.Context, reader blocComputeReader, blocName string, bastion *blocLiveBastion) {
 	if bastion.VMID == "" {
 		bastion.Error = ErrBlocLiveNoBastion.Error()
@@ -159,40 +158,94 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 		return
 	}
 
-	stateID := bastion.VMID
+	read := readOwnedVM(ctx, reader, bastion.VMID, ownedVM{
+		Name: blocName + "-bastion",
+		Role: "bastion",
+		Tags: blocOwnerTags(blocName),
+	})
+
+	bastion.VMID = read.VMID
+	bastion.Power = read.Power
+	bastion.Note = read.Note
+	bastion.Error = read.Error
+}
+
+// ownedVM names one of a bloc's VMs: its exact name, the role the report
+// calls it by, and the ownership tags it must carry.
+type ownedVM struct {
+	Name string
+	Role string
+	Tags map[string]string
+}
+
+// ownedVMRead is what readOwnedVM found. Error, when set, is safe to show.
+type ownedVMRead struct {
+	VMID  string
+	Power string
+	Note  string
+	Error string
+}
+
+// readOwnedVM reads the VM state records under stateID and returns its power
+// state when it carries want's ownership tags. A VM id can be reused once its
+// VM is deleted, so a VM that reads fine but is not the bloc's is treated the
+// same as one the provider says does not exist: the VM is looked up by its
+// name and tags, since a VM that was moved or rebuilt gets a new id while
+// state keeps the old one. Any other failure, such as a refused permission or
+// a timeout, says nothing about whether the VM exists, so it is reported as it
+// is and no search is made.
+func readOwnedVM(ctx context.Context, reader blocComputeReader, stateID string, want ownedVM) ownedVMRead {
+	read := ownedVMRead{VMID: stateID}
 
 	inst, err := reader.GetInstance(ctx, stateID)
-	if err == nil {
-		bastion.Power = string(inst.State)
 
-		return
+	var (
+		missing  string
+		staleWhy string
+	)
+
+	switch {
+	case err == nil && instanceCarriesTags(inst, want.Tags):
+		read.Power = string(inst.State)
+
+		return read
+	case err == nil:
+		missing = fmt.Sprintf("VM %s is not this bloc's %s", stateID, want.Role)
+		staleWhy = fmt.Sprintf("which is not this bloc's %s", want.Role)
+	case !isInstanceNotFound(err):
+		read.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
+
+		return read
+	default:
+		missing = fmt.Sprintf("VM %s not found", stateID)
+		staleWhy = "which does not exist"
 	}
 
-	if !isInstanceNotFound(err) {
-		bastion.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
-
-		return
-	}
-
-	found, listErr := findBastionByName(ctx, reader, blocName)
+	found, listErr := findOwnedVM(ctx, reader, want.Name, want.Tags)
 
 	switch {
 	case errors.Is(listErr, errBlocLiveAmbiguousVM):
-		bastion.Error = fmt.Sprintf("VM %s not found, and %v", stateID, listErr)
+		read.Error = fmt.Sprintf("%s, and %v", missing, listErr)
 	case listErr != nil:
-		bastion.Error = fmt.Sprintf("VM %s not found, and the search by name failed: %s", stateID, blocinv.SafeMessage(listErr, ""))
+		read.Error = fmt.Sprintf("%s, and the search by name failed: %s", missing, blocinv.SafeMessage(listErr, ""))
 	case found == nil:
-		bastion.Error = fmt.Sprintf("VM %s not found", stateID)
+		read.Error = missing
+	case found.ID == stateID && err == nil:
+		// The list calls the VM the bloc's while the VM itself does not, so
+		// neither answer can be trusted.
+		read.Error = missing
 	case found.ID == stateID:
 		// The list has the VM the direct read could not find, so state is
 		// right and the read failed for some other reason.
-		bastion.Power = string(found.State)
-		bastion.Note = fmt.Sprintf("VM %s could not be read directly, so its power comes from the provider's VM list", stateID)
+		read.Power = string(found.State)
+		read.Note = fmt.Sprintf("VM %s could not be read directly, so its power comes from the provider's VM list", stateID)
 	default:
-		bastion.VMID = found.ID
-		bastion.Power = string(found.State)
-		bastion.Note = fmt.Sprintf("state records VM %s, which does not exist; the bastion is VM %s, so state is stale", stateID, found.ID)
+		read.VMID = found.ID
+		read.Power = string(found.State)
+		read.Note = fmt.Sprintf("state records VM %s, %s; the %s is VM %s, so state is stale", stateID, staleWhy, want.Role, found.ID)
 	}
+
+	return read
 }
 
 // blocOwnerTags are the tags bootstrap puts on every VM it creates for a
@@ -279,7 +332,8 @@ func instanceHasTag(inst *cpi.Instance, key, value string) bool {
 }
 
 // readArtifacts finds the artifacts VM from state first and then by a
-// provider tag query, and fills in its power state.
+// provider tag query, and fills in its power state. Whichever way it was
+// found, the VM must carry the bloc's artifacts tags to count.
 func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Entry, part *blocLiveArtifacts) {
 	if !source.ArtifactsEnabled {
 		part.Error = ErrArtifactsDisabled.Error()
@@ -287,7 +341,7 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 		return
 	}
 
-	lookup, err := lookupBlocArtifacts(ctx, source.Reader, entry)
+	lookup, fromState, err := lookupBlocArtifacts(ctx, source.Reader, entry)
 
 	switch {
 	case errors.Is(err, errBlocLiveAmbiguousVM):
@@ -310,56 +364,78 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 	part.Endpoint = lookup.Endpoint
 	part.TLSMode = lookup.TLSMode
 
-	inst, err := source.Reader.GetInstance(ctx, lookup.VMID)
-	if err != nil {
-		part.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, lookup.VMID), "")
+	want := ownedVM{
+		Name: entry.Name + "-artifacts",
+		Role: "artifacts VM",
+		Tags: artifactsOwnerTags(entry.Name),
+	}
+
+	if fromState {
+		read := readOwnedVM(ctx, source.Reader, lookup.VMID, want)
+
+		part.VMID = read.VMID
+		part.Power = read.Power
+		part.Note = read.Note
+		part.Error = read.Error
 
 		return
 	}
 
-	part.Power = string(inst.State)
+	// The tag query found this VM, so a second search would find it again.
+	// Read it once more and check that it is still the bloc's.
+	inst, err := source.Reader.GetInstance(ctx, lookup.VMID)
+
+	switch {
+	case err != nil:
+		part.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, lookup.VMID), "")
+	case !instanceCarriesTags(inst, want.Tags):
+		part.Error = fmt.Sprintf("VM %s is not this bloc's %s", lookup.VMID, want.Role)
+	default:
+		part.Power = string(inst.State)
+	}
 }
 
 // lookupBlocArtifacts resolves the artifacts VM from the bloc's state record,
-// falling back to the provider's tag query when state has none. It returns nil
-// with no error when neither knows of one, and an error when more than one of
-// the bloc's VMs has the artifacts VM's name.
-func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry blocinv.Entry) (*artifacts.LookupResult, error) {
+// falling back to the provider's tag query when state has none, and reports
+// whether the answer came from state. It returns nil with no error when
+// neither knows of one, and an error when more than one of the bloc's VMs has
+// the artifacts VM's name.
+func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry blocinv.Entry) (*artifacts.LookupResult, bool, error) {
 	if entry.HasState && !entry.Broken && entry.StatePath != "" {
 		// Read the directory of the file the inventory showed. Resolving the
 		// state directory again can pick a different home when the XDG and
 		// legacy homes both exist.
 		manager, err := state.NewManager(filepath.Dir(entry.StatePath))
 		if err != nil {
-			return nil, fmt.Errorf("opening state: %w", err)
+			return nil, false, fmt.Errorf("opening state: %w", err)
 		}
 
 		_, err = manager.Load(entry.Name)
 		if err != nil {
-			return nil, fmt.Errorf("loading state: %w", err)
+			return nil, false, fmt.Errorf("loading state: %w", err)
 		}
 
 		// A nil provider makes Lookup answer from state alone.
 		found, err := artifacts.Lookup(ctx, manager, nil, entry.Name)
 		if err != nil {
-			return nil, fmt.Errorf("looking up artifacts: %w", err)
+			return nil, false, fmt.Errorf("looking up artifacts: %w", err)
 		}
 
 		if found != nil {
-			return found, nil
+			return found, true, nil
 		}
 	}
 
 	found, err := findOwnedVM(ctx, reader, entry.Name+"-artifacts", artifactsOwnerTags(entry.Name))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if found == nil {
-		return nil, nil //nolint:nilnil // no artifacts VM is a normal answer, reported by the caller
+		return nil, false, nil
 	}
 
-	return &artifacts.LookupResult{VMID: found.ID, Name: found.Name, PrivateIP: found.PrivateIP}, nil
+	return &artifacts.LookupResult{VMID: found.ID, Name: found.Name, PrivateIP: found.PrivateIP}, false, nil
 }
 
 // writeBlocLiveText prints the Live section.
@@ -386,6 +462,10 @@ func writeBlocLiveText(out io.Writer, live *blocLiveReport) error {
 	field("Artifacts power", hyphenIfEmpty(live.Artifacts.Power))
 	field("Artifacts endpoint", hyphenIfEmpty(live.Artifacts.Endpoint))
 	field("Artifacts TLS mode", hyphenIfEmpty(live.Artifacts.TLSMode))
+
+	if live.Artifacts.Note != "" {
+		field("Artifacts note", live.Artifacts.Note)
+	}
 
 	if live.Artifacts.Error != "" {
 		field("Artifacts error", live.Artifacts.Error)
