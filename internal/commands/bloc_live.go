@@ -209,6 +209,9 @@ func readOwnedVM(ctx context.Context, reader blocComputeReader, stateID string, 
 		read.Power = string(inst.State)
 
 		return read
+	case err == nil && !hasOwnershipTags(inst):
+		missing = unownedMessage(stateID, want.Role)
+		staleWhy = "which has no ownership tags"
 	case err == nil:
 		missing = fmt.Sprintf("VM %s is not this bloc's %s", stateID, want.Role)
 		staleWhy = "which is not this bloc's " + want.Role
@@ -324,6 +327,43 @@ func instanceHasTag(inst *cpi.Instance, key, value string) bool {
 	return ok && got == gcp.SanitizeLabel(value)
 }
 
+// ownershipTagKeys are the tag keys bootstrap uses to mark a VM as a bloc's.
+var ownershipTagKeys = []string{"bloc", "managed-by", "ocfp:bloc", "ocfp:role"}
+
+// unownedMessage is the error for a VM that carries no ownership tags, so it
+// can be neither confirmed as the bloc's nor shown to be another owner's.
+func unownedMessage(id, role string) string {
+	return fmt.Sprintf("VM %s has no ownership tags, so it cannot be confirmed as this bloc's %s", id, role)
+}
+
+// hasOwnershipTags reports whether inst carries any of the ownership tag keys,
+// with whatever value, in any form a provider returns tags in.
+func hasOwnershipTags(inst *cpi.Instance) bool {
+	if inst == nil {
+		return false
+	}
+
+	for _, key := range ownershipTagKeys {
+		if _, ok := inst.Tags[key]; ok {
+			return true
+		}
+
+		if _, ok := inst.Tags[gcp.SanitizeLabel(key)]; ok {
+			return true
+		}
+
+		prefix := pve.FormatTag(key, "")
+
+		for tag := range inst.Tags {
+			if strings.HasPrefix(tag, prefix) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // readArtifacts finds the artifacts VM from state first and then by a
 // provider tag query, and fills in its power state. Whichever way it was
 // found, the VM must carry the bloc's artifacts tags to count.
@@ -389,6 +429,8 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 	switch {
 	case err != nil:
 		part.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, lookup.VMID), "")
+	case !instanceCarriesTags(inst, want.Tags) && !hasOwnershipTags(inst):
+		part.Error = unownedMessage(lookup.VMID, want.Role)
 	case !instanceCarriesTags(inst, want.Tags):
 		part.Error = fmt.Sprintf("VM %s is not this bloc's %s", lookup.VMID, want.Role)
 	default:
