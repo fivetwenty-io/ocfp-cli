@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
@@ -403,10 +404,43 @@ func (f *fakeComputeReader) GetInstance(_ context.Context, id string) (*cpi.Inst
 	return inst, nil
 }
 
-func (f *fakeComputeReader) ListInstances(_ context.Context, _ map[string]string) ([]*cpi.Instance, error) {
+// ListInstances honors the filters the way a provider does: "name" must equal
+// the VM's name and every other key must be a tag with that value.
+func (f *fakeComputeReader) ListInstances(_ context.Context, filters map[string]string) ([]*cpi.Instance, error) {
 	f.lists++
 
-	return f.listed, f.listErr
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
+	var matched []*cpi.Instance
+
+	for _, inst := range f.listed {
+		if instanceMatches(inst, filters) {
+			matched = append(matched, inst)
+		}
+	}
+
+	return matched, nil
+}
+
+func instanceMatches(inst *cpi.Instance, filters map[string]string) bool {
+	for key, want := range filters {
+		if key == "name" {
+			if inst.Name != want {
+				return false
+			}
+
+			continue
+		}
+
+		got, ok := inst.Tags[key]
+		if !ok || got != want {
+			return false
+		}
+	}
+
+	return true
 }
 
 // useBlocLive swaps the live reader factory for one that returns reader, and
@@ -514,6 +548,7 @@ func TestBlocShowLive_BastionFailureKeepsTheRest(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": errors.New("proxmox: connection refused")},
+		listErr:   errors.New("proxmox: connection refused"),
 		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
 	}
 	useBlocLive(t, reader, nil)
@@ -583,7 +618,7 @@ func TestBlocShowLive_ArtifactsFoundByTagWhenStateLacksThem(t *testing.T) {
 			"100": {ID: "100", State: cpi.ResourceState("running")},
 			"555": {ID: "555", State: cpi.ResourceState("running")},
 		},
-		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts"}},
+		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: map[string]string{"ocfp:role": "artifacts", "ocfp:bloc": "lab"}}},
 	}
 	useBlocLive(t, reader, nil)
 
@@ -673,6 +708,7 @@ func TestBlocLive_ProviderErrorsKeepOnlyTheirFirstLine(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		getErrs: map[string]error{"100": errors.New("proxmox: connection refused\ncaused by: dial tcp\ncaused by: FAKE-TOKEN-DO-NOT-USE")},
+		listErr: errors.New("proxmox: connection refused"),
 	}
 	useBlocLive(t, reader, nil)
 
@@ -816,4 +852,124 @@ func TestBlocAndEnvList_SurviveAStateHomeThatCannotBeListed(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, envOut.String(), "lab-state")
+}
+
+// bastionTags are the tags the bootstrap puts on a bloc's VMs.
+func bastionTags(bloc string) map[string]string {
+	return map[string]string{"bloc": bloc, "managed-by": "ocfp"}
+}
+
+func TestBlocShowLive_StaleBastionIDFallsBackToTheBastionByName(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs: map[string]error{"100": errors.New("VM 100 does not exist\ncaused by: a long provider chain")},
+		instances: map[string]*cpi.Instance{
+			"101": {ID: "101", State: cpi.ResourceState("running")},
+		},
+		listed: []*cpi.Instance{
+			// Look-alikes that must never be picked.
+			{ID: "200", Name: "other-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			{ID: "201", Name: "other-artifacts", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			{ID: "202", Name: "lab-artifacts", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			{ID: "203", Name: "lab-bastion-old", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			{ID: "204", Name: "xlab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			{ID: "205", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			// The real one.
+			{ID: "102", Name: "lab-bastion", State: cpi.ResourceState("stopped"), Tags: bastionTags("lab")},
+		},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "102", bastion["vm_id"], "the live VM id, not the stale one in state")
+	assert.Equal(t, "stopped", bastion["power"])
+	assert.Equal(t, "", bastion["error"])
+	assert.Contains(t, bastion["note"], "state records VM 100")
+	assert.Contains(t, bastion["note"], "stale")
+
+	text, err := runBloc(t, "show", "lab", "--live")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Bastion note")
+}
+
+func TestBlocShowLive_StaleBastionIDWithNoMatchIsAShortError(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": errors.New("VM 100 does not exist\ncaused by: a long provider chain")},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		listed: []*cpi.Instance{
+			{ID: "200", Name: "other-bastion", Tags: bastionTags("other")},
+			{ID: "204", Name: "xlab-bastion", Tags: bastionTags("lab")},
+			{ID: "205", Name: "lab-bastion", Tags: bastionTags("other")},
+		},
+	}
+	useBlocLive(t, reader, nil)
+
+	live := liveJSON(t)["live"].(map[string]any)
+
+	bastion := live["bastion"].(map[string]any)
+	assert.Equal(t, "VM 100 not found", bastion["error"])
+	assert.Equal(t, "", bastion["power"])
+	assert.NotContains(t, bastion, "note")
+
+	assert.Equal(t, "running", live["artifacts"].(map[string]any)["power"], "the artifacts read is unaffected")
+}
+
+func TestBlocShowLive_TwoBastionsWithTheSameNameAreNotGuessedBetween(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": errors.New("not found")},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		listed: []*cpi.Instance{
+			{ID: "102", Name: "lab-bastion", Tags: bastionTags("lab")},
+			{ID: "103", Name: "lab-bastion", Tags: bastionTags("lab")},
+		},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "100", bastion["vm_id"])
+	assert.Contains(t, bastion["error"], "VM 100 not found")
+	assert.Contains(t, bastion["error"], "more than one")
+}
+
+// hangingReader blocks every call until its context ends.
+type hangingReader struct{}
+
+func (hangingReader) GetInstance(ctx context.Context, _ string) (*cpi.Instance, error) {
+	<-ctx.Done()
+
+	return nil, ctx.Err()
+}
+
+func (hangingReader) ListInstances(ctx context.Context, _ map[string]string) ([]*cpi.Instance, error) {
+	<-ctx.Done()
+
+	return nil, ctx.Err()
+}
+
+func TestBlocShowLive_TimeoutBecomesALiveError(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+	useBlocLive(t, hangingReader{}, nil)
+
+	original := blocLiveTimeout
+	blocLiveTimeout = 50 * time.Millisecond
+
+	t.Cleanup(func() { blocLiveTimeout = original })
+
+	got := liveJSON(t)
+	live := got["live"].(map[string]any)
+
+	for _, part := range []string{"bastion", "artifacts"} {
+		assert.Contains(t, live[part].(map[string]any)["error"], "deadline exceeded", part)
+	}
+
+	assert.Contains(t, got, "state", "the local part of the output is intact")
 }
