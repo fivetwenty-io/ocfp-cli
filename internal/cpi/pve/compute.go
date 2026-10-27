@@ -1366,6 +1366,19 @@ func formatPVETag(key, value string) string {
 	return builder.String()
 }
 
+// FormatTag renders a key=value pair as the PVE tag identifier setVMTags
+// writes for it, the form ListInstances reports in an instance's Tags.
+func FormatTag(key, value string) string {
+	return formatPVETag(key, value)
+}
+
+// MatchesLabelFilters reports whether a VM's PVE tags satisfy the filters the
+// way ListInstances applies them: each "label.<key>" filter must be present
+// as a tag, and keys without the "label." prefix are ignored.
+func MatchesLabelFilters(vmTags []string, filters map[string]string) bool {
+	return matchesLabelFilters(vmTags, filters)
+}
+
 // parsePVETags splits PVE's semicolon-separated tag string back into the set
 // of canonical tag identifiers. Empty input returns nil.
 func parsePVETags(raw string) []string {
