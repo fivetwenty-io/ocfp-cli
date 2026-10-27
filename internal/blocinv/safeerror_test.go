@@ -1,6 +1,7 @@
 package blocinv
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,16 +83,44 @@ func TestSafeMessage_ParseErrorsBecomeAFixedPhrase(t *testing.T) {
 	assert.Equal(t, "file cannot be parsed (file contents are not shown)", SafeMessage(yamlErr, ""))
 }
 
-func TestSafeMessage_OtherErrorsKeepOnlyTheirFirstLine(t *testing.T) {
-	err := errors.New("first line\nsecond line holds " + fakeToken + "\nthird line")
+func TestSafeMessage_UnrecognisedErrorsNeverRepeatTheirText(t *testing.T) {
+	for name, err := range map[string]error{
+		"secret on the first line": errors.New(fakeToken + " is not a valid filesystem"),
+		"secret on a later line":   errors.New("first line\nsecond line holds " + fakeToken),
+		"quoted validation value":  fmt.Errorf("invalid configuration: bastion data disk config: filesystem must be ext4 or xfs: got %q", fakeToken),
+		"long":                     errors.New(strings.Repeat(fakeToken, 100)),
+	} {
+		got := SafeMessage(err, "/cfg/config.yml")
+		assert.NotContains(t, got, fakeToken, name)
+		assert.Equal(t, "unexpected error (/cfg/config.yml)", got, name)
+	}
 
-	got := SafeMessage(err, "/cfg/config.yml")
-	assert.Equal(t, "first line", got)
-
+	assert.Equal(t, "unexpected error", SafeMessage(errors.New(fakeToken), ""))
 	assert.Equal(t, "", SafeMessage(nil, "/cfg/config.yml"))
+}
 
-	long := SafeMessage(errors.New(strings.Repeat("x", 1000)), "")
-	assert.LessOrEqual(t, len(long), 260)
+func TestSafeMessage_StandardErrorsGetAFixedClass(t *testing.T) {
+	deadline := fmt.Errorf("listing %s: %w", fakeToken, context.DeadlineExceeded)
+	assert.Equal(t, "timed out", SafeMessage(deadline, ""))
+
+	canceled := fmt.Errorf("listing %s: %w", fakeToken, context.Canceled)
+	assert.Equal(t, "canceled", SafeMessage(canceled, ""))
+
+	missing := &fs.PathError{Op: "open", Path: "/cfg/config.yml", Err: fs.ErrNotExist}
+	assert.Equal(t, "file does not exist (/cfg/config.yml)", SafeMessage(missing, ""))
+
+	unreadable := &fs.PathError{Op: "read", Path: "/cfg/config.yml", Err: errors.New(fakeToken)}
+	assert.Equal(t, "file cannot be read (/cfg/config.yml)", SafeMessage(unreadable, ""))
+}
+
+func TestSafeMessage_ClassifiedErrorsShowOnlyTheirSafeFields(t *testing.T) {
+	err := fmt.Errorf("wrapped %s: %w", fakeToken, &ClassifiedError{
+		Kind: KindPermissionDenied, VMID: "100", HTTPStatus: 403, Err: errors.New(fakeToken),
+	})
+
+	assert.Equal(t, "permission denied (VM 100, HTTP 403)", SafeMessage(err, ""))
+	assert.Equal(t, "config is invalid (/cfg/config.yml)",
+		SafeMessage(&ClassifiedError{Kind: KindConfigInvalid, Path: "/cfg/config.yml", Err: errors.New(fakeToken)}, "/ignored"))
 }
 
 func TestSafeMessage_SourceQuotingTextWithoutAParserTypeIsStillParsing(t *testing.T) {
@@ -105,7 +134,7 @@ func TestSanitize_KeepsTheCauseForErrorsIs(t *testing.T) {
 
 	err := Sanitize(fmt.Errorf("reading: %w", cause), "/x")
 	require.ErrorIs(t, err, fs.ErrPermission)
-	assert.Equal(t, "reading: open /x: permission denied", err.Error())
+	assert.Equal(t, "permission denied (/x)", err.Error())
 	assert.NoError(t, Sanitize(nil, "/x"))
 }
 

@@ -51,25 +51,26 @@ type blocLiveSource struct {
 var newBlocLiveSource = openBlocLiveSource
 
 // openBlocLiveSource loads the bloc's config from the file that defines it,
-// which is not always the --config file, and connects its provider.
+// which is not always the --config file, and connects its provider. Every
+// error it returns is classified, so its text is safe to show.
 func openBlocLiveSource(ctx context.Context, blocName, configFile string) (blocLiveSource, error) {
 	if configFile == "" {
-		return blocLiveSource{}, ErrBlocLiveNoConfig
+		return blocLiveSource{}, &blocinv.ClassifiedError{Kind: blocinv.KindBlocNotInConfig, Err: ErrBlocLiveNoConfig}
 	}
 
 	cfg, err := loadBlocConfiguration(configFile, blocName)
 	if err != nil {
-		return blocLiveSource{}, fmt.Errorf("loading config: %w", err)
+		return blocLiveSource{}, classifyLiveConfigError(err, configFile)
 	}
 
 	iaas, region, err := determineProviderAndRegion(cfg)
 	if err != nil {
-		return blocLiveSource{}, fmt.Errorf("resolving provider: %w", err)
+		return blocLiveSource{}, &blocinv.ClassifiedError{Kind: blocinv.KindConfigInvalid, Path: configFile, Err: err}
 	}
 
 	provider, err := createProvider(ctx, iaas, buildProviderConfig(cfg, region))
 	if err != nil {
-		return blocLiveSource{}, fmt.Errorf("creating provider: %w", err)
+		return blocLiveSource{}, classifyProviderError(err, blocinv.KindProviderSetup, "")
 	}
 
 	return blocLiveSource{
@@ -120,7 +121,7 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 
 	source, err := newBlocLiveSource(ctx, entry.Name, entry.ConfigFile)
 	if err != nil {
-		message := blocinv.SafeMessage(err, entry.ConfigFile)
+		message := blocinv.SafeMessage(err, "")
 		report.Bastion.Error = message
 		report.Artifacts.Error = message
 
@@ -167,7 +168,7 @@ func readBastion(ctx context.Context, reader blocComputeReader, blocName string,
 		bastion.Error = fmt.Sprintf("VM %s not found, and %v", stateID, listErr)
 	case listErr != nil:
 		// The provider cannot be asked, so the first failure is the real one.
-		bastion.Error = fmt.Sprintf("getting instance %s: %s", stateID, blocinv.SafeMessage(err, ""))
+		bastion.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
 	case found == nil:
 		bastion.Error = fmt.Sprintf("VM %s not found", stateID)
 	default:
@@ -235,7 +236,7 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 
 	inst, err := source.Reader.GetInstance(ctx, lookup.VMID)
 	if err != nil {
-		part.Error = fmt.Sprintf("getting instance %s: %s", lookup.VMID, blocinv.SafeMessage(err, ""))
+		part.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, lookup.VMID), "")
 
 		return
 	}
@@ -279,7 +280,7 @@ func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry bl
 		"ocfp:bloc": entry.Name,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing artifacts instances by tag: %w", err)
+		return nil, classifyProviderError(err, blocinv.KindProviderRequest, "")
 	}
 
 	for _, inst := range instances {

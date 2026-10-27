@@ -5,15 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	pveapierrors "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/errors"
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -547,8 +553,8 @@ func TestBlocShowLive_BastionFailureKeepsTheRest(t *testing.T) {
 	seedLiveBloc(t)
 
 	reader := &fakeComputeReader{
-		getErrs:   map[string]error{"100": errors.New("proxmox: connection refused")},
-		listErr:   errors.New("proxmox: connection refused"),
+		getErrs:   map[string]error{"100": connectionRefused()},
+		listErr:   connectionRefused(),
 		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
 	}
 	useBlocLive(t, reader, nil)
@@ -559,7 +565,7 @@ func TestBlocShowLive_BastionFailureKeepsTheRest(t *testing.T) {
 	bastion := live["bastion"].(map[string]any)
 	assert.Equal(t, "100", bastion["vm_id"])
 	assert.Equal(t, "", bastion["power"])
-	assert.Contains(t, bastion["error"], "connection refused")
+	assert.Equal(t, "provider connection failed (VM 100)", bastion["error"])
 
 	artifacts := live["artifacts"].(map[string]any)
 	assert.Equal(t, "running", artifacts["power"])
@@ -596,13 +602,13 @@ func TestBlocShowLive_ArtifactsDisabledIsALiveError(t *testing.T) {
 func TestBlocShowLive_ProviderSetupFailure(t *testing.T) {
 	isolateBlocEnv(t)
 	seedLiveBloc(t)
-	useBlocLive(t, nil, errors.New("creating provider: bad endpoint"))
+	useBlocLive(t, nil, classifyProviderError(errors.New("bad endpoint FAKE-TOKEN-DO-NOT-USE"), blocinv.KindProviderSetup, ""))
 
 	got := liveJSON(t)
 	live := got["live"].(map[string]any)
 
 	for _, part := range []string{"bastion", "artifacts"} {
-		assert.Contains(t, live[part].(map[string]any)["error"], "bad endpoint", part)
+		assert.Equal(t, "provider setup failed", live[part].(map[string]any)["error"], part)
 	}
 
 	assert.Contains(t, got, "state")
@@ -702,19 +708,155 @@ func TestBlocLive_MalformedStateNeverLeaksIntoTheLiveSection(t *testing.T) {
 	assert.Contains(t, report.Artifacts.Error, "cannot be parsed")
 }
 
-func TestBlocLive_ProviderErrorsKeepOnlyTheirFirstLine(t *testing.T) {
+// liveLeakConfig is a config whose bastion data disk names a filesystem the
+// validator rejects. The validator quotes the rejected value in its error.
+const liveLeakConfig = `blocs:
+  lab:
+    provider: pve
+    region: lab-region
+    auth_token: FAKE-TOKEN-DO-NOT-USE-AUTH
+    token_secret: FAKE-TOKEN-DO-NOT-USE-SECRET
+    api_endpoint: https://pve.invalid:8006
+    bastion:
+      data:
+        enabled: true
+        filesystem: FAKE-TOKEN-DO-NOT-USE-FS
+        mountpoint: /data
+        disk_size_gib: 10
+`
+
+// captureBlocLog points the global logger at a temp directory at debug level
+// and returns a func that reads back everything it has written.
+func captureBlocLog(t *testing.T) func() string {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	require.NoError(t, logger.Initialize(logger.Config{
+		Level: "debug", Debug: true, LogDir: dir, BlocName: "logcheck", Command: "test",
+	}))
+	t.Cleanup(func() { _ = logger.Initialize(logger.Config{NoLog: true}) })
+
+	return func() string {
+		_ = logger.Sync()
+
+		var all strings.Builder
+
+		walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+
+			all.Write(data)
+
+			return nil
+		})
+		require.NoError(t, walkErr)
+
+		return all.String()
+	}
+}
+
+// showLiveEverywhere runs show --live as JSON and as text and returns both
+// outputs and the log they wrote.
+func showLiveEverywhere(t *testing.T) (string, string, string) {
+	t.Helper()
+
+	readLog := captureBlocLog(t)
+
+	asJSON, err := runBloc(t, "show", "lab", "--live", "--json")
+	require.NoError(t, err)
+
+	asText, err := runBloc(t, "show", "lab", "--live")
+	require.NoError(t, err)
+
+	return asJSON, asText, readLog()
+}
+
+func TestBlocShowLive_ConfigValidationErrorNeverLeaks(t *testing.T) {
 	isolateBlocEnv(t)
-	seedLiveBloc(t)
+
+	path := writeBlocsConfig(t, liveLeakConfig)
+
+	_, err := config.LoadWithParams(path, "lab")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FAKE-TOKEN-DO-NOT-USE-FS", "the loader's own error quotes the value")
+
+	asJSON, asText, logged := showLiveEverywhere(t)
+
+	for name, rendered := range map[string]string{"json": asJSON, "text": asText, "log": logged} {
+		assert.NotContains(t, rendered, "FAKE-TOKEN-DO-NOT-USE", name)
+	}
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(asJSON), &got), asJSON)
+
+	live := got["live"].(map[string]any)
+	for _, part := range []string{"bastion", "artifacts"} {
+		assert.Equal(t, "config is invalid ("+path+")", live[part].(map[string]any)["error"], part)
+	}
+
+	assert.Contains(t, asText, "config is invalid")
+}
+
+func TestBlocShowLive_ProviderErrorTextNeverLeaks(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
 
 	reader := &fakeComputeReader{
-		getErrs: map[string]error{"100": errors.New("proxmox: connection refused\ncaused by: dial tcp\ncaused by: FAKE-TOKEN-DO-NOT-USE")},
-		listErr: errors.New("proxmox: connection refused"),
+		getErrs: map[string]error{"100": errors.New("FAKE-TOKEN-DO-NOT-USE rejected\ncaused by: dial tcp")},
+		listErr: errors.New("FAKE-TOKEN-DO-NOT-USE listing failed"),
 	}
 	useBlocLive(t, reader, nil)
 
-	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
-	assert.Contains(t, bastion["error"], "connection refused")
-	assert.NotContains(t, bastion["error"], "caused by")
+	asJSON, asText, logged := showLiveEverywhere(t)
+
+	for name, rendered := range map[string]string{"json": asJSON, "text": asText, "log": logged} {
+		assert.NotContains(t, rendered, "FAKE-TOKEN-DO-NOT-USE", name)
+		assert.NotContains(t, rendered, "caused by", name)
+	}
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(asJSON), &got), asJSON)
+
+	live := got["live"].(map[string]any)
+	assert.Equal(t, "provider request failed (VM 100)", live["bastion"].(map[string]any)["error"])
+	assert.Equal(t, "provider request failed", live["artifacts"].(map[string]any)["error"])
+}
+
+func TestClassifyProviderError_KeepsOnlySafeFields(t *testing.T) {
+	body := []byte(`{"message": "FAKE-TOKEN-DO-NOT-USE lacks VM.Audit"}`)
+
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"forbidden":    {pveapierrors.ParseAPIError(403, body), "permission denied (VM 100, HTTP 403)"},
+		"unauthorized": {pveapierrors.ParseAPIError(401, body), "provider authentication failed (VM 100, HTTP 401)"},
+		"server error": {pveapierrors.ParseAPIError(500, body), "provider request failed (VM 100, HTTP 500)"},
+		"not found":    {pveapierrors.ParseAPIError(404, body), "VM not found (VM 100, HTTP 404)"},
+		"connection":   {connectionRefused(), "provider connection failed (VM 100)"},
+		"timeout":      {fmt.Errorf("FAKE-TOKEN-DO-NOT-USE: %w", context.DeadlineExceeded), "timed out (VM 100)"},
+		"unknown":      {errors.New("FAKE-TOKEN-DO-NOT-USE"), "provider request failed (VM 100)"},
+	} {
+		got := blocinv.SafeMessage(classifyProviderError(tc.err, blocinv.KindProviderRequest, "100"), "")
+		assert.Equal(t, tc.want, got, name)
+	}
+}
+
+// connectionRefused is the error the PVE client returns when nothing listens
+// on the API port. Its text names the host and repeats the cause.
+func connectionRefused() error {
+	return &pveapierrors.ConnectionError{
+		Host: "FAKE-TOKEN-DO-NOT-USE.invalid", Port: 8006, Message: "dial failed",
+		Cause: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+	}
 }
 
 func TestBlocList_SymlinkedConfigIsReportedUnderItsOwnName(t *testing.T) {
@@ -795,8 +937,21 @@ func TestOpenBlocLiveSource_ReadsTheNamedConfigFile(t *testing.T) {
 
 	_, err := openBlocLiveSource(context.Background(), "extra", alternate)
 	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "not found", "the bloc is found in its own file")
-	assert.Contains(t, err.Error(), "invalid configuration", "the file's own provider setting is what failed")
+
+	var classified *blocinv.ClassifiedError
+	require.ErrorAs(t, err, &classified)
+	assert.Equal(t, blocinv.KindConfigInvalid, classified.Kind, "the bloc is found in its own file, and its provider setting is what failed")
+	assert.Equal(t, alternate, classified.Path)
+}
+
+func TestOpenBlocLiveSource_ABlocMissingFromItsFileIsClassified(t *testing.T) {
+	isolateBlocEnv(t)
+
+	path := writeBlocsConfig(t, "blocs:\n  other:\n    provider: pve\n")
+
+	_, err := openBlocLiveSource(context.Background(), "lab", path)
+	require.ErrorIs(t, err, config.ErrBlocNotDefined)
+	assert.Equal(t, "bloc not found in config ("+path+")", err.Error())
 }
 
 func TestOpenBlocLiveSource_NoConfigFileIsAClearError(t *testing.T) {
@@ -968,7 +1123,7 @@ func TestBlocShowLive_TimeoutBecomesALiveError(t *testing.T) {
 	live := got["live"].(map[string]any)
 
 	for _, part := range []string{"bastion", "artifacts"} {
-		assert.Contains(t, live[part].(map[string]any)["error"], "deadline exceeded", part)
+		assert.Contains(t, live[part].(map[string]any)["error"], "timed out", part)
 	}
 
 	assert.Contains(t, got, "state", "the local part of the output is intact")
