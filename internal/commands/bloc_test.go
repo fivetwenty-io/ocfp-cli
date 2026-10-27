@@ -1053,6 +1053,57 @@ func TestBlocShowLive_NullBlocDefinitionIsAConfigError(t *testing.T) {
 	}
 }
 
+// A flat config file defines one bloc at its top level. The inventory lists
+// such a bloc, so the live path loads it through the same loader, defaults,
+// and validation as a bloc in a blocs: map.
+func TestOpenBlocLiveSource_LoadsAFlatConfigFile(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want blocinv.Kind
+	}{
+		{
+			name: "invalid provider",
+			body: "name: flat\nprovider: nonesuch\nauth_token: FAKE-TOKEN-DO-NOT-USE\n",
+			want: blocinv.KindConfigInvalid,
+		},
+		{
+			name: "schema newer than this build",
+			body: "name: flat\nprovider: pve\nconfig_schema: 999\nauth_token: FAKE-TOKEN-DO-NOT-USE\n",
+			want: blocinv.KindConfigInvalid,
+		},
+		{
+			name: "another bloc's flat file",
+			body: "name: other\nprovider: pve\n",
+			want: blocinv.KindBlocNotInConfig,
+		},
+		{
+			name: "a flat file without a provider",
+			body: "name: flat\nregion: lab\n",
+			want: blocinv.KindBlocNotInConfig,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateBlocEnv(t)
+			writeBlocsConfig(t, "blocs:\n  other:\n    provider: pve\n")
+
+			path := filepath.Join(config.ConfigHome(), "flat.yml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+
+			_, err := openBlocLiveSource(context.Background(), "flat", path)
+			require.Error(t, err)
+
+			var classified *blocinv.ClassifiedError
+			require.ErrorAs(t, err, &classified)
+			assert.Equal(t, tc.want, classified.Kind)
+			assert.Equal(t, path, classified.Path)
+			assert.NotContains(t, err.Error(), "FAKE-TOKEN-DO-NOT-USE")
+		})
+	}
+}
+
 func TestOpenBlocLiveSource_NoConfigFileIsAClearError(t *testing.T) {
 	isolateBlocEnv(t)
 	writeBlocsConfig(t, showConfig)
