@@ -983,7 +983,11 @@ func (m *ComputeManager) getNextVMID(ctx context.Context) (int, error) {
 	}
 }
 
-// findVMNode finds which node a VM is on.
+// findVMNode finds which node a VM is on by reading its status on each
+// online node. A node that answers that it holds no such VM is skipped. A node
+// whose answer is any other failure, such as a refused permission, cannot say
+// whether the VM is there, so when no node has the VM that failure is returned
+// rather than ErrVMIDNotFound.
 func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, error) {
 	// If specific node configured, use it
 	if m.client.config.Node != "" {
@@ -1001,6 +1005,8 @@ func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, erro
 	copy(nodes, m.client.nodes)
 	m.client.nodesMutex.RUnlock()
 
+	var probeErr error
+
 	for _, nodeInfo := range nodes {
 		if nodeInfo.Status != nodeStatusOnline {
 			continue
@@ -1012,6 +1018,14 @@ func (m *ComputeManager) findVMNode(ctx context.Context, vmid int) (string, erro
 		if err == nil {
 			return nodeInfo.Name, nil
 		}
+
+		if probeErr == nil && !isVMAbsentOnNode(err, vmid) {
+			probeErr = fmt.Errorf("probing node %s for VM %d: %w", nodeInfo.Name, vmid, err)
+		}
+	}
+
+	if probeErr != nil {
+		return "", probeErr
 	}
 
 	return "", ErrVMIDNotFound(vmid)

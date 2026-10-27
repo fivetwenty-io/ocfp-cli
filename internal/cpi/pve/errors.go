@@ -138,6 +138,12 @@ func isVMConfigMissing(err error, vmid int) bool {
 	return match != nil && match[1] == strconv.Itoa(vmid)
 }
 
+// isVMAbsentOnNode reports whether err is a node's answer that it holds no VM
+// vmid: the missing-config 500 PVE sends, or a plain 404.
+func isVMAbsentOnNode(err error, vmid int) bool {
+	return isVMConfigMissing(err, vmid) || errors.Is(err, pveapierrors.ErrNotFound)
+}
+
 // ErrVMNameNotFound returns an error when a VM by name is not found.
 func ErrVMNameNotFound(name string) error {
 	return fmt.Errorf("pve: VM with name %q not found", name) //nolint:err113 // dynamic error with context
