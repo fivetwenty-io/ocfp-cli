@@ -54,6 +54,10 @@ var (
 	ErrTemplateSeedDNSInvalid = errors.New("pve config: template_seed_dns entries must be valid IP addresses")
 )
 
+// ErrBlocDefinitionEmpty is returned when a blocs: map entry has no body,
+// such as `bare: null` or a key with nothing under it.
+var ErrBlocDefinitionEmpty = errors.New("bloc definition is empty")
+
 // ErrBlocNotDefined is what every error ErrBlocNotFound returns matches
 // through errors.Is, so callers can tell a missing bloc from other load
 // failures without reading the message.
