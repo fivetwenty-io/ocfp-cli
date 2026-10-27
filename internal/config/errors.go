@@ -54,9 +54,26 @@ var (
 	ErrTemplateSeedDNSInvalid = errors.New("pve config: template_seed_dns entries must be valid IP addresses")
 )
 
+// ErrBlocNotDefined is what every error ErrBlocNotFound returns matches
+// through errors.Is, so callers can tell a missing bloc from other load
+// failures without reading the message.
+var ErrBlocNotDefined = errors.New("bloc not found in configuration file")
+
+// blocNotFoundError names the bloc and the file that lacks it.
+type blocNotFoundError struct {
+	blocName   string
+	configPath string
+}
+
+func (e *blocNotFoundError) Error() string {
+	return fmt.Sprintf("bloc '%s' not found in configuration file %s", e.blocName, e.configPath)
+}
+
+func (e *blocNotFoundError) Is(target error) bool { return target == ErrBlocNotDefined }
+
 // ErrBlocNotFound returns an error indicating the specified bloc was not found in the configuration file.
 func ErrBlocNotFound(blocName, configPath string) error {
-	return fmt.Errorf("bloc '%s' not found in configuration file %s", blocName, configPath) //nolint:err113 // dynamic error with context
+	return &blocNotFoundError{blocName: blocName, configPath: configPath}
 }
 
 // ErrBastionGitHubSSHPortInvalid returns an error when bastion.githubSshPort
