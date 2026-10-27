@@ -2,7 +2,10 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -74,8 +77,8 @@ Any other bare word is rejected rather than handed to DNS.
 
 The command automatically:
 - Locates the target's address and, for artifacts, the bastion to hop through
-- Finds the SSH key in standard locations
-- Uses the correct private key to establish connection
+- Finds the bloc's SSH key in standard locations
+- Uses that key to establish the connection, or your own SSH setup when the bloc key is absent
 
 The artifacts hop runs as an explicit ProxyCommand through the bastion with the same key and user,
 so a rebuilt bastion's new host key never blocks the connection. Pass --no-proxy-jump to connect to
@@ -88,7 +91,12 @@ SSH keys are searched in the following order:
 2. ~/.local/share/ocfp/{bloc}/ssh/id_rsa (fallback)
 3. ~/.ocfp/{bloc}/ssh/id_ed25519 or id_rsa (legacy, used only if the above are absent)
 
-Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`,
+Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.
+
+--key names a private key to use instead, and wins over the bloc key. When neither --key nor
+a bloc key is present, ssh runs without -i and without IdentitiesOnly, so your ssh-agent, your
+default keys, and your ssh config decide how to log in (for example your own key on the
+bastion, or Tailscale SSH). A one-line notice on stderr says when that happens.`,
 		Example: `  # Connect to bastion host (interactive session)
   ocfp ssh --bloc production
 
@@ -179,14 +187,14 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	keyPath, err := resolveSSHKeyForSSH(sshConfig, cfg)
+	keyPath, err := resolveOperatorSSHKey(sshConfig.KeyPath, sshConfig.BlocName, cfg, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 
-	err = verifySSHKey(keyPath)
+	err = verifyResolvedSSHKey(keyPath)
 	if err != nil {
-		return fmt.Errorf("SSH key verification failed: %w", err)
+		return err
 	}
 
 	sshCmd := buildSSHCommandForRoute(route, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
@@ -202,7 +210,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		log.Infof("Connecting to %s at %s as %s", sshConfig.Target, where, sshConfig.User)
 	}
 
-	log.Debugf("Using SSH key: %s", keyPath)
+	logResolvedSSHKey(log, keyPath)
 
 	return executeSSH(ctx, sshCmd)
 }
@@ -432,17 +440,59 @@ func lookupArtifactsIPForSSH(ctx context.Context, provider cpi.Provider, blocNam
 	return ip, nil
 }
 
-func resolveSSHKeyForSSH(sshCfg *sshConfig, cfg *config.Config) (string, error) {
-	if sshCfg.KeyPath != "" {
-		return sshCfg.KeyPath, nil
+// resolveOperatorSSHKey picks the private key that ssh, scp, rsync, and
+// ssh config hand to ssh. An explicit key (--key) wins. Otherwise the bloc
+// key is used when it exists. When the bloc has no key on this machine, which
+// is the normal case for anyone but the operator who bootstrapped it, the
+// result is the empty path: the caller then runs ssh without -i and without
+// IdentitiesOnly, so the user's ssh-agent, default keys, and ssh config decide
+// how to log in. One line on notice says so. A bloc key that exists but is
+// unusable, such as an empty file, stays an error, because falling back would
+// hide a broken key.
+func resolveOperatorSSHKey(explicit, blocName string, cfg *config.Config, notice io.Writer) (string, error) {
+	if explicit != "" {
+		return explicit, nil
 	}
 
-	keyPath, err := findSSHKey(sshCfg.BlocName, cfg)
-	if err != nil {
+	keyPath, err := findSSHKey(blocName, cfg)
+	if err == nil {
+		return keyPath, nil
+	}
+
+	if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("failed to find SSH key: %w", err)
 	}
 
-	return keyPath, nil
+	_, _ = fmt.Fprintf(notice, "ocfp: bloc SSH key not found in %s; using your own SSH keys and config\n",
+		config.OcfpSSHKeyDir(blocName))
+
+	return "", nil
+}
+
+// verifyResolvedSSHKey checks a key resolveOperatorSSHKey returned. The empty
+// path means the user's own ssh setup, so there is nothing to check.
+func verifyResolvedSSHKey(keyPath string) error {
+	if keyPath == "" {
+		return nil
+	}
+
+	err := verifySSHKey(keyPath)
+	if err != nil {
+		return fmt.Errorf("SSH key verification failed: %w", err)
+	}
+
+	return nil
+}
+
+// logResolvedSSHKey records which key a command uses at debug level.
+func logResolvedSSHKey(log logger.Logger, keyPath string) {
+	if keyPath == "" {
+		log.Debugf("Using the user's own SSH keys and config")
+
+		return
+	}
+
+	log.Debugf("Using SSH key: %s", keyPath)
 }
 
 // getBastionIP retrieves the bastion host's public IP address.
@@ -543,20 +593,23 @@ var sshKeepaliveOptions = []string{
 	"-o", "ServerAliveCountMax=6",
 }
 
-// addSSHStandardOptions adds standard SSH options to the command.
+// addSSHStandardOptions adds standard SSH options to the command. The
+// host-key options are the same with or without a key. With a key, auth is
+// pinned to it by -i and IdentitiesOnly; without one, both are left out so
+// the user's ssh-agent, default keys, and ssh config apply.
 func addSSHStandardOptions(cmd []string, keyPath string) []string {
 	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
 	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
-	cmd = append(cmd, "-o", "IdentitiesOnly=yes")
 
 	if keyPath != "" {
+		cmd = append(cmd, "-o", "IdentitiesOnly=yes")
 		cmd = append(cmd, "-i", keyPath)
 	}
 
 	// Forward SSH agent to remote host when available.
 	// This is independent of which key is used for authentication —
-	// IdentitiesOnly=yes already constrains auth to the specified key.
+	// with a key, IdentitiesOnly=yes already constrains auth to it.
 	if os.Getenv("SSH_AUTH_SOCK") != "" {
 		cmd = append(cmd, "-A")
 	}

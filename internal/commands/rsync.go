@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -135,7 +136,10 @@ SSH keys are searched in the following order:
 2. ~/.local/share/ocfp/{bloc}/ssh/id_rsa (fallback)
 3. ~/.ocfp/{bloc}/ssh/id_ed25519 or id_rsa (legacy, used only if the above are absent)
 
-Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.`
+Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.
+
+--key names a private key to use instead. With neither --key nor a bloc key, rsync's ssh
+runs without -i, so your ssh-agent, default keys, and ssh config apply.`
 }
 
 func getRSyncExamples() string {
@@ -209,7 +213,7 @@ func runRSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	environment, err := setupRSyncEnvironment(ctx, config)
+	environment, err := setupRSyncEnvironment(ctx, config, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -272,7 +276,7 @@ func parseRSyncConfig(cmd *cobra.Command, args []string) (*rsyncConfig, error) {
 	}, nil
 }
 
-func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig) (*rsyncEnvironment, error) {
+func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig, notice io.Writer) (*rsyncEnvironment, error) {
 	cfg, err := loadRSyncBlocConfig(config.blocName)
 	if err != nil {
 		return nil, err
@@ -288,7 +292,12 @@ func setupRSyncEnvironment(ctx context.Context, config *rsyncConfig) (*rsyncEnvi
 		return nil, fmt.Errorf("failed to get bastion IP: %w", err)
 	}
 
-	keyPath, err := resolveSSHKey(config.keyPath, config.blocName, cfg)
+	keyPath, err := resolveOperatorSSHKey(config.keyPath, config.blocName, cfg, notice)
+	if err != nil {
+		return nil, err
+	}
+
+	err = verifyResolvedSSHKey(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -329,24 +338,6 @@ func initializeRSyncProvider(ctx context.Context, cfg *config.Config) (cpi.Provi
 	return provider, nil
 }
 
-func resolveSSHKey(keyPath, blocName string, cfg *config.Config) (string, error) {
-	if keyPath == "" {
-		resolvedKey, err := findSSHKey(blocName, cfg)
-		if err != nil {
-			return "", fmt.Errorf("failed to find SSH key: %w", err)
-		}
-
-		keyPath = resolvedKey
-	}
-
-	err := verifySSHKey(keyPath)
-	if err != nil {
-		return "", fmt.Errorf("SSH key verification failed: %w", err)
-	}
-
-	return keyPath, nil
-}
-
 func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config *rsyncConfig, env *rsyncEnvironment) error {
 	processedSource := processRSyncPath(config.source, env.bastionIP, config.user)
 	processedDest := processRSyncPath(config.destination, env.bastionIP, config.user)
@@ -359,7 +350,7 @@ func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config 
 		log.Infof("Synchronizing: %s -> %s", config.source, config.destination)
 	}
 
-	log.Debugf("Using SSH key: %s", env.keyPath)
+	logResolvedSSHKey(log, env.keyPath)
 	log.Debugf("Bastion IP: %s", env.bastionIP)
 
 	return executeRSync(ctx, rsyncCmd)

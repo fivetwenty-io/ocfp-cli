@@ -84,7 +84,19 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 // login user as the final hop, and keyPath, user, and bastionHost are
 // interpolated into a string ssh runs through a shell, so callers must pass
 // validated values.
+//
+// An empty keyPath leaves authentication to the operator's own ssh setup.
+// The jump hop then drops -i, IdentitiesOnly, and BatchMode, so the agent,
+// the default keys, the ssh config, and any passphrase prompt all apply,
+// while the host-key options stay exactly as they are with a key.
 func BastionProxyCommand(keyPath, user, bastionHost string) string {
+	if keyPath == "" {
+		return fmt.Sprintf(
+			"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+			os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
+		)
+	}
+
 	return fmt.Sprintf(
 		"ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
 		keyPath, os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,

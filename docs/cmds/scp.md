@@ -38,6 +38,8 @@ These paths are the current layout. A bloc whose keys still sit in the legacy `~
 
 Key permissions are verified and automatically corrected to `0600` if needed.
 
+When neither `--key` nor a bloc key is present, which is the usual case for anyone who did not bootstrap the bloc, ocfp prints one line to stderr saying so and runs ssh without `-i` and without `IdentitiesOnly`. Your ssh-agent, your default keys, and your ssh config then decide how to log in, so your own key on the bastion or Tailscale SSH works as it would with plain ssh. A bloc key that exists but is empty is still an error.
+
 ## Examples
 
 Copy a file to bastion:
