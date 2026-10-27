@@ -34,7 +34,9 @@ var ErrBastionKeySpecInvalid = errors.New(
 
 // bastionKeyUserPattern bounds the username part of a GitHub or GitLab
 // entry, which ends up in a URL. GitLab allows dots and underscores, so both
-// are accepted, but not as the first character.
+// are accepted, but not as the first character. Nothing that could leave
+// the user's path, such as a slash, a query, a fragment, a percent escape,
+// or whitespace, matches; a run of dots is refused separately.
 var bastionKeyUserPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 
 // bastionKeyErrPreviewLen caps how much of a bad entry an error repeats.
@@ -53,9 +55,9 @@ func ValidSSHPublicKeyPrefixes() []string {
 }
 
 // ParseBastionKeySpec reads one bastion.keys value. It accepts github/<user>
-// and gitlab/<user>, the host forms github.com/<user> and gitlab.com/<user>
-// with an optional https:// in front, an optional trailing .keys on any of
-// them, and a literal OpenSSH public key. Anything else is an error wrapping
+// and gitlab/<user>, which keep the username exactly as written, the host
+// forms github.com/<user> and gitlab.com/<user> with an optional https:// in
+// front and an optional trailing .keys, and a literal OpenSSH public key. Anything else is an error wrapping
 // ErrBastionKeySpecInvalid, so no entry is ever dropped quietly.
 func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 	spec = strings.TrimSpace(spec)
@@ -74,7 +76,7 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 	forms := []struct {
 		prefix string
 		source BastionKeySource
-		bare   bool
+		short  bool
 	}{
 		{"github.com/", BastionKeyGitHub, false},
 		{"gitlab.com/", BastionKeyGitLab, false},
@@ -84,16 +86,23 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 
 	for _, form := range forms {
 		user, found := strings.CutPrefix(rest, form.prefix)
-		if !found || (form.bare && hasScheme) {
+		if !found || (form.short && hasScheme) {
 			continue
 		}
 
-		user = strings.TrimSuffix(user, ".keys")
-		if !bastionKeyUserPattern.MatchString(user) {
+		// The short forms predate the host forms and have always named
+		// the account verbatim, so gitlab/alice.keys is the account
+		// alice.keys. Only the host forms read .keys as part of the URL.
+		trimmed := user
+		if !form.short {
+			trimmed = strings.TrimSuffix(user, ".keys")
+		}
+
+		if strings.Contains(user, "..") || !bastionKeyUserPattern.MatchString(trimmed) {
 			return BastionKeySpec{}, fmt.Errorf("bad %s username %q: %w", form.source, user, ErrBastionKeySpecInvalid)
 		}
 
-		return BastionKeySpec{Source: form.source, Value: user}, nil
+		return BastionKeySpec{Source: form.source, Value: trimmed}, nil
 	}
 
 	if !strings.ContainsAny(spec, "/ \t") {
