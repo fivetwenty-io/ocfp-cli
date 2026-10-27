@@ -211,7 +211,7 @@ func readOwnedVM(ctx context.Context, reader blocComputeReader, stateID string, 
 		return read
 	case err == nil:
 		missing = fmt.Sprintf("VM %s is not this bloc's %s", stateID, want.Role)
-		staleWhy = fmt.Sprintf("which is not this bloc's %s", want.Role)
+		staleWhy = "which is not this bloc's " + want.Role
 	case !isInstanceNotFound(err):
 		read.Error = blocinv.SafeMessage(classifyProviderError(err, blocinv.KindProviderRequest, stateID), "")
 
@@ -259,16 +259,9 @@ func artifactsOwnerTags(blocName string) map[string]string {
 	return map[string]string{"ocfp:role": "artifacts", "ocfp:bloc": blocName}
 }
 
-// findBastionByName finds the bloc's bastion among the provider's VMs by the
-// bloc's ownership tags and the exact name "<bloc>-bastion". A prefix or
-// substring match could pick another bloc's VM, so only the exact name
-// counts. It returns nil with no error when no VM matches, and an error when
-// more than one VM does.
-func findBastionByName(ctx context.Context, reader blocComputeReader, blocName string) (*cpi.Instance, error) {
-	return findOwnedVM(ctx, reader, blocName+"-bastion", blocOwnerTags(blocName))
-}
-
 // findOwnedVM lists the VMs that carry tags and returns the one named vmName.
+// A prefix or substring match could pick another bloc's VM, so only the
+// exact name counts.
 // Each provider reads a "label.<key>" filter as a tag or label to match, and
 // PVE reads no other form, so the filters use that prefix. A provider can
 // still return a VM the filters should have excluded, so each VM must carry
