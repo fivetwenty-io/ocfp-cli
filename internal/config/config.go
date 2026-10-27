@@ -1636,6 +1636,10 @@ func loadConfigFromFile(configPath, blocName string) (*Config, error) {
 		return nil, ErrBlocNotFound(blocName, configPath)
 	}
 
+	if blocConfig == nil {
+		return nil, fmt.Errorf("%w: bloc '%s' in configuration file %s", ErrBlocDefinitionEmpty, blocName, configPath)
+	}
+
 	if blocConfig.Name == "" {
 		blocConfig.Name = blocName
 	}

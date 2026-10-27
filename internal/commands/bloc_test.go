@@ -954,6 +954,32 @@ func TestOpenBlocLiveSource_ABlocMissingFromItsFileIsClassified(t *testing.T) {
 	assert.Equal(t, "bloc not found in config ("+path+")", err.Error())
 }
 
+func TestBlocShowLive_NullBlocDefinitionIsAConfigError(t *testing.T) {
+	isolateBlocEnv(t)
+
+	path := writeBlocsConfig(t, "blocs:\n  bare: null\n  other:\n    provider: pve\n")
+
+	text, err := runBloc(t, "show", "bare", "--live")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Bloc\n")
+	assert.Contains(t, text, "Config\n")
+	assert.Contains(t, text, "State\n")
+	assert.Contains(t, text, "Bastion error:       config is invalid ("+path+")")
+
+	out, err := runBloc(t, "show", "bare", "--live", "--json")
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got), out)
+	assert.Equal(t, "bare", got["name"])
+	assert.Contains(t, got, "config", "the local part is intact")
+
+	live := got["live"].(map[string]any)
+	for _, part := range []string{"bastion", "artifacts"} {
+		assert.Equal(t, "config is invalid ("+path+")", live[part].(map[string]any)["error"], part)
+	}
+}
+
 func TestOpenBlocLiveSource_NoConfigFileIsAClearError(t *testing.T) {
 	isolateBlocEnv(t)
 	writeBlocsConfig(t, showConfig)

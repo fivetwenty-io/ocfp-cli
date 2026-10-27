@@ -7,6 +7,8 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestStackitDefaultRegion verifies that STACKIT defaults region to eu01 when unspecified.
@@ -602,5 +604,18 @@ func TestBastionUnlistedFieldsStillBind(t *testing.T) {
 
 	if b.Genesis.Branch != "v3.2.x-dev" {
 		t.Errorf("nested genesis did not bind: %+v", b.Genesis)
+	}
+}
+
+func TestLoadWithParams_NullBlocDefinitionIsAnError(t *testing.T) {
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("blocs:\n  bare: null\n  empty:\n"), 0o600))
+
+	for _, name := range []string{"bare", "empty"} {
+		cfg, err := config.LoadWithParams(cfgPath, name)
+		require.ErrorIs(t, err, config.ErrBlocDefinitionEmpty, name)
+		assert.Nil(t, cfg, name)
 	}
 }
