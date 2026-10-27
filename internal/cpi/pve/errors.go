@@ -1,8 +1,10 @@
 package pve
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -142,6 +144,54 @@ func isVMConfigMissing(err error, vmid int) bool {
 // vmid: the missing-config 500 PVE sends, or a plain 404.
 func isVMAbsentOnNode(err error, vmid int) bool {
 	return isVMConfigMissing(err, vmid) || errors.Is(err, pveapierrors.ErrNotFound)
+}
+
+// describeReadError names the class of a failed provider read in words that
+// are safe to log: the HTTP status the API answered with, or a fixed class.
+// An error's own text can carry the provider's response body, which can
+// carry anything, so it is never part of the description.
+func describeReadError(err error) string {
+	if status := apiHTTPStatus(err); status != 0 {
+		return fmt.Sprintf("HTTP %d", status)
+	}
+
+	var netErr net.Error
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), pveapierrors.IsTimeoutError(err),
+		errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case pveapierrors.IsConnectionError(err), pveapierrors.IsSSLError(err), errors.As(err, &netErr):
+		return "connection error"
+	default:
+		return "unclassified error"
+	}
+}
+
+// apiHTTPStatus returns the HTTP status a PVE API error carries, or 0 when
+// err is not one.
+func apiHTTPStatus(err error) int {
+	var (
+		apiErr   *pveapierrors.APIError
+		permErr  *pveapierrors.PermissionError
+		paramErr *pveapierrors.ParameterError
+		authErr  *pveapierrors.AuthenticationError
+	)
+
+	switch {
+	case errors.As(err, &permErr):
+		return permErr.HTTPCode
+	case errors.As(err, &paramErr):
+		return paramErr.HTTPCode
+	case errors.As(err, &authErr):
+		return authErr.HTTPCode
+	case errors.As(err, &apiErr):
+		return apiErr.HTTPCode
+	default:
+		return 0
+	}
 }
 
 // ErrVMNameNotFound returns an error when a VM by name is not found.
