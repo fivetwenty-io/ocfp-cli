@@ -241,7 +241,6 @@ func TestParseBastionKeySpecRejectsMalformedLiteralKeys(t *testing.T) {
 		"ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
 		"sk-ssh-ed25519@openssh.com not-a-key",
 		`command="/bin/true" ` + testEd25519Key,
-		testEd25519Key + "\n" + testSKEd25519Key,
 		"garbage line\n" + testEd25519Key,
 	} {
 		_, err := config.ParseBastionKeySpec(spec)
@@ -265,4 +264,31 @@ func TestBastionKeyWarningsNameAMalformedLiteralKey(t *testing.T) {
 	require.Len(t, warnings, 1)
 	assert.Contains(t, warnings[0], "keys.bad")
 	assert.Contains(t, warnings[0], "not a valid OpenSSH public key")
+}
+
+// An entry holding several public keys, as a YAML block scalar does, is
+// accepted when every line is a valid key, and keeps every line.
+func TestParseBastionKeySpecAcceptsMultipleKeyLines(t *testing.T) {
+	t.Parallel()
+
+	spec := "\n" + testEd25519Key + "\n\n  " + testSKEd25519Key + "  \r\n"
+
+	got, err := config.ParseBastionKeySpec(spec)
+	require.NoError(t, err)
+	assert.Equal(t, config.BastionKeyLiteral, got.Source)
+	assert.Equal(t, testEd25519Key+"\n"+testSKEd25519Key, got.Value)
+}
+
+// One bad line fails the whole entry.
+func TestParseBastionKeySpecRejectsAnyBadKeyLine(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range []string{
+		testEd25519Key + "\nssh-ed25519 not-a-key",
+		`command="/bin/true" ` + testEd25519Key + "\n" + testSKEd25519Key,
+		testSKEd25519Key + "\n" + `from="10.0.0.1" ` + testEd25519Key,
+	} {
+		_, err := config.ParseBastionKeySpec(spec)
+		require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid, "%q must not parse", spec)
+	}
 }
