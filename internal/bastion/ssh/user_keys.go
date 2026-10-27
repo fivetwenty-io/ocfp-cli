@@ -2,20 +2,15 @@ package ssh
 
 import (
 	"context"
-	"strings"
+	"sort"
 
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 // ValidSSHKeyPrefixes returns the accepted OpenSSH public key type prefixes.
-func ValidSSHKeyPrefixes() []string { //nolint:gochecknoglobals // read-only list, function avoids global
-	return []string{
-		"ssh-rsa",
-		"ssh-ed25519",
-		"ecdsa-sha2-nistp256",
-		"ecdsa-sha2-nistp384",
-		"ecdsa-sha2-nistp521",
-	}
+func ValidSSHKeyPrefixes() []string {
+	return config.ValidSSHPublicKeyPrefixes()
 }
 
 // KeyFetchFunc fetches SSH public keys for a given username from a provider.
@@ -23,77 +18,69 @@ type KeyFetchFunc func(ctx context.Context, username string) ([]string, error)
 
 // ResolveKeySpecs resolves a map of label→key-spec entries into label→[]resolvedPublicKeys.
 //
-// Key spec formats:
-//   - "github/<username>" — fetch public keys via fetchGitHub
-//   - "gitlab/<username>" — fetch public keys via fetchGitLab
+// Key spec formats are those config.ParseBastionKeySpec reads:
+//   - "github/<username>" or "github.com/<username>" — fetch public keys via fetchGitHub
+//   - "gitlab/<username>" or "gitlab.com/<username>" — fetch public keys via fetchGitLab
 //   - direct SSH public key string (must start with a known prefix)
 //
-// Failed lookups are logged as warnings; processing continues for other entries.
+// The host forms may carry https:// in front and .keys at the end. Every
+// entry is parsed before anything is fetched, and an entry that cannot be
+// parsed is an error naming its label, so a bastion is never brought up
+// with an entry silently missing. A failed fetch is logged as a warning and
+// processing continues with the other entries.
 func ResolveKeySpecs(
 	ctx context.Context,
 	keySpecs map[string]string,
 	fetchGitHub, fetchGitLab KeyFetchFunc,
 ) (map[string][]string, error) {
+	labels := make([]string, 0, len(keySpecs))
+	for label := range keySpecs {
+		labels = append(labels, label)
+	}
+
+	sort.Strings(labels)
+
+	parsed := make(map[string]config.BastionKeySpec, len(keySpecs))
+
+	for _, label := range labels {
+		spec, err := config.ParseBastionKeySpec(keySpecs[label])
+		if err != nil {
+			return nil, config.BastionKeyEntryError(label, keySpecs[label], err)
+		}
+
+		parsed[label] = spec
+	}
+
 	log := logger.Get()
 	resolved := make(map[string][]string, len(keySpecs))
 
-	for label, spec := range keySpecs {
-		spec = strings.TrimSpace(spec)
-		if spec == "" {
-			log.Warnw("Empty key spec, skipping", "label", label)
+	for _, label := range labels {
+		spec := parsed[label]
+
+		fetch := fetchGitHub
+		provider := "GitHub"
+
+		switch spec.Source {
+		case config.BastionKeyLiteral:
+			resolved[label] = []string{spec.Value}
+
+			continue
+		case config.BastionKeyGitLab:
+			fetch = fetchGitLab
+			provider = "GitLab"
+		case config.BastionKeyGitHub:
+		}
+
+		keys, err := fetch(ctx, spec.Value)
+		if err != nil {
+			log.Warnw("Failed to fetch "+provider+" keys, skipping",
+				"label", label, "username", spec.Value, "error", err)
 
 			continue
 		}
 
-		switch {
-		case strings.HasPrefix(spec, "github/"):
-			username := strings.TrimPrefix(spec, "github/")
-
-			keys, err := fetchGitHub(ctx, username)
-			if err != nil {
-				log.Warnw("Failed to fetch GitHub keys, skipping",
-					"label", label, "username", username, "error", err)
-
-				continue
-			}
-
-			resolved[label] = keys
-
-		case strings.HasPrefix(spec, "gitlab/"):
-			username := strings.TrimPrefix(spec, "gitlab/")
-
-			keys, err := fetchGitLab(ctx, username)
-			if err != nil {
-				log.Warnw("Failed to fetch GitLab keys, skipping",
-					"label", label, "username", username, "error", err)
-
-				continue
-			}
-
-			resolved[label] = keys
-
-		default:
-			if !isValidSSHKeySpec(spec) {
-				log.Warnw("Invalid SSH key format, skipping",
-					"label", label)
-
-				continue
-			}
-
-			resolved[label] = []string{spec}
-		}
+		resolved[label] = keys
 	}
 
 	return resolved, nil
-}
-
-// isValidSSHKeySpec checks whether a string starts with a known SSH key type prefix.
-func isValidSSHKeySpec(key string) bool {
-	for _, prefix := range ValidSSHKeyPrefixes() {
-		if strings.HasPrefix(key, prefix+" ") {
-			return true
-		}
-	}
-
-	return false
 }
