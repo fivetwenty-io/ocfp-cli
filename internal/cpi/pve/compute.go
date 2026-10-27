@@ -257,12 +257,20 @@ func (m *ComputeManager) GetInstance(ctx context.Context, id string) (*cpi.Insta
 	// Get VM status
 	status, err := qemuSvc.Status(ctx, node, vmid)
 	if err != nil {
+		if isVMConfigMissing(err, vmid) {
+			return nil, ErrVMIDNotFound(vmid)
+		}
+
 		return nil, fmt.Errorf("failed to get VM status: %w", err)
 	}
 
 	// Get VM config
 	config, err := qemuSvc.Config(ctx, node, vmid)
 	if err != nil {
+		if isVMConfigMissing(err, vmid) {
+			return nil, ErrVMIDNotFound(vmid)
+		}
+
 		return nil, fmt.Errorf("failed to get VM config: %w", err)
 	}
 
