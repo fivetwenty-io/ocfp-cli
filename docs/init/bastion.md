@@ -287,6 +287,8 @@ Key spec formats:
 
 - **`github.com/<username>`** and **`gitlab.com/<username>`** — the same lookups written as hosts, with an optional `https://` in front and an optional `.keys` at the end, so a pasted `https://github.com/<username>.keys` works as it reads
 
+The short `github/` and `gitlab/` forms take the username exactly as written, so `gitlab/alice.keys` names the account `alice.keys`, not `alice`. In every form, a username containing `/`, `..`, `?`, `#`, `%`, or whitespace is refused, so an entry can never fetch from a path other than that user's keys.
+
 An entry that matches none of these, such as a bare username with no `github/` or `gitlab/` in front, prints a warning naming the bloc and the entry each time the config loads, so commands that only read the bloc keep working. `ocfp init bastion` treats the same entry as an error and stops before anything touches the bastion, so a bastion never comes up with a teammate's key quietly missing. A bare username is never guessed to be a GitHub or GitLab account. The warning and the error repeat only the first line of the value, cut short, so a private key pasted there by mistake is not printed.
 
 Keys already present in `authorized_keys` are skipped (deduplicated). A lookup that fails, such as a username GitHub does not know, logs a warning and the run continues with the other entries.
