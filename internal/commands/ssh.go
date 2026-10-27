@@ -21,6 +21,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/term"
 )
 
 const (
@@ -96,7 +97,10 @@ Set OCFP_HOME to force the legacy ~/.ocfp layout for all three lookups.
 --key names a private key to use instead, and wins over the bloc key. When neither --key nor
 a bloc key is present, ssh runs without -i and without IdentitiesOnly, so your ssh-agent, your
 default keys, and your ssh config decide how to log in (for example your own key on the
-bastion, or Tailscale SSH). A one-line notice on stderr says when that happens.`,
+bastion, or Tailscale SSH). A one-line notice on stderr says when that happens. The hop through
+the bastion to the artifacts VM may then prompt for a passphrase or password only in an
+interactive run; when stdin is not a terminal, or the ssh options set BatchMode=yes, it runs in
+batch mode and fails instead of waiting.`,
 		Example: `  # Connect to bastion host (interactive session)
   ocfp ssh --bloc production
 
@@ -729,13 +733,29 @@ func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command 
 	return assembleSSHCommand(host, user, keyPath, nil, extraOptions, sshArgs, command)
 }
 
-// buildSSHCommandForRoute constructs the SSH command for a resolved route.
+// buildSSHCommandForRoute is buildSSHCommandForRouteWith for this process,
+// which is interactive when stdin is a terminal.
+func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+	return buildSSHCommandForRouteWith(route, user, keyPath, extraOptions, sshArgs, command, stdinIsTerminal())
+}
+
+// stdinIsTerminal reports whether this process's stdin is a terminal.
+func stdinIsTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) // #nosec G115 -- a file descriptor fits in int
+}
+
+// buildSSHCommandForRouteWith constructs the SSH command for a resolved route.
 // A direct route is exactly buildSSHCommand. A route through the bastion adds
 // the explicit ProxyCommand hop that bootstrap uses to reach the artifacts VM,
 // with the same key and user on both hops, and keeps every final-hop option
 // (agent forwarding, --ssh-options, the filtered flags, and the bash -lc
 // command wrapping) unchanged.
-func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+//
+// Without a key the jump hop is a separate ssh that could prompt for a
+// passphrase or password. It gets BatchMode=yes when the outer options turn
+// batch mode on or when stdinTerminal is false, so it prompts only in an
+// interactive run.
+func buildSSHCommandForRouteWith(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string, stdinTerminal bool) []string {
 	if route.Bastion == "" {
 		return buildSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
 	}
@@ -751,9 +771,34 @@ func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string,
 		return []string{"ssh", "--help"} // Return safe command
 	}
 
-	hop := []string{"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(keyPath, user, route.Bastion)}
+	batchMode := !stdinTerminal || sshOptionsSetBatchMode(filterSSHOptions(extraOptions), filterSSHArgs(sshArgs))
+	hop := []string{"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(keyPath, user, route.Bastion, batchMode)}
 
 	return assembleSSHCommand(route.Host, user, keyPath, hop, extraOptions, sshArgs, command)
+}
+
+// sshOptionsSetBatchMode reports whether the first BatchMode in the given
+// option lists, read in the order ssh sees them, turns batch mode on. ssh
+// keeps the first value it sees for an option, and so does this.
+func sshOptionsSetBatchMode(lists ...[]string) bool {
+	for _, args := range lists {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] != "-o" {
+				continue
+			}
+
+			name, value, found := strings.Cut(args[i+1], "=")
+			if !found {
+				name, value, _ = strings.Cut(args[i+1], " ")
+			}
+
+			if strings.EqualFold(strings.TrimSpace(name), "BatchMode") {
+				return strings.EqualFold(strings.TrimSpace(value), "yes")
+			}
+		}
+	}
+
+	return false
 }
 
 // assembleSSHCommand builds the ssh argument vector from inputs the caller

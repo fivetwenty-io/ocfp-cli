@@ -19,7 +19,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/term"
 )
 
 const (
@@ -321,7 +320,7 @@ func (f *initFlags) stdinIsTerminal() bool {
 		return f.isTerminal()
 	}
 
-	return term.IsTerminal(int(os.Stdin.Fd())) // #nosec G115 -- a file descriptor fits in int
+	return stdinIsTerminal()
 }
 
 // executeInitialization performs the actual initialization based on component.
