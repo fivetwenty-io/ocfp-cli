@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -404,7 +406,7 @@ func (f *fakeComputeReader) GetInstance(_ context.Context, id string) (*cpi.Inst
 
 	inst, ok := f.instances[id]
 	if !ok {
-		return nil, errors.New("instance " + id + " not found")
+		return nil, vmNotFound(id)
 	}
 
 	return inst, nil
@@ -447,6 +449,17 @@ func instanceMatches(inst *cpi.Instance, filters map[string]string) bool {
 	}
 
 	return true
+}
+
+// vmNotFound is the error PVE's GetInstance returns for a VM id that does not
+// exist.
+func vmNotFound(id string) error {
+	vmid, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("%w: %s", pve.ErrInvalidVMID, id)
+	}
+
+	return pve.ErrVMIDNotFound(vmid)
 }
 
 // useBlocLive swaps the live reader factory for one that returns reader, and
@@ -1045,7 +1058,7 @@ func TestBlocShowLive_StaleBastionIDFallsBackToTheBastionByName(t *testing.T) {
 	seedLiveBloc(t)
 
 	reader := &fakeComputeReader{
-		getErrs: map[string]error{"100": errors.New("VM 100 does not exist\ncaused by: a long provider chain")},
+		getErrs: map[string]error{"100": vmNotFound("100")},
 		instances: map[string]*cpi.Instance{
 			"101": {ID: "101", State: cpi.ResourceState("running")},
 		},
@@ -1080,7 +1093,7 @@ func TestBlocShowLive_StaleBastionIDWithNoMatchIsAShortError(t *testing.T) {
 	seedLiveBloc(t)
 
 	reader := &fakeComputeReader{
-		getErrs:   map[string]error{"100": errors.New("VM 100 does not exist\ncaused by: a long provider chain")},
+		getErrs:   map[string]error{"100": vmNotFound("100")},
 		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
 		listed: []*cpi.Instance{
 			{ID: "200", Name: "other-bastion", Tags: bastionTags("other")},
@@ -1105,7 +1118,7 @@ func TestBlocShowLive_TwoBastionsWithTheSameNameAreNotGuessedBetween(t *testing.
 	seedLiveBloc(t)
 
 	reader := &fakeComputeReader{
-		getErrs:   map[string]error{"100": errors.New("not found")},
+		getErrs:   map[string]error{"100": vmNotFound("100")},
 		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
 		listed: []*cpi.Instance{
 			{ID: "102", Name: "lab-bastion", Tags: bastionTags("lab")},
@@ -1118,6 +1131,76 @@ func TestBlocShowLive_TwoBastionsWithTheSameNameAreNotGuessedBetween(t *testing.
 	assert.Equal(t, "100", bastion["vm_id"])
 	assert.Contains(t, bastion["error"], "VM 100 not found")
 	assert.Contains(t, bastion["error"], "more than one")
+}
+
+func TestBlocShowLive_OnlyAVMNotFoundErrorStartsTheSearchByName(t *testing.T) {
+	forbidden := pveapierrors.ParseAPIError(403, []byte(`{"message": "FAKE-TOKEN-DO-NOT-USE lacks VM.Audit"}`))
+
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"permission denied": {forbidden, "permission denied (VM 100, HTTP 403)"},
+		"timeout":           {fmt.Errorf("status: %w", context.DeadlineExceeded), "timed out (VM 100)"},
+		"connection":        {connectionRefused(), "provider connection failed (VM 100)"},
+		"unclassified":      {errors.New("VM 100 does not exist"), "provider request failed (VM 100)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolateBlocEnv(t)
+			seedLiveBloc(t)
+
+			reader := &fakeComputeReader{
+				getErrs:   map[string]error{"100": tc.err},
+				instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+				// The listing would find the bastion under its recorded id.
+				listed: []*cpi.Instance{{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
+			}
+			useBlocLive(t, reader, nil)
+
+			bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+			assert.Equal(t, "100", bastion["vm_id"])
+			assert.Equal(t, "", bastion["power"])
+			assert.Equal(t, tc.want, bastion["error"])
+			assert.NotContains(t, bastion, "note", "a failed read is not evidence that state is stale")
+			assert.Zero(t, reader.lists, "no search by name without a not-found answer")
+		})
+	}
+}
+
+func TestBlocShowLive_SameIDFromTheSearchIsNotCalledStale(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": vmNotFound("100")},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		listed:    []*cpi.Instance{{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "100", bastion["vm_id"])
+	assert.Equal(t, "running", bastion["power"])
+	assert.Equal(t, "", bastion["error"])
+	assert.NotContains(t, bastion["note"], "stale")
+	assert.NotContains(t, bastion["note"], "does not exist")
+	assert.Contains(t, bastion["note"], "VM list")
+}
+
+func TestBlocShowLive_FailedSearchAfterNotFoundSaysBoth(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": vmNotFound("100")},
+		listErr:   connectionRefused(),
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "VM 100 not found, and the search by name failed: provider connection failed", bastion["error"])
+	assert.NotContains(t, bastion, "note")
 }
 
 // hangingReader blocks every call until its context ends.
