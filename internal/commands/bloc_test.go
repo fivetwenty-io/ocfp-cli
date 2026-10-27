@@ -770,3 +770,27 @@ func TestOpenBlocLiveSource_NoConfigFileIsAClearError(t *testing.T) {
 	_, err := openBlocLiveSource(context.Background(), "lab", "")
 	require.ErrorIs(t, err, ErrBlocLiveNoConfig, "the primary config is not consulted for a bloc it does not define")
 }
+
+func TestBlocShowLive_ReadsTheSameStateFileTheInventoryShowed(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+
+	// The XDG state directory exists but holds no state file, and the legacy
+	// home holds the bloc's state.
+	require.NoError(t, os.MkdirAll(filepath.Join(config.StateHome(), "lab", "state"), 0o750))
+
+	legacyDir := filepath.Join(config.OcfpHome(), "lab", "state")
+	require.NoError(t, os.MkdirAll(legacyDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "lab.json"), []byte(liveState), 0o600))
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+		"100": {ID: "100", State: cpi.ResourceState("running")},
+		"101": {ID: "101", State: cpi.ResourceState("stopped")},
+	}}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "101", artifacts["vm_id"], "the legacy state names the artifacts VM")
+	assert.Equal(t, "stopped", artifacts["power"])
+	assert.Zero(t, reader.lists, "no provider query is needed when the state names the VM")
+}
