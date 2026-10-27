@@ -29,19 +29,26 @@ Output is suitable for appending to ~/.ssh/config. Internal hosts are
 discovered from state outputs and configured with ProxyJump through the
 bastion.
 
-When the bloc's SSH key is not on this machine, the blocks leave out
-IdentityFile and IdentitiesOnly, so your own ssh-agent, default keys, and
-ssh config decide how to log in.`,
+--key names a private key to write as IdentityFile instead of the bloc key.
+When neither --key nor the bloc's SSH key is on this machine, the blocks
+leave out IdentityFile and IdentitiesOnly, so your own ssh-agent, default
+keys, and ssh config decide how to log in.`,
 		Example: `  # Generate SSH config for a bloc
   ocfp ssh config --bloc production
 
   # Append to SSH config
-  ocfp ssh config --bloc production >> ~/.ssh/config`,
+  ocfp ssh config --bloc production >> ~/.ssh/config
+
+  # Use a specific SSH key
+  ocfp ssh config --bloc production --key ~/.ssh/id_ed25519`,
 		Args: cobra.NoArgs,
 		RunE: runSSHConfig,
 	}
 
 	cmd.SilenceUsage = true
+
+	cmd.Flags().String("key", "", "path to SSH private key")
+	bindFlagsOnRun(cmd, map[string]string{"ssh.key": "key"})
 
 	return cmd
 }
