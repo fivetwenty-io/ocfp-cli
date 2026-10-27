@@ -49,7 +49,12 @@ type Entry struct {
 
 // Options tells Collect where to look.
 type Options struct {
-	// ConfigFiles are explicit config files, read before ConfigDirs.
+	// PrimaryConfig is the config file the CLI itself loads: the --config
+	// file, else config.yml in the config home. It is read before every
+	// other file, so it supplies the source of any bloc it defines.
+	PrimaryConfig string
+	// ConfigFiles are explicit config files, read after PrimaryConfig and
+	// before ConfigDirs.
 	ConfigFiles []string
 	// ConfigDirs are directories scanned for *.yml and *.yaml files, in
 	// priority order.
@@ -102,23 +107,21 @@ func Find(entries []Entry, name string) (Entry, bool) {
 	return Entry{}, false
 }
 
-// configFilePaths lists the config files to read, explicit files first, then
-// each directory's *.yml and *.yaml matches. A file reachable more than once
-// is listed once, at its first position.
+// configFilePaths lists the config files to read: the primary config first,
+// then the explicit files, then each directory's *.yml and *.yaml matches. A
+// file reachable more than once, by two names or through a symlink, is listed
+// once under the first name it was reached by, which is why the primary comes
+// first: a config.yml that links to config.pve.yml stays config.yml.
 func configFilePaths(opts Options) []string {
 	seen := make(map[string]bool)
-	paths := make([]string, 0, len(opts.ConfigFiles))
+	paths := make([]string, 0, len(opts.ConfigFiles)+1)
 
 	add := func(path string) {
 		if path == "" {
 			return
 		}
 
-		key := path
-		if abs, err := filepath.Abs(path); err == nil {
-			key = abs
-		}
-
+		key := fileIdentity(path)
 		if seen[key] {
 			return
 		}
@@ -127,6 +130,8 @@ func configFilePaths(opts Options) []string {
 
 		paths = append(paths, path)
 	}
+
+	add(opts.PrimaryConfig)
 
 	for _, path := range opts.ConfigFiles {
 		add(path)
@@ -142,6 +147,23 @@ func configFilePaths(opts Options) []string {
 	}
 
 	return paths
+}
+
+// fileIdentity names the file a path leads to, with symlinks resolved, so two
+// paths to one file compare equal. A path that cannot be resolved, such as one
+// that does not exist, is identified by its absolute form.
+func fileIdentity(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+
+	return resolved
 }
 
 // mergeConfigFile adds the blocs one config file defines. The file may hold a
