@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
@@ -58,7 +59,7 @@ func ResolveKeySpecs(
 
 		switch spec.Source {
 		case config.BastionKeyLiteral:
-			resolved[label] = []string{spec.Value}
+			resolved[label] = strings.Split(spec.Value, "\n")
 
 			continue
 		case config.BastionKeyGitLab:
