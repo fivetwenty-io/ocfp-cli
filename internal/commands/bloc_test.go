@@ -1591,11 +1591,15 @@ func TestBlocShowLive_RecycledArtifactsIDFallsBackToTheArtifactsVMByName(t *test
 	assert.Equal(t, "556", artifacts["vm_id"])
 	assert.Equal(t, "stopped", artifacts["power"], "never the recycled VM's power")
 	assert.Equal(t, "", artifacts["error"])
-	assert.Equal(t, "state records VM 101, which is not this bloc's artifacts VM; the artifacts VM is VM 556, so state is stale", artifacts["note"])
+	assert.Equal(t, "state records VM 101, which is not this bloc's artifacts VM; the artifacts VM is VM 556, so state is stale; the endpoint and TLS mode in state are for VM 101, so they are not shown", artifacts["note"])
+	assert.Equal(t, "", artifacts["endpoint"], "state's endpoint is for the old VM")
+	assert.Equal(t, "", artifacts["tls_mode"], "state's TLS mode is for the old VM")
 
 	text, err := runBloc(t, "show", "lab", "--live")
 	require.NoError(t, err)
 	assert.Contains(t, text, "Artifacts note")
+	assert.Regexp(t, `Artifacts endpoint:\s+-\n`, text)
+	assert.Regexp(t, `Artifacts TLS mode:\s+-\n`, text)
 }
 
 func TestBlocShowLive_MissingArtifactsIDFallsBackToTheArtifactsVMByName(t *testing.T) {
@@ -1614,7 +1618,9 @@ func TestBlocShowLive_MissingArtifactsIDFallsBackToTheArtifactsVMByName(t *testi
 	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
 	assert.Equal(t, "556", artifacts["vm_id"])
 	assert.Equal(t, "running", artifacts["power"])
-	assert.Equal(t, "state records VM 101, which does not exist; the artifacts VM is VM 556, so state is stale", artifacts["note"])
+	assert.Equal(t, "state records VM 101, which does not exist; the artifacts VM is VM 556, so state is stale; the endpoint and TLS mode in state are for VM 101, so they are not shown", artifacts["note"])
+	assert.Equal(t, "", artifacts["endpoint"], "state's endpoint is for the old VM")
+	assert.Equal(t, "", artifacts["tls_mode"], "state's TLS mode is for the old VM")
 }
 
 func TestBlocShowLive_RecycledArtifactsIDWithNoMatchIsNeverReportedAsOurs(t *testing.T) {
