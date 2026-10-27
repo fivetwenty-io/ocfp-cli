@@ -102,3 +102,18 @@ func TestResolveKeySpecsFetchesShortFormUsernamesVerbatim(t *testing.T) {
 	assert.ElementsMatch(t, []string{"alice.keys", "carol"}, gitlab)
 	assert.Equal(t, []string{"bob.keys"}, github)
 }
+
+func TestResolveKeySpecsFailsOnAMalformedLiteralKey(t *testing.T) {
+	t.Parallel()
+
+	var github, gitlab []string
+
+	resolved, err := ssh.ResolveKeySpecs(context.Background(), map[string]string{
+		"alice": "github/alice",
+		"bad":   "ssh-ed25519 not-a-key",
+	}, recordingFetch(&github), recordingFetch(&gitlab))
+	require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid)
+	assert.Contains(t, err.Error(), "keys.bad")
+	assert.Nil(t, resolved)
+	assert.Empty(t, github)
+}

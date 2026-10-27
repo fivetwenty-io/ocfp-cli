@@ -8,11 +8,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
-// ValidSSHKeyPrefixes returns the accepted OpenSSH public key type prefixes.
-func ValidSSHKeyPrefixes() []string {
-	return config.ValidSSHPublicKeyPrefixes()
-}
-
 // KeyFetchFunc fetches SSH public keys for a given username from a provider.
 type KeyFetchFunc func(ctx context.Context, username string) ([]string, error)
 
@@ -21,7 +16,8 @@ type KeyFetchFunc func(ctx context.Context, username string) ([]string, error)
 // Key spec formats are those config.ParseBastionKeySpec reads:
 //   - "github/<username>" or "github.com/<username>" — fetch public keys via fetchGitHub
 //   - "gitlab/<username>" or "gitlab.com/<username>" — fetch public keys via fetchGitLab
-//   - direct SSH public key string (must start with a known prefix)
+//   - a literal OpenSSH public key of any type ssh.ParseAuthorizedKey reads,
+//     security keys included
 //
 // The host forms may carry https:// in front and .keys at the end. Every
 // entry is parsed before anything is fetched, and an entry that cannot be
