@@ -279,7 +279,7 @@ Each entry maps a label (used as a comment in `authorized_keys`) to a key spec.
 
 Key spec formats:
 
-- **Direct public key** — an SSH public key string starting with `ssh-rsa`, `ssh-ed25519`, or `ecdsa-sha2-*`
+- **Direct public key** — one OpenSSH public key on a single line, of any type OpenSSH reads, including `ssh-ed25519`, `ssh-rsa`, `ecdsa-sha2-*`, and the security-key types `sk-ssh-ed25519@openssh.com` and `sk-ecdsa-sha2-nistp256@openssh.com`. The key body must decode as a real key, and the line may not carry options such as `from=` or `command=`. DSA keys and certificates are refused
 
 - **`github/<username>`** — fetches all public keys from `https://github.com/<username>.keys`
 
