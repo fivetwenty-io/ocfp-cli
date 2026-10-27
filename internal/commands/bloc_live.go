@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -191,13 +192,11 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 // falling back to the provider's tag query when state has none. It returns nil
 // with no error when neither knows of one.
 func lookupBlocArtifacts(ctx context.Context, reader blocComputeReader, entry blocinv.Entry) (*artifacts.LookupResult, error) {
-	if entry.HasState && !entry.Broken {
-		stateDir, err := state.GetStateDir(entry.Name)
-		if err != nil {
-			return nil, fmt.Errorf("finding state directory: %w", err)
-		}
-
-		manager, err := state.NewManager(stateDir)
+	if entry.HasState && !entry.Broken && entry.StatePath != "" {
+		// Read the directory of the file the inventory showed. Resolving the
+		// state directory again can pick a different home when the XDG and
+		// legacy homes both exist.
+		manager, err := state.NewManager(filepath.Dir(entry.StatePath))
 		if err != nil {
 			return nil, fmt.Errorf("opening state: %w", err)
 		}
