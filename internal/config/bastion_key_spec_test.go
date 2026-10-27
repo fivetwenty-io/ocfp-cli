@@ -63,34 +63,80 @@ func TestParseBastionKeySpecRejectsWhatItCannotRead(t *testing.T) {
 	}
 }
 
-func TestBastionValidateNamesTheBadKeyEntry(t *testing.T) {
+// A bastion.keys entry that cannot be read must not stop the bloc from
+// loading, because read-only commands such as bloc show need it. Validate
+// accepts it, and KeyWarnings names it instead.
+func TestBastionValidateAcceptsAnUnreadableKeyEntry(t *testing.T) {
 	t.Parallel()
 
 	b := config.Bastion{Keys: map[string]string{
 		"alice": "github.com/alice",
+		"wayne": "wayne",
 		"bob":   "bitbucket.org/bob",
 	}}
 
-	err := b.Validate()
-	require.Error(t, err)
-	require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid)
-	assert.Contains(t, err.Error(), "keys.bob")
-	assert.Contains(t, err.Error(), "bitbucket.org/bob")
-	assert.NotContains(t, err.Error(), "alice")
+	require.NoError(t, b.Validate())
 }
 
-func TestBastionValidateNeverEchoesAPrivateKey(t *testing.T) {
+func TestBastionKeyWarningsNameTheBlocTheLabelAndTheReason(t *testing.T) {
+	t.Parallel()
+
+	b := config.Bastion{Keys: map[string]string{
+		"alice": "github.com/alice",
+		"wayne": "wayne",
+		"bob":   "bitbucket.org/bob",
+	}}
+
+	warnings := b.KeyWarnings("lab1")
+	require.Len(t, warnings, 2)
+
+	assert.Contains(t, warnings[0], "bloc lab1")
+	assert.Contains(t, warnings[0], "keys.bob")
+	assert.Contains(t, warnings[0], "bitbucket.org/bob")
+	assert.Contains(t, warnings[0], "want github/<user>")
+
+	assert.Contains(t, warnings[1], "bloc lab1")
+	assert.Contains(t, warnings[1], "keys.wayne")
+	assert.Contains(t, warnings[1], "names no key source")
+	assert.Contains(t, warnings[1], "ocfp init bastion")
+
+	for _, w := range warnings {
+		assert.NotContains(t, w, "alice")
+	}
+}
+
+func TestBastionKeyWarningsAreEmptyForReadableEntries(t *testing.T) {
+	t.Parallel()
+
+	b := config.Bastion{Keys: map[string]string{
+		"a": "github/alice",
+		"d": testEd25519Key,
+	}}
+
+	assert.Empty(t, b.KeyWarnings("lab1"))
+}
+
+func TestBastionKeyWarningsNeverEchoAPrivateKey(t *testing.T) {
 	t.Parallel()
 
 	b := config.Bastion{Keys: map[string]string{
 		"oops": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----",
 	}}
 
-	err := b.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keys.oops")
-	assert.NotContains(t, err.Error(), "b3BlbnNzaC1rZXktdjEA")
-	assert.False(t, strings.Contains(err.Error(), "\n"), "one line: %q", err.Error())
+	warnings := b.KeyWarnings("lab1")
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "keys.oops")
+	assert.NotContains(t, warnings[0], "b3BlbnNzaC1rZXktdjEA")
+	assert.False(t, strings.Contains(warnings[0], "\n"), "one line: %q", warnings[0])
+}
+
+// A bare name is not read as a GitHub or GitLab user.
+func TestParseBastionKeySpecRejectsABareName(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.ParseBastionKeySpec("wayneeseguin")
+	require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid)
+	assert.Contains(t, err.Error(), "names no key source")
 }
 
 func TestBastionValidateAcceptsEveryKeyForm(t *testing.T) {
