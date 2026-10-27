@@ -30,7 +30,7 @@ func batchModeOptions(args []string) []string {
 	var found []string
 
 	for i, arg := range args {
-		if i > 0 && args[i-1] == "-o" && strings.HasPrefix(strings.ToLower(arg), "batchmode") {
+		if i > 0 && args[i-1] == "-o" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(arg)), "batchmode") {
 			found = append(found, arg)
 		}
 	}
@@ -65,6 +65,11 @@ func TestBuildSSHCommandForRouteProxyBatchMode(t *testing.T) { //nolint:parallel
 		{"BatchMode=no on a terminal", "-o BatchMode=no", nil, true, []string{"BatchMode=no"}, prompting},
 		{"BatchMode=no without a terminal", "-o BatchMode=no", nil, false, []string{"BatchMode=no"}, quiet},
 		{"first BatchMode wins", "-o BatchMode=no -o BatchMode=yes", nil, true, []string{"BatchMode=no", "BatchMode=yes"}, prompting},
+		{"tab-separated BatchMode", "", []string{"-o", "BatchMode\tyes"}, true, []string{"BatchMode\tyes"}, quiet},
+		{"mixed whitespace BatchMode", "", []string{"-o", " \tbatchmode \t yes"}, true, []string{" \tbatchmode \t yes"}, quiet},
+		{"spaced equals BatchMode", "", []string{"-o", "BatchMode \t=\t yes"}, true, []string{"BatchMode \t=\t yes"}, quiet},
+		{"tab-separated first value wins", "", []string{"-o", "BatchMode\tno", "-o", "BatchMode=yes"}, true, []string{"BatchMode\tno", "BatchMode=yes"}, prompting},
+		{"tab-separated BatchMode no", "", []string{"-o", "BatchMode\t \tno"}, true, []string{"BatchMode\t \tno"}, prompting},
 	}
 
 	for _, tc := range cases {
