@@ -395,6 +395,7 @@ type fakeComputeReader struct {
 	listErr   error
 	gets      []string
 	lists     int
+	filters   []map[string]string
 }
 
 func (f *fakeComputeReader) GetInstance(_ context.Context, id string) (*cpi.Instance, error) {
@@ -412,10 +413,13 @@ func (f *fakeComputeReader) GetInstance(_ context.Context, id string) (*cpi.Inst
 	return inst, nil
 }
 
-// ListInstances honors the filters the way a provider does: "name" must equal
-// the VM's name and every other key must be a tag with that value.
+// ListInstances filters the way PVE's ListInstances does: "name" must equal
+// the VM's name, each "label.<key>" filter is matched by PVE's own matcher
+// against the VM's PVE tags, and every other key is ignored. The listed VMs
+// carry their tags in PVE's form, as pveTags builds them.
 func (f *fakeComputeReader) ListInstances(_ context.Context, filters map[string]string) ([]*cpi.Instance, error) {
 	f.lists++
+	f.filters = append(f.filters, filters)
 
 	if f.listErr != nil {
 		return nil, f.listErr
@@ -424,7 +428,16 @@ func (f *fakeComputeReader) ListInstances(_ context.Context, filters map[string]
 	var matched []*cpi.Instance
 
 	for _, inst := range f.listed {
-		if instanceMatches(inst, filters) {
+		if name, ok := filters["name"]; ok && inst.Name != name {
+			continue
+		}
+
+		vmTags := make([]string, 0, len(inst.Tags))
+		for tag := range inst.Tags {
+			vmTags = append(vmTags, tag)
+		}
+
+		if pve.MatchesLabelFilters(vmTags, filters) {
 			matched = append(matched, inst)
 		}
 	}
@@ -432,23 +445,28 @@ func (f *fakeComputeReader) ListInstances(_ context.Context, filters map[string]
 	return matched, nil
 }
 
-func instanceMatches(inst *cpi.Instance, filters map[string]string) bool {
-	for key, want := range filters {
-		if key == "name" {
-			if inst.Name != want {
-				return false
-			}
-
-			continue
-		}
-
-		got, ok := inst.Tags[key]
-		if !ok || got != want {
-			return false
-		}
+// pveTags renders tags the way PVE's ListInstances returns them: each
+// key=value pair becomes one tag identifier with an empty value.
+func pveTags(tags map[string]string) map[string]string {
+	out := make(map[string]string, len(tags))
+	for key, value := range tags {
+		out[pve.FormatTag(key, value)] = ""
 	}
 
-	return true
+	return out
+}
+
+// unfilteredReader returns every VM it holds whatever the filters say, the
+// way a provider that ignores a filter key would.
+type unfilteredReader struct {
+	fakeComputeReader
+}
+
+func (u *unfilteredReader) ListInstances(_ context.Context, filters map[string]string) ([]*cpi.Instance, error) {
+	u.lists++
+	u.filters = append(u.filters, filters)
+
+	return u.listed, nil
 }
 
 // vmNotFound is the error PVE's GetInstance returns for a VM id that does not
@@ -637,7 +655,7 @@ func TestBlocShowLive_ArtifactsFoundByTagWhenStateLacksThem(t *testing.T) {
 			"100": {ID: "100", State: cpi.ResourceState("running")},
 			"555": {ID: "555", State: cpi.ResourceState("running")},
 		},
-		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: map[string]string{"ocfp:role": "artifacts", "ocfp:bloc": "lab"}}},
+		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")}},
 	}
 	useBlocLive(t, reader, nil)
 
@@ -1048,9 +1066,15 @@ func TestBlocAndEnvList_SurviveAStateHomeThatCannotBeListed(t *testing.T) {
 	assert.Contains(t, envOut.String(), "lab-state")
 }
 
-// bastionTags are the tags the bootstrap puts on a bloc's VMs.
+// bastionTags are the tags the bootstrap puts on a bloc's VMs, in PVE's form.
 func bastionTags(bloc string) map[string]string {
-	return map[string]string{"bloc": bloc, "managed-by": "ocfp"}
+	return pveTags(map[string]string{"bloc": bloc, "managed-by": "ocfp"})
+}
+
+// artifactsTags are the tags the bootstrap puts on a bloc's artifacts VM, in
+// PVE's form.
+func artifactsTags(bloc string) map[string]string {
+	return pveTags(map[string]string{"bloc": bloc, "managed-by": "ocfp", "ocfp:role": "artifacts", "ocfp:bloc": bloc})
 }
 
 func TestBlocShowLive_StaleBastionIDFallsBackToTheBastionByName(t *testing.T) {
@@ -1129,8 +1153,7 @@ func TestBlocShowLive_TwoBastionsWithTheSameNameAreNotGuessedBetween(t *testing.
 
 	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
 	assert.Equal(t, "100", bastion["vm_id"])
-	assert.Contains(t, bastion["error"], "VM 100 not found")
-	assert.Contains(t, bastion["error"], "more than one")
+	assert.Equal(t, "VM 100 not found, and more than one VM is named lab-bastion", bastion["error"])
 }
 
 func TestBlocShowLive_OnlyAVMNotFoundErrorStartsTheSearchByName(t *testing.T) {
@@ -1201,6 +1224,99 @@ func TestBlocShowLive_FailedSearchAfterNotFoundSaysBoth(t *testing.T) {
 	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
 	assert.Equal(t, "VM 100 not found, and the search by name failed: provider connection failed", bastion["error"])
 	assert.NotContains(t, bastion, "note")
+}
+
+func TestBlocShowLive_AnotherBlocsBastionIsNeverPicked(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs:   map[string]error{"100": vmNotFound("100")},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		// The only VM with lab's bastion name belongs to another bloc.
+		listed: []*cpi.Instance{{ID: "205", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "100", bastion["vm_id"])
+	assert.Equal(t, "", bastion["power"])
+	assert.Equal(t, "VM 100 not found", bastion["error"])
+
+	require.Len(t, reader.filters, 1)
+	assert.Equal(t, map[string]string{"label.bloc": "lab", "label.managed-by": "ocfp"}, reader.filters[0])
+}
+
+func TestBlocShowLive_OwnershipIsCheckedOnTheVMItself(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &unfilteredReader{fakeComputeReader{
+		getErrs: map[string]error{"100": vmNotFound("100")},
+		instances: map[string]*cpi.Instance{
+			"102": {ID: "102", State: cpi.ResourceState("running")},
+			"556": {ID: "556", State: cpi.ResourceState("stopped")},
+		},
+		listed: []*cpi.Instance{
+			{ID: "205", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			{ID: "206", Name: "lab-bastion", State: cpi.ResourceState("running")},
+			{ID: "102", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("other")},
+			{ID: "557", Name: "lab-artifacts"},
+			{ID: "556", Name: "lab-artifacts", Tags: artifactsTags("lab")},
+		},
+	}}
+	useBlocLive(t, reader, nil)
+
+	live := liveJSON(t)["live"].(map[string]any)
+
+	bastion := live["bastion"].(map[string]any)
+	assert.Equal(t, "102", bastion["vm_id"], "only the VM whose own tags name lab")
+	assert.Equal(t, "", bastion["error"])
+
+	artifacts := live["artifacts"].(map[string]any)
+	assert.Equal(t, "556", artifacts["vm_id"], "only the VM whose own tags name lab")
+	assert.Equal(t, "stopped", artifacts["power"])
+	assert.Equal(t, "", artifacts["error"])
+}
+
+func TestBlocShowLive_TwoArtifactsVMsAreNotGuessedBetween(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}},
+		listed: []*cpi.Instance{
+			{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")},
+			{ID: "556", Name: "lab-artifacts", Tags: artifactsTags("lab")},
+		},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "", artifacts["vm_id"])
+	assert.Equal(t, "more than one VM is named lab-artifacts", artifacts["error"])
+
+	require.Len(t, reader.filters, 1)
+	assert.Equal(t, map[string]string{"label.ocfp:role": "artifacts", "label.ocfp:bloc": "lab"}, reader.filters[0])
+}
+
+func TestBlocShowLive_AnotherBlocsArtifactsVMIsNeverPicked(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}},
+		listed:    []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("other")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "", artifacts["vm_id"])
+	assert.Contains(t, artifacts["error"], "no ocfp-artifacts VM")
 }
 
 // hangingReader blocks every call until its context ends.
