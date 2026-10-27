@@ -64,12 +64,12 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 	// No username or host form holds whitespace, so an entry that does is
 	// a literal key or nothing.
 	if strings.ContainsAny(spec, " \t\r\n") {
-		err := checkLiteralBastionKey(spec)
+		lines, err := checkLiteralBastionKeys(spec)
 		if err != nil {
 			return BastionKeySpec{}, err
 		}
 
-		return BastionKeySpec{Source: BastionKeyLiteral, Value: spec}, nil
+		return BastionKeySpec{Source: BastionKeyLiteral, Value: strings.Join(lines, "\n")}, nil
 	}
 
 	rest, hasScheme := strings.CutPrefix(spec, "https://")
@@ -111,6 +111,33 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 	}
 
 	return BastionKeySpec{}, ErrBastionKeySpecInvalid
+}
+
+// checkLiteralBastionKeys accepts an entry of one or more non-empty lines,
+// as a YAML block scalar holds, and returns the trimmed lines. Each line is
+// checked on its own, and the whole entry fails when any line does.
+func checkLiteralBastionKeys(spec string) ([]string, error) {
+	var lines []string
+
+	for _, line := range strings.Split(spec, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		err := checkLiteralBastionKey(line)
+		if err != nil {
+			return nil, err
+		}
+
+		lines = append(lines, line)
+	}
+
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("empty entry: %w", ErrBastionKeySpecInvalid)
+	}
+
+	return lines, nil
 }
 
 // checkLiteralBastionKey accepts one authorized_keys line holding a single

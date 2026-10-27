@@ -1,12 +1,16 @@
 package bastion
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"strings"
 	"testing"
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // configureBastionKeys must fail, naming the entry, rather than bring a
@@ -92,4 +96,35 @@ func TestConfigureBastionKeysFailsOnAMalformedLiteralKey(t *testing.T) {
 	require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid)
 	assert.Contains(t, err.Error(), "keys.bad")
 	assert.Empty(t, mockSSH.commands)
+}
+
+// ed25519Line builds an authorized_keys line for a key derived from seed.
+func ed25519Line(t *testing.T, seed byte, comment string) string {
+	t.Helper()
+
+	pub, err := gossh.NewPublicKey(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, ed25519.SeedSize)).Public())
+	require.NoError(t, err)
+
+	return strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pub))) + " " + comment
+}
+
+// One entry holding several public keys, as a YAML block scalar does,
+// installs every line.
+func TestConfigureBastionKeysInstallsEveryLineOfAMultiLineEntry(t *testing.T) {
+	t.Parallel()
+
+	first := ed25519Line(t, 1, "laptop")
+	second := ed25519Line(t, 2, "desktop")
+
+	cfg := newBaseConfig("bloc1", "pve")
+	cfg.Bastion.Keys = map[string]string{"wayne": first + "\n" + second + "\n"}
+
+	mockSSH := &caTrustMockSSHClient{}
+	m := newMinimalManager(cfg)
+	m.sshClient = mockSSH
+
+	require.NoError(t, m.configureBastionKeys(context.Background()))
+	require.Len(t, mockSSH.commands, 2, "read authorized_keys, then append")
+	assert.Contains(t, mockSSH.commands[1], first)
+	assert.Contains(t, mockSSH.commands[1], second)
 }
