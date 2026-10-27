@@ -161,7 +161,31 @@ func checkLiteralBastionKey(spec string) error {
 		return fmt.Errorf("%s keys are not accepted: %w", pub.Type(), ErrBastionKeySpecInvalid)
 	}
 
+	if !literalKeyTypeMatches(spec, pub) {
+		return fmt.Errorf("key type %q does not match its key data (%s): %w",
+			firstField(spec), pub.Type(), ErrBastionKeySpecInvalid)
+	}
+
 	return nil
+}
+
+// literalKeyTypeMatches reports whether the leading type token of an
+// authorized_keys line names the type of the key the line's data encodes.
+// ssh.ParseAuthorizedKey reads the type from the data, so a line such as
+// "ssh-rsa <ed25519 data>" parses, but installed as written it names a
+// type the key does not have.
+func literalKeyTypeMatches(line string, pub gossh.PublicKey) bool {
+	return firstField(line) == pub.Type()
+}
+
+// firstField returns the first whitespace-separated token of s.
+func firstField(s string) string {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	return fields[0]
 }
 
 // KeyWarnings returns one warning line for each keys entry that
