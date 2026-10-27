@@ -416,7 +416,7 @@ func useBlocLive(t *testing.T, reader blocComputeReader, factoryErr error) *int 
 
 	calls := 0
 	original := newBlocLiveSource
-	newBlocLiveSource = func(_ context.Context, _ string) (blocLiveSource, error) {
+	newBlocLiveSource = func(_ context.Context, _, _ string) (blocLiveSource, error) {
 		calls++
 
 		if factoryErr != nil {
@@ -541,7 +541,7 @@ func TestBlocShowLive_ArtifactsDisabledIsALiveError(t *testing.T) {
 	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}}}
 
 	original := newBlocLiveSource
-	newBlocLiveSource = func(_ context.Context, _ string) (blocLiveSource, error) {
+	newBlocLiveSource = func(_ context.Context, _, _ string) (blocLiveSource, error) {
 		return blocLiveSource{Reader: reader, ArtifactsEnabled: false, Close: func() {}}, nil
 	}
 
@@ -613,7 +613,7 @@ func TestBlocShowLive_NoConfigEntry(t *testing.T) {
 	calls := useBlocLive(t, &fakeComputeReader{}, nil)
 
 	live := liveJSON(t)["live"].(map[string]any)
-	assert.Contains(t, live["bastion"].(map[string]any)["error"], "no config entry")
+	assert.Contains(t, live["bastion"].(map[string]any)["error"], "no config defines this bloc")
 	assert.Zero(t, *calls, "no provider can be built without a config entry")
 }
 
@@ -724,4 +724,49 @@ func TestBlocList_PrimaryConfigWinsOverAnAlternateThatSortsFirst(t *testing.T) {
 
 	assert.Equal(t, primary, files["lab"])
 	assert.Equal(t, filepath.Join(config.ConfigHome(), "config.all.yml"), files["extra"], "the alternate file's own blocs stay listed")
+}
+
+func TestBlocShowLive_LoadsTheConfigFileThatDefinesTheBloc(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, "blocs:\n  other:\n    provider: pve\n")
+
+	alternate := filepath.Join(config.ConfigHome(), "config.all.yml")
+	require.NoError(t, os.WriteFile(alternate, []byte("blocs:\n  extra:\n    provider: pve\n    region: lab\n"), 0o600))
+
+	var gotName, gotFile string
+
+	original := newBlocLiveSource
+	newBlocLiveSource = func(_ context.Context, name, configFile string) (blocLiveSource, error) {
+		gotName, gotFile = name, configFile
+
+		return blocLiveSource{Reader: &fakeComputeReader{}, ArtifactsEnabled: true, Close: func() {}}, nil
+	}
+
+	t.Cleanup(func() { newBlocLiveSource = original })
+
+	_, err := runBloc(t, "show", "extra", "--live", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "extra", gotName)
+	assert.Equal(t, alternate, gotFile, "the bloc's own config file is loaded, not only the primary one")
+}
+
+func TestOpenBlocLiveSource_ReadsTheNamedConfigFile(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, "blocs:\n  other:\n    provider: pve\n")
+
+	alternate := filepath.Join(config.ConfigHome(), "config.all.yml")
+	require.NoError(t, os.WriteFile(alternate, []byte("blocs:\n  extra:\n    provider: nonesuch\n"), 0o600))
+
+	_, err := openBlocLiveSource(context.Background(), "extra", alternate)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "not found", "the bloc is found in its own file")
+	assert.Contains(t, err.Error(), "invalid configuration", "the file's own provider setting is what failed")
+}
+
+func TestOpenBlocLiveSource_NoConfigFileIsAClearError(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+
+	_, err := openBlocLiveSource(context.Background(), "lab", "")
+	require.ErrorIs(t, err, ErrBlocLiveNoConfig, "the primary config is not consulted for a bloc it does not define")
 }

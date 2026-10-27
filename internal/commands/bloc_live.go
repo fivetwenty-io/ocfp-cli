@@ -12,7 +12,6 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/spf13/viper"
 )
 
 // blocLiveTimeout bounds all the provider calls one `bloc show --live` makes,
@@ -22,7 +21,7 @@ const blocLiveTimeout = 60 * time.Second
 
 // Errors recorded in the Live section.
 var (
-	ErrBlocLiveNoConfig  = errors.New("no config entry for this bloc, so no provider can be reached")
+	ErrBlocLiveNoConfig  = errors.New("no config defines this bloc, so no provider can be reached")
 	ErrBlocLiveNoBastion = errors.New("no bastion id in state")
 )
 
@@ -41,13 +40,19 @@ type blocLiveSource struct {
 	Close            func()
 }
 
-// newBlocLiveSource builds the live source for a bloc. Tests replace it with a
-// fake so no provider is ever contacted.
+// newBlocLiveSource builds the live source for a bloc from the config file
+// that defines it. Tests replace it with a fake so no provider is ever
+// contacted.
 var newBlocLiveSource = openBlocLiveSource
 
-// openBlocLiveSource loads the bloc's config and connects its provider.
-func openBlocLiveSource(ctx context.Context, blocName string) (blocLiveSource, error) {
-	cfg, err := loadBlocConfiguration(viper.GetString("config"), blocName)
+// openBlocLiveSource loads the bloc's config from the file that defines it,
+// which is not always the --config file, and connects its provider.
+func openBlocLiveSource(ctx context.Context, blocName, configFile string) (blocLiveSource, error) {
+	if configFile == "" {
+		return blocLiveSource{}, ErrBlocLiveNoConfig
+	}
+
+	cfg, err := loadBlocConfiguration(configFile, blocName)
 	if err != nil {
 		return blocLiveSource{}, fmt.Errorf("loading config: %w", err)
 	}
@@ -105,7 +110,7 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 	ctx, cancel := context.WithTimeout(ctx, blocLiveTimeout)
 	defer cancel()
 
-	source, err := newBlocLiveSource(ctx, entry.Name)
+	source, err := newBlocLiveSource(ctx, entry.Name, entry.ConfigFile)
 	if err != nil {
 		message := blocinv.SafeMessage(err, entry.ConfigFile)
 		report.Bastion.Error = message
