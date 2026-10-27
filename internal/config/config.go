@@ -942,8 +942,11 @@ type Bastion struct {
 	CFPluginOverrides map[string]CFPluginOverride `json:"cfPluginOverrides,omitempty" mapstructure:"cfPluginOverrides" yaml:"cfPluginOverrides,omitempty"`
 	SnapOverrides     map[string]SnapOverride     `json:"snapOverrides,omitempty"     mapstructure:"snapOverrides"     yaml:"snapOverrides,omitempty"`
 	BrewOverrides     map[string]BrewOverride     `json:"brewOverrides,omitempty"     mapstructure:"brewOverrides"     yaml:"brewOverrides,omitempty"`
-	// SSH keys to add to the bastion's authorized_keys.
-	// Values: direct public key, "github/<username>", or "gitlab/<username>".
+	// SSH keys to add to the bastion's authorized_keys, keyed by a label.
+	// Values: a direct public key, "github/<username>", "gitlab/<username>",
+	// or the host forms "github.com/<username>" and "gitlab.com/<username>",
+	// optionally with https:// in front and .keys at the end. See
+	// ParseBastionKeySpec. An entry that does not parse fails validation.
 	Keys map[string]string `json:"keys,omitempty" mapstructure:"keys" yaml:"keys,omitempty"`
 	// OnLinkRoutes lists destinations the bastion must reach on-link rather
 	// than through its default gateway, as bare addresses or CIDRs. They are
@@ -1043,14 +1046,16 @@ const (
 )
 
 // Validate rejects a bastion config whose githubSshPort is neither the
-// default nor 443. Zero means unset and behaves as 22.
+// default nor 443, and one with a keys entry ParseBastionKeySpec cannot
+// read. Zero means unset and behaves as 22.
 func (b *Bastion) Validate() error {
 	switch b.GitHubSSHPort {
 	case 0, GitHubSSHPortDefault, GitHubSSHPortHTTPS:
-		return nil
 	default:
 		return ErrBastionGitHubSSHPortInvalid(b.GitHubSSHPort)
 	}
+
+	return validateBastionKeys(b.Keys)
 }
 
 // EffectiveGitHubSSHPort returns the port the bastion should use for GitHub

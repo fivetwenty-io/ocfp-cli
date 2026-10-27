@@ -284,7 +284,11 @@ Key spec formats:
 
 - **`gitlab/<username>`** — fetches all public keys from `https://gitlab.com/<username>.keys`
 
-Keys already present in `authorized_keys` are skipped (deduplicated). Failed lookups log a warning and continue processing other entries.
+- **`github.com/<username>`** and **`gitlab.com/<username>`** — the same lookups written as hosts, with an optional `https://` in front and an optional `.keys` at the end, so a pasted `https://github.com/<username>.keys` works as it reads
+
+An entry that matches none of these is an error that names its label. Loading the config fails on it, and so does `ocfp init bastion`, before anything touches the bastion, so a bastion never comes up with a teammate's key quietly missing. The error repeats only the first line of the value, cut short, so a private key pasted there by mistake is not printed.
+
+Keys already present in `authorized_keys` are skipped (deduplicated). A lookup that fails, such as a username GitHub does not know, logs a warning and the run continues with the other entries.
 
 ### Jumpbox Users (`jumpbox.users`)
 
@@ -298,7 +302,7 @@ jumpbox:
     carol: "gitlab/carol-gitlab-username"
 ```
 
-The same key spec formats are supported (direct key, `github/<username>`, `gitlab/<username>`).
+Jumpbox users take a direct key, `github/<username>`, or `gitlab/<username>`. The host forms that `bastion.keys` accepts are not read here, and an entry that does not match is skipped with a warning.
 
 **Deprecation notice:** The old top-level `users:` field on the bloc config is deprecated. Move entries under `jumpbox.users` instead. When `jumpbox.users` is empty, the old `users` field is used as a fallback and a deprecation warning is logged.
 
