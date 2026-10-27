@@ -1594,7 +1594,8 @@ func finishLoading(cfg *Config, configPath, blocName string) error {
 }
 
 // mergeKeysFromState loads keys from state.yml and merges them into the config.
-// State file keys take precedence over config file keys.
+// State file keys take precedence over config file keys. A bloc whose entry
+// in state.yml is null holds no keys.
 func mergeKeysFromState(cfg *Config, blocName string) {
 	state, stateErr := LoadState()
 	if stateErr != nil {
@@ -1602,7 +1603,7 @@ func mergeKeysFromState(cfg *Config, blocName string) {
 	}
 
 	blocState, ok := state.Blocs[blocName]
-	if !ok || blocState.Keys == nil {
+	if !ok || blocState == nil || blocState.Keys == nil {
 		return
 	}
 

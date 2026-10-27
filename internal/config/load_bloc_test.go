@@ -137,3 +137,30 @@ func TestLoadBlocFromFile_DoesNotChangeWhatLoadWithParamsReturns(t *testing.T) {
 	_, err = LoadWithParams(path, "flat")
 	require.ErrorIs(t, err, ErrBlocNotDefined, "the blocs-map loader still reads only the blocs map")
 }
+
+// A CLI state file can hold a bloc whose entry is null. That entry holds no
+// key material, so loading the bloc's config goes on without it.
+func TestLoadBlocFromFile_ANullCLIStateEntryHasNoKeys(t *testing.T) {
+	isolateLoadHome(t)
+
+	require.NoError(t, os.MkdirAll(StateHome(), 0o750))
+	require.NoError(t, os.WriteFile(StateFilePath(), []byte("blocs:\n  flat: null\n  mapped: null\n"), 0o600))
+
+	flat := writeLoadConfig(t, "name: flat\nprovider: pve\nregion: lab\n"+fakePVEAuth)
+	mapped := writeLoadConfig(t, "blocs:\n  mapped:\n    provider: pve\n    region: lab\n"+fakeMappedPVEAuth)
+
+	for name, load := range map[string]func() (*Config, error){
+		"flat file":      func() (*Config, error) { return LoadBlocFromFile(flat, "flat") },
+		"blocs map":      func() (*Config, error) { return LoadBlocFromFile(mapped, "mapped") },
+		"LoadWithParams": func() (*Config, error) { return LoadWithParams(mapped, "mapped") },
+	} {
+		var (
+			cfg *Config
+			err error
+		)
+
+		require.NotPanics(t, func() { cfg, err = load() }, name)
+		require.NoError(t, err, name)
+		assert.Empty(t, cfg.Keys, name)
+	}
+}
