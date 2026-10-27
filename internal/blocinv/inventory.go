@@ -154,7 +154,7 @@ func mergeConfigFile(byName map[string]*Entry, path string) {
 
 	data, err := os.ReadFile(path) // #nosec G304 -- path comes from the trusted config search paths
 	if err != nil {
-		logger.Debugf("bloc inventory: skipping %s: %v", path, err)
+		logger.Debugf("bloc inventory: skipping %s: %s", path, SafeMessage(err, path))
 
 		return
 	}
@@ -163,7 +163,7 @@ func mergeConfigFile(byName map[string]*Entry, path string) {
 
 	err = yaml.Unmarshal(data, &file)
 	if err != nil {
-		logger.Debugf("bloc inventory: skipping blocs map in %s: %v", path, err)
+		logger.Debugf("bloc inventory: skipping blocs map in %s: %s", path, SafeMessage(err, path))
 	}
 
 	for name, cfg := range file.Blocs {
@@ -174,7 +174,7 @@ func mergeConfigFile(byName map[string]*Entry, path string) {
 
 	err = yaml.Unmarshal(data, &flat)
 	if err != nil {
-		logger.Debugf("bloc inventory: skipping flat config in %s: %v", path, err)
+		logger.Debugf("bloc inventory: skipping flat config in %s: %s", path, SafeMessage(err, path))
 
 		return
 	}
@@ -336,7 +336,7 @@ func loadState(name, statePath string) (*state.State, error) {
 
 	st, err := manager.Load(name)
 	if err != nil {
-		logger.Debugf("bloc inventory: loading %s: %v", statePath, err)
+		logger.Debugf("bloc inventory: loading %s: %s", statePath, SafeMessage(err, statePath))
 
 		return nil, fmt.Errorf("loading state: %w", err)
 	}
