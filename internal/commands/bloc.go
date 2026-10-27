@@ -294,7 +294,11 @@ when the state does not name it. When the bastion's VM id in state no longer
 exists, it finds the bastion by its exact name, "<bloc>-bastion", and notes
 that state is stale. It starts, stops, and changes nothing. A live
 call that fails, or a bloc with artifacts disabled, shows up as an error in
-the Live section and never fails the local part of the output.`,
+the Live section and never fails the local part of the output. A live error
+names a fixed class of failure, such as "config is invalid" or "permission
+denied", with only the config file path, VM id, or HTTP status beside it. The
+underlying error text is never shown, because it can quote config values or
+provider responses.`,
 		Example: `  ocfp bloc show
   ocfp bloc show ocfp-lab-wayneeseguin
   ocfp bloc show ocfp-lab-wayneeseguin --json
