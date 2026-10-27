@@ -19,6 +19,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/term"
 )
 
 const (
@@ -39,6 +40,10 @@ var (
 
 	// ErrInitCancelled indicates the user cancelled the initialization process.
 	ErrInitCancelled = errors.New("initialization cancelled by user")
+
+	// ErrInitNeedsConfirmation indicates init would have prompted for
+	// confirmation, but stdin is not a terminal that can answer.
+	ErrInitNeedsConfirmation = errors.New("initialization needs confirmation, but stdin is not a terminal")
 )
 
 // NewInitCmd creates the init command.
@@ -72,6 +77,7 @@ func NewInitCmd() *cobra.Command {
 // initFlags holds all command flags for init.
 type initFlags struct {
 	force          bool
+	yes            bool
 	skipChecks     bool
 	parallel       bool
 	dryRun         bool
@@ -83,11 +89,17 @@ type initFlags struct {
 	vaultBootUnit  bool
 	reboot         bool
 	secretsBackend string
+
+	// isTerminal reports whether stdin can answer the confirmation prompt.
+	// Nil means the real check on os.Stdin; tests replace it.
+	isTerminal func() bool
 }
 
 // addFlags adds all flags to the command.
 func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.force, "force", false, "skip confirmation prompts and reinstall the ocfp CLI on the bastion")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false,
+		"answer yes to the confirmation prompt and change nothing else (needed when stdin is not a terminal)")
 	cmd.Flags().BoolVar(&f.skipChecks, "skip-checks", false, "skip prerequisite validation")
 	cmd.Flags().BoolVar(&f.parallel, "parallel", false, "run independent tasks in parallel")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print actions without executing")
@@ -106,6 +118,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 	bindFlagsToViper(cmd, map[string]string{
 		"init.force":                "force",
+		"init.yes":                  "yes",
 		"init.skip_checks":          "skip-checks",
 		"init.parallel":             "parallel",
 		"init.dry_run":              "dry-run",
@@ -270,10 +283,17 @@ func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *conf
 	return nil
 }
 
-// confirmInitializationIfNeeded prompts for confirmation if not forced.
+// confirmInitializationIfNeeded prompts for confirmation unless --yes or
+// --force answered it already. With no terminal on stdin there is nobody to
+// answer, so it fails and names the flag to pass, rather than reading an
+// empty answer and reporting a cancellation nobody made.
 func (f *initFlags) confirmInitializationIfNeeded(component string) error {
-	if f.force {
+	if f.force || f.yes {
 		return nil
+	}
+
+	if !f.stdinIsTerminal() {
+		return fmt.Errorf("%w; pass --yes to run ocfp init %s without the prompt", ErrInitNeedsConfirmation, component)
 	}
 
 	_, err := fmt.Fprintf(os.Stdout, "This will initialize %s components. Continue? [y/N]: ", component)
@@ -292,6 +312,16 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 	}
 
 	return nil
+}
+
+// stdinIsTerminal reports whether stdin is a terminal that can answer a
+// prompt.
+func (f *initFlags) stdinIsTerminal() bool {
+	if f.isTerminal != nil {
+		return f.isTerminal()
+	}
+
+	return term.IsTerminal(int(os.Stdin.Fd())) // #nosec G115 -- a file descriptor fits in int
 }
 
 // executeInitialization performs the actual initialization based on component.
@@ -440,6 +470,9 @@ func getInitExamples() string {
 
   # Force initialization, skipping confirmation
   ocfp init all --force
+
+  # Answer the confirmation prompt, for a run without a terminal
+  ocfp init bastion --ocfp --yes
 
   # Initialize with parallel execution where possible
   ocfp init all --parallel`

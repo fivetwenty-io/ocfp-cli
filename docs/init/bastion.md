@@ -24,6 +24,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 |------|--------------|
 | `--dry-run` | Logs what each phase would do and changes nothing. |
 | `--force` | Skips the confirmation prompt and reinstalls the ocfp CLI even when the bastion already has the wanted version. A full init run from a workstation still skips a bastion that has the provisioned marker. |
+| `--yes`, `-y` | Answers yes to the confirmation prompt and changes nothing else, so unlike `--force` it never reinstalls the ocfp CLI. Without a terminal on stdin, such as in a script or over a non-interactive ssh session, init can't ask, so it stops with an error that names this flag unless `--yes` or `--force` is set. |
 | `--resume` | Skips the phases that an earlier run finished. |
 | `--parallel` | Runs independent phases in parallel. |
 | `--verbose` | Logs in more detail. |
