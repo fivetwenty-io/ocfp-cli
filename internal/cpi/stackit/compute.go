@@ -221,7 +221,7 @@ func (m *ComputeManager) GetInstance(ctx context.Context, instanceID string) (*c
 	err = m.populateInstanceNetworking(ctx, cli, instanceID, inst)
 	if err != nil {
 		// Log but don't fail - networking info is supplementary
-		logger.WithOperation("GetInstance").Debugf("Failed to populate networking: %v", err)
+		logger.WithOperation("GetInstance").Debugf("networking read for instance %s failed (%s)", instanceID, describeReadError(err))
 	}
 
 	return inst, nil

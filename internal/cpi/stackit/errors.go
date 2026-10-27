@@ -1,8 +1,12 @@
 package stackit
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
+
+	"github.com/stackitcloud/stackit-sdk-go/core/oapierror"
 )
 
 // STACKIT provider errors.
@@ -43,4 +47,28 @@ func ErrBucketMetadataMissingInResponse(name string) error {
 // ErrCredentialsGroupNotFoundAfterCreation returns an error when a newly created credentials group cannot be found.
 func ErrCredentialsGroupNotFoundAfterCreation(displayName string) error {
 	return fmt.Errorf("credentials group %q not found after creation", displayName) //nolint:err113 // dynamic error with context
+}
+
+// describeReadError names the class of a failed provider read in words that
+// are safe to log: the HTTP status the API answered with, or a fixed class.
+// An error's own text can carry the provider's response body, which can
+// carry anything, so it is never part of the description.
+func describeReadError(err error) string {
+	var (
+		apiErr *oapierror.GenericOpenAPIError
+		netErr net.Error
+	)
+
+	switch {
+	case errors.As(err, &apiErr) && apiErr.StatusCode != 0:
+		return fmt.Sprintf("HTTP %d", apiErr.StatusCode)
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.As(err, &netErr):
+		return "connection error"
+	default:
+		return "unclassified error"
+	}
 }
