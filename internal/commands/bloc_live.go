@@ -17,13 +17,17 @@ import (
 
 // blocLiveTimeout bounds all the provider calls one `bloc show --live` makes,
 // so an unreachable provider degrades to errors in the Live section instead of
-// hanging the command.
-const blocLiveTimeout = 60 * time.Second
+// hanging the command. Tests shorten it.
+var blocLiveTimeout = 60 * time.Second
 
 // Errors recorded in the Live section.
 var (
 	ErrBlocLiveNoConfig  = errors.New("no config defines this bloc, so no provider can be reached")
 	ErrBlocLiveNoBastion = errors.New("no bastion id in state")
+
+	// errBlocLiveAmbiguousBastion means several VMs carry the bastion's exact
+	// name, so none can be chosen safely.
+	errBlocLiveAmbiguousBastion = errors.New("more than one VM has the bastion's name")
 )
 
 // blocComputeReader is the read-only slice of the provider's compute manager
@@ -86,6 +90,9 @@ type blocLiveBastion struct {
 	VMID  string `json:"vm_id"`
 	Power string `json:"power"`
 	Error string `json:"error"`
+	// Note explains a result that is right but unexpected, such as a bastion
+	// found under a different VM id than state records.
+	Note string `json:"note,omitempty"`
 }
 
 type blocLiveArtifacts struct {
@@ -128,28 +135,76 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 		report.Bastion.VMID = summary.State.Bastion.ID
 	}
 
-	readBastion(ctx, source.Reader, &report.Bastion)
+	readBastion(ctx, source.Reader, entry.Name, &report.Bastion)
 	readArtifacts(ctx, source, entry, &report.Artifacts)
 
 	return report
 }
 
-// readBastion fills in the bastion's power state from the provider.
-func readBastion(ctx context.Context, reader blocComputeReader, bastion *blocLiveBastion) {
+// readBastion fills in the bastion's power state from the provider. When the
+// VM id in state no longer exists, it looks the bastion up by its name, since a
+// bastion that was moved or rebuilt gets a new id while state keeps the old one.
+func readBastion(ctx context.Context, reader blocComputeReader, blocName string, bastion *blocLiveBastion) {
 	if bastion.VMID == "" {
 		bastion.Error = ErrBlocLiveNoBastion.Error()
 
 		return
 	}
 
-	inst, err := reader.GetInstance(ctx, bastion.VMID)
-	if err != nil {
-		bastion.Error = fmt.Sprintf("getting instance %s: %s", bastion.VMID, blocinv.SafeMessage(err, ""))
+	stateID := bastion.VMID
+
+	inst, err := reader.GetInstance(ctx, stateID)
+	if err == nil {
+		bastion.Power = string(inst.State)
 
 		return
 	}
 
-	bastion.Power = string(inst.State)
+	found, listErr := findBastionByName(ctx, reader, blocName)
+
+	switch {
+	case errors.Is(listErr, errBlocLiveAmbiguousBastion):
+		bastion.Error = fmt.Sprintf("VM %s not found, and %v", stateID, listErr)
+	case listErr != nil:
+		// The provider cannot be asked, so the first failure is the real one.
+		bastion.Error = fmt.Sprintf("getting instance %s: %s", stateID, blocinv.SafeMessage(err, ""))
+	case found == nil:
+		bastion.Error = fmt.Sprintf("VM %s not found", stateID)
+	default:
+		bastion.VMID = found.ID
+		bastion.Power = string(found.State)
+		bastion.Note = fmt.Sprintf("state records VM %s, which does not exist; the bastion is VM %s, so state is stale", stateID, found.ID)
+	}
+}
+
+// findBastionByName finds the bloc's bastion among the provider's VMs the way
+// bootstrap does, by the bloc and managed-by tags and then the exact name
+// "<bloc>-bastion". A prefix or substring match could pick another bloc's VM,
+// so only the exact name counts. It returns nil with no error when no VM
+// matches, and an error when more than one VM does.
+func findBastionByName(ctx context.Context, reader blocComputeReader, blocName string) (*cpi.Instance, error) {
+	instances, err := reader.ListInstances(ctx, map[string]string{"bloc": blocName, "managed-by": "ocfp"})
+	if err != nil {
+		return nil, fmt.Errorf("listing bastion candidates: %w", err)
+	}
+
+	vmName := blocName + "-bastion"
+
+	var match *cpi.Instance
+
+	for _, inst := range instances {
+		if inst == nil || inst.Name != vmName {
+			continue
+		}
+
+		if match != nil && match.ID != inst.ID {
+			return nil, errBlocLiveAmbiguousBastion
+		}
+
+		match = inst
+	}
+
+	return match, nil
 }
 
 // readArtifacts finds the artifacts VM the way `ocfp artifacts` does, state
@@ -247,6 +302,10 @@ func writeBlocLiveText(out io.Writer, live *blocLiveReport) error {
 	text.WriteString("\nLive\n")
 	field("Bastion VM", hyphenIfEmpty(live.Bastion.VMID))
 	field("Bastion power", hyphenIfEmpty(live.Bastion.Power))
+
+	if live.Bastion.Note != "" {
+		field("Bastion note", live.Bastion.Note)
+	}
 
 	if live.Bastion.Error != "" {
 		field("Bastion error", live.Bastion.Error)
