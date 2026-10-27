@@ -11,6 +11,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
 	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
+	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
@@ -53,14 +54,15 @@ type blocLiveSource struct {
 var newBlocLiveSource = openBlocLiveSource
 
 // openBlocLiveSource loads the bloc's config from the file that defines it,
-// which is not always the --config file, and connects its provider. Every
+// which is not always the --config file and may be a flat bloc file, and
+// connects its provider. Every
 // error it returns is classified, so its text is safe to show.
 func openBlocLiveSource(ctx context.Context, blocName, configFile string) (blocLiveSource, error) {
 	if configFile == "" {
 		return blocLiveSource{}, &blocinv.ClassifiedError{Kind: blocinv.KindBlocNotInConfig, Err: ErrBlocLiveNoConfig}
 	}
 
-	cfg, err := loadBlocConfiguration(configFile, blocName)
+	cfg, err := config.LoadBlocFromFile(configFile, blocName)
 	if err != nil {
 		return blocLiveSource{}, classifyLiveConfigError(err, configFile)
 	}

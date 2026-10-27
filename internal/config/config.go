@@ -1493,10 +1493,84 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 		return nil, err
 	}
 
-	// Process loaded configuration
-	err = processConfiguration(cfg)
+	err = finishLoading(cfg, configPath, blocName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Cache the configuration
+	cacheConfiguration(configPath, blocName, cfg)
+
+	return cfg, nil
+}
+
+// LoadBlocFromFile loads blocName from configFile, which defines it either in
+// its blocs: map or as a flat file: a file whose top-level name is blocName
+// and whose top-level provider is set. A blocs: map entry wins over a flat
+// bloc of the same name. These are the two forms the bloc inventory accepts,
+// so a bloc the inventory lists from a file can be loaded from that file.
+//
+// The bloc goes through the same defaults, validation, network catalog, and
+// key merge as one loaded by LoadWithParams. The result is not cached:
+// LoadWithParams reads only blocs: maps, and a cached flat bloc would change
+// what it returns.
+func LoadBlocFromFile(configFile, blocName string) (*Config, error) {
+	if configFile == "" {
+		return nil, ErrNoConfigFile
+	}
+
+	if blocName == "" {
+		return nil, ErrNoBlocName
+	}
+
+	cfg, err := loadConfigFromFile(configFile, blocName)
+	if err != nil {
+		// A null blocs: map entry is a broken definition of this bloc, not
+		// an absent one, so a flat bloc never stands in for it.
+		if errors.Is(err, ErrBlocDefinitionEmpty) {
+			return nil, err
+		}
+
+		flat, ok := loadFlatConfigFromFile(configFile, blocName)
+		if !ok {
+			return nil, err
+		}
+
+		cfg = flat
+	}
+
+	err = finishLoading(cfg, configFile, blocName)
+	if err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// loadFlatConfigFromFile reads configPath as a flat bloc config. It reports
+// false when the file cannot be read or parsed as one, or when it is not a
+// flat config for blocName, which needs a top-level name equal to blocName
+// and a top-level provider, the test the bloc inventory applies. The caller
+// then reports its own error for the file.
+func loadFlatConfigFromFile(configPath, blocName string) (*Config, bool) {
+	var flat Config
+
+	err := loadFromFile(configPath, &flat)
+	if err != nil || flat.Name != blocName || flat.Provider == "" {
+		return nil, false
+	}
+
+	return &flat, true
+}
+
+// finishLoading takes a bloc config that has been read from configPath
+// through defaults and validation, builds its network catalog, and merges
+// its keys from state.
+func finishLoading(cfg *Config, configPath, blocName string) error {
+	// Process loaded configuration
+	err := processConfiguration(cfg)
+	if err != nil {
+		return err
 	}
 
 	// Build this bloc's netlayout strategy catalog (built-ins plus any
@@ -1506,20 +1580,17 @@ func LoadWithParams(configFile string, blocName string) (*Config, error) {
 	// vault/bootstrap.
 	cfg.NetworkCatalog, err = netlayout.BuildCatalog(cfg.Network.StrategyPaths, filepath.Dir(configPath))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if _, resolveErr := cfg.ResolveReservedIPLayout(); resolveErr != nil {
-		return nil, resolveErr
+		return resolveErr
 	}
 
 	// Merge keys from state file for portability
 	mergeKeysFromState(cfg, blocName)
 
-	// Cache the configuration
-	cacheConfiguration(configPath, blocName, cfg)
-
-	return cfg, nil
+	return nil
 }
 
 // mergeKeysFromState loads keys from state.yml and merges them into the config.
