@@ -680,3 +680,48 @@ func TestBlocLive_ProviderErrorsKeepOnlyTheirFirstLine(t *testing.T) {
 	assert.Contains(t, bastion["error"], "connection refused")
 	assert.NotContains(t, bastion["error"], "caused by")
 }
+
+func TestBlocList_SymlinkedConfigIsReportedUnderItsOwnName(t *testing.T) {
+	isolateBlocEnv(t)
+
+	require.NoError(t, os.MkdirAll(config.ConfigHome(), 0o750))
+
+	target := filepath.Join(config.ConfigHome(), "config.pve.yml")
+	require.NoError(t, os.WriteFile(target, []byte("blocs:\n  lab:\n    provider: pve\n    region: lab\n"), 0o600))
+
+	link := filepath.Join(config.ConfigHome(), "config.yml")
+	require.NoError(t, os.Symlink(target, link))
+
+	out, err := runBloc(t, "list", "--json")
+	require.NoError(t, err)
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows), out)
+	require.Len(t, rows, 1)
+	assert.Equal(t, link, rows[0]["config_file"])
+	assert.Equal(t, []any{link}, rows[0]["config_files"])
+}
+
+func TestBlocList_PrimaryConfigWinsOverAnAlternateThatSortsFirst(t *testing.T) {
+	isolateBlocEnv(t)
+
+	require.NoError(t, os.MkdirAll(config.ConfigHome(), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(config.ConfigHome(), "config.all.yml"),
+		[]byte("blocs:\n  lab:\n    provider: aws\n    region: elsewhere\n  extra:\n    provider: aws\n"), 0o600))
+
+	primary := writeBlocsConfig(t, "blocs:\n  lab:\n    provider: pve\n    region: lab\n")
+
+	out, err := runBloc(t, "list", "--json")
+	require.NoError(t, err)
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows), out)
+
+	files := map[string]any{}
+	for _, row := range rows {
+		files[row["name"].(string)] = row["config_file"]
+	}
+
+	assert.Equal(t, primary, files["lab"])
+	assert.Equal(t, filepath.Join(config.ConfigHome(), "config.all.yml"), files["extra"], "the alternate file's own blocs stay listed")
+}

@@ -422,3 +422,68 @@ func TestCollect_MarksCurrentBloc(t *testing.T) {
 		})
 	}
 }
+
+func TestCollect_SymlinkedConfigCountsOnceUnderTheNameTheUserKnows(t *testing.T) {
+	dir := t.TempDir()
+	target := writeFile(t, dir, "config.pve.yml", "blocs:\n  lab:\n    provider: pve\n    region: lab\n")
+	primary := filepath.Join(dir, "config.yml")
+	require.NoError(t, os.Symlink(target, primary))
+
+	entries, err := Collect(Options{PrimaryConfig: primary, ConfigDirs: []string{dir}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	lab := entries[0]
+	assert.Equal(t, primary, lab.ConfigFile, "the symlink is the source, not its target")
+	assert.Equal(t, []string{primary}, lab.ConfigFiles, "one file, listed once")
+}
+
+func TestCollect_SymlinkedConfigFoundOnlyByTheDirectoryScanStillCountsOnce(t *testing.T) {
+	dir := t.TempDir()
+	target := writeFile(t, dir, "config.pve.yml", "blocs:\n  lab:\n    provider: pve\n")
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "config.yml")))
+
+	entries, err := Collect(Options{ConfigDirs: []string{dir}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Len(t, entries[0].ConfigFiles, 1)
+}
+
+func TestCollect_AlternateConfigFilesStayInTheInventory(t *testing.T) {
+	dir := t.TempDir()
+	primary := writeFile(t, dir, "config.yml", "blocs:\n  lab:\n    provider: pve\n")
+	alternate := writeFile(t, dir, "config.all.yml", "blocs:\n  extra:\n    provider: aws\n    region: us-east-1\n")
+
+	entries, err := Collect(Options{PrimaryConfig: primary, ConfigDirs: []string{dir}})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	assert.Equal(t, alternate, byName(t, entries, "extra").ConfigFile)
+	assert.Equal(t, primary, byName(t, entries, "lab").ConfigFile)
+}
+
+func TestCollect_PrimaryConfigWinsRegardlessOfSortOrder(t *testing.T) {
+	dir := t.TempDir()
+	// config.all.yml sorts before config.yml, and defines the same bloc.
+	alternate := writeFile(t, dir, "config.all.yml", "blocs:\n  lab:\n    provider: aws\n    region: elsewhere\n")
+	primary := writeFile(t, dir, "config.yml", "blocs:\n  lab:\n    provider: pve\n    region: lab\n")
+
+	entries, err := Collect(Options{PrimaryConfig: primary, ConfigDirs: []string{dir}})
+	require.NoError(t, err)
+
+	lab := byName(t, entries, "lab")
+	assert.Equal(t, primary, lab.ConfigFile)
+	assert.Equal(t, []string{primary, alternate}, lab.ConfigFiles)
+	assert.Equal(t, "pve", lab.Provider, "the primary supplies the provider")
+}
+
+func TestCollect_UnparsablePrimaryDoesNotHideAnAlternateDefinition(t *testing.T) {
+	dir := t.TempDir()
+	primary := writeFile(t, dir, "config.yml", "blocs: [unterminated\n")
+	alternate := writeFile(t, dir, "config.all.yml", "blocs:\n  lab:\n    provider: pve\n")
+
+	entries, err := Collect(Options{PrimaryConfig: primary, ConfigDirs: []string{dir}})
+	require.NoError(t, err)
+
+	assert.Equal(t, alternate, byName(t, entries, "lab").ConfigFile)
+}
