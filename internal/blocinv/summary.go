@@ -88,7 +88,7 @@ func Summarize(entry Entry) (Summary, error) {
 	if entry.HasState && !entry.Broken {
 		st, err := loadState(entry.Name, entry.StatePath)
 		if err != nil {
-			return Summary{}, fmt.Errorf("summarizing %s: %w", filepath.Base(entry.StatePath), err)
+			return Summary{}, fmt.Errorf("summarizing %s: %w", filepath.Base(entry.StatePath), Sanitize(err, entry.StatePath))
 		}
 
 		summary.State = summarizeState(entry.Name, st)

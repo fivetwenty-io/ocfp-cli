@@ -107,8 +107,9 @@ func collectBlocLive(ctx context.Context, entry blocinv.Entry, summary blocinv.S
 
 	source, err := newBlocLiveSource(ctx, entry.Name)
 	if err != nil {
-		report.Bastion.Error = err.Error()
-		report.Artifacts.Error = err.Error()
+		message := blocinv.SafeMessage(err, entry.ConfigFile)
+		report.Bastion.Error = message
+		report.Artifacts.Error = message
 
 		return report
 	}
@@ -137,7 +138,7 @@ func readBastion(ctx context.Context, reader blocComputeReader, bastion *blocLiv
 
 	inst, err := reader.GetInstance(ctx, bastion.VMID)
 	if err != nil {
-		bastion.Error = fmt.Sprintf("getting instance %s: %v", bastion.VMID, err)
+		bastion.Error = fmt.Sprintf("getting instance %s: %s", bastion.VMID, blocinv.SafeMessage(err, ""))
 
 		return
 	}
@@ -156,7 +157,7 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 
 	lookup, err := lookupBlocArtifacts(ctx, source.Reader, entry)
 	if err != nil {
-		part.Error = err.Error()
+		part.Error = blocinv.SafeMessage(err, entry.StatePath)
 
 		return
 	}
@@ -173,7 +174,7 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 
 	inst, err := source.Reader.GetInstance(ctx, lookup.VMID)
 	if err != nil {
-		part.Error = fmt.Sprintf("getting instance %s: %v", lookup.VMID, err)
+		part.Error = fmt.Sprintf("getting instance %s: %s", lookup.VMID, blocinv.SafeMessage(err, ""))
 
 		return
 	}

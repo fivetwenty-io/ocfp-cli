@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/spf13/viper"
@@ -614,4 +615,68 @@ func TestBlocShowLive_NoConfigEntry(t *testing.T) {
 	live := liveJSON(t)["live"].(map[string]any)
 	assert.Contains(t, live["bastion"].(map[string]any)["error"], "no config entry")
 	assert.Zero(t, *calls, "no provider can be built without a config entry")
+}
+
+// malformedYAMLWithToken is invalid YAML whose offending line holds a fake secret.
+const malformedYAMLWithToken = "blocs:\n  lab:\n    provider: pve\n    auth_token: [FAKE-TOKEN-DO-NOT-USE\n    region: lab\n"
+
+// liveOutputs renders a live report as JSON and as the text section.
+func liveOutputs(t *testing.T, report *blocLiveReport) (string, string) {
+	t.Helper()
+
+	data, err := json.Marshal(report)
+	require.NoError(t, err)
+
+	var text bytes.Buffer
+	require.NoError(t, writeBlocLiveText(&text, report))
+
+	return string(data), text.String()
+}
+
+func TestBlocLive_MalformedConfigNeverLeaksIntoTheLiveSection(t *testing.T) {
+	isolateBlocEnv(t)
+
+	path := writeBlocsConfig(t, malformedYAMLWithToken)
+	entry := blocinv.Entry{Name: "lab", HasConfig: true, ConfigFile: path}
+
+	report := collectBlocLive(context.Background(), entry, blocinv.Summary{})
+
+	asJSON, asText := liveOutputs(t, report)
+	for _, rendered := range []string{asJSON, asText} {
+		assert.NotContains(t, rendered, "FAKE-TOKEN-DO-NOT-USE")
+		assert.Contains(t, rendered, "cannot be parsed")
+	}
+}
+
+func TestBlocLive_MalformedStateNeverLeaksIntoTheLiveSection(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+
+	statePath := writeBlocState(t, "lab", `{"provider": "FAKE-TOKEN-DO-NOT-USE",,, [unterminated`)
+	useBlocLive(t, &fakeComputeReader{}, nil)
+
+	entry := blocinv.Entry{Name: "lab", HasConfig: true, HasState: true, StatePath: statePath}
+
+	report := collectBlocLive(context.Background(), entry, blocinv.Summary{})
+
+	asJSON, asText := liveOutputs(t, report)
+	for _, rendered := range []string{asJSON, asText} {
+		assert.NotContains(t, rendered, "FAKE-TOKEN-DO-NOT-USE")
+	}
+
+	assert.Contains(t, report.Artifacts.Error, "cannot be parsed")
+}
+
+func TestBlocLive_ProviderErrorsKeepOnlyTheirFirstLine(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		getErrs: map[string]error{"100": errors.New("proxmox: connection refused\ncaused by: dial tcp\ncaused by: FAKE-TOKEN-DO-NOT-USE")},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Contains(t, bastion["error"], "connection refused")
+	assert.NotContains(t, bastion["error"], "caused by")
 }
