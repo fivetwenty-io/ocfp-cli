@@ -19,6 +19,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/ownedvm"
 	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
@@ -151,23 +152,24 @@ func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) 
 		return true, nil
 	}
 
-	instances, err := m.provider.ComputeManager().ListInstances(ctx, map[string]string{"bloc": m.options.BlocName, "managed-by": "ocfp"})
+	// Bootstrap tags the bastion with the bloc's ownership tags, but a tagging
+	// failure is logged and not fatal, so a bastion it created can lack them.
+	// Look for the tagged VM first, then for a VM of the same name that
+	// carries none of the ownership tags, so a failed tagging never leads to
+	// a second bastion. A VM tagged for another bloc is never adopted.
+	compute := m.provider.ComputeManager()
+	owner := m.ownershipTags()
+
+	match, err := ownedvm.Find(ctx, compute, bastionName, owner)
 	if err != nil {
-		return false, err
+		return false, bastionLookupError(err, bastionName)
 	}
 
-	var match *cpi.Instance
-
-	for _, inst := range instances {
-		if inst == nil || inst.Name != bastionName {
-			continue
+	if match == nil {
+		match, err = ownedvm.FindUntagged(ctx, compute, bastionName, owner)
+		if err != nil {
+			return false, bastionLookupError(err, bastionName)
 		}
-
-		if match != nil && match.ID != inst.ID {
-			return false, fmt.Errorf("multiple instances named %s; refusing to select one", bastionName)
-		}
-
-		match = inst
 	}
 
 	if match == nil {
@@ -179,6 +181,20 @@ func (m *Manager) bastionAlreadyExists(ctx context.Context, bastionName string) 
 	}
 
 	return true, nil
+}
+
+// ownershipTags are the tags bootstrap puts on every VM it creates for the
+// bloc.
+func (m *Manager) ownershipTags() map[string]string {
+	return map[string]string{"bloc": m.options.BlocName, "managed-by": "ocfp"}
+}
+
+func bastionLookupError(err error, bastionName string) error {
+	if errors.Is(err, ownedvm.ErrAmbiguous) {
+		return fmt.Errorf("multiple instances named %s; refusing to select one", bastionName)
+	}
+
+	return err
 }
 
 func (m *Manager) importBastionToState(instance *cpi.Instance, bastionName string) error {

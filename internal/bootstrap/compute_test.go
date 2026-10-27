@@ -12,6 +12,7 @@ import (
 	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -21,6 +22,7 @@ import (
 
 type fakeComputeEnhanced struct {
 	listErr        error
+	pveFilters     bool // list the way PVE does: name and label.* filters only
 	lastReq        *cpi.InstanceRequest
 	images         []*cpi.Image
 	flavors        []*cpi.Flavor
@@ -119,12 +121,16 @@ func (f *fakeComputeEnhanced) GetInstance(_ctx context.Context, id string) (*cpi
 	return nil, fmt.Errorf("instance not found: %s", id)
 }
 
-func (f *fakeComputeEnhanced) ListInstances(_ctx context.Context, _filters map[string]string) ([]*cpi.Instance, error) {
+func (f *fakeComputeEnhanced) ListInstances(_ctx context.Context, filters map[string]string) ([]*cpi.Instance, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	var instances []*cpi.Instance
 	for _, inst := range f.instances {
+		if f.pveFilters && !pveListMatches(inst, filters) {
+			continue
+		}
+
 		instances = append(instances, inst)
 	}
 
@@ -1554,5 +1560,104 @@ func TestBastionPartialCreationPersistsHandle(t *testing.T) {
 	}
 	if err := m.CreateBastion(context.Background()); err == nil {
 		t.Fatal("partial creation must not report ready on retry")
+	}
+}
+
+// pveListMatches applies filters the way PVE's ListInstances does: "name"
+// must equal the VM's name, each "label.<key>" filter goes through PVE's own
+// matcher against the VM's tag identifiers, and every other key is ignored.
+func pveListMatches(inst *cpi.Instance, filters map[string]string) bool {
+	if name, ok := filters["name"]; ok && inst.Name != name {
+		return false
+	}
+
+	tags := make([]string, 0, len(inst.Tags))
+	for tag := range inst.Tags {
+		tags = append(tags, tag)
+	}
+
+	return pve.MatchesLabelFilters(tags, filters)
+}
+
+// pveTagged returns tags as PVE reports them: one identifier per pair.
+func pveTagged(tags map[string]string) map[string]string {
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		out[pve.FormatTag(k, v)] = ""
+	}
+
+	return out
+}
+
+func TestCreateBastion_PVEOwnership(t *testing.T) {
+	t.Parallel()
+
+	own := map[string]string{"bloc": "prod", "managed-by": "ocfp", "role": "bastion"}
+	other := map[string]string{"bloc": "elsewhere", "managed-by": "ocfp", "role": "bastion"}
+
+	tests := []struct {
+		name       string
+		vms        []*cpi.Instance
+		wantCreate bool
+		wantErr    bool
+	}{
+		{
+			name:       "another blocs VM of the same name is not ours",
+			vms:        []*cpi.Instance{{ID: "201", Name: "prod-bastion", Tags: pveTagged(other)}},
+			wantCreate: true,
+		},
+		{
+			name: "our tagged VM is found",
+			vms:  []*cpi.Instance{{ID: "202", Name: "prod-bastion", Tags: pveTagged(own)}},
+		},
+		{
+			name: "an untagged VM of the same name is found",
+			vms:  []*cpi.Instance{{ID: "203", Name: "prod-bastion"}},
+		},
+		{
+			name: "our tagged VM wins over another blocs",
+			vms: []*cpi.Instance{
+				{ID: "201", Name: "prod-bastion", Tags: pveTagged(other)},
+				{ID: "202", Name: "prod-bastion", Tags: pveTagged(own)},
+			},
+		},
+		{
+			name: "two of our tagged VMs are refused",
+			vms: []*cpi.Instance{
+				{ID: "202", Name: "prod-bastion", Tags: pveTagged(own)},
+				{ID: "204", Name: "prod-bastion", Tags: pveTagged(own)},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			manager, fakeComp, _, _ := setupComputeTest(t, "pve")
+			fakeComp.pveFilters = true
+
+			for _, vm := range tt.vms {
+				fakeComp.instances[vm.ID] = vm
+			}
+
+			err := manager.CreateBastion(context.Background())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected an error, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("CreateBastion failed: %v", err)
+			}
+
+			if created := fakeComp.lastReq != nil; created != tt.wantCreate {
+				t.Errorf("created a VM = %v, want %v", created, tt.wantCreate)
+			}
+		})
 	}
 }
