@@ -946,7 +946,8 @@ type Bastion struct {
 	// Values: a direct public key, "github/<username>", "gitlab/<username>",
 	// or the host forms "github.com/<username>" and "gitlab.com/<username>",
 	// optionally with https:// in front and .keys at the end. See
-	// ParseBastionKeySpec. An entry that does not parse fails validation.
+	// ParseBastionKeySpec. An entry that does not parse is a warning at
+	// config load and an error when ocfp init bastion applies the keys.
 	Keys map[string]string `json:"keys,omitempty" mapstructure:"keys" yaml:"keys,omitempty"`
 	// OnLinkRoutes lists destinations the bastion must reach on-link rather
 	// than through its default gateway, as bare addresses or CIDRs. They are
@@ -1046,16 +1047,15 @@ const (
 )
 
 // Validate rejects a bastion config whose githubSshPort is neither the
-// default nor 443, and one with a keys entry ParseBastionKeySpec cannot
-// read. Zero means unset and behaves as 22.
+// default nor 443. Zero means unset and behaves as 22. A keys entry that
+// cannot be read is not an error here; see KeyWarnings.
 func (b *Bastion) Validate() error {
 	switch b.GitHubSSHPort {
 	case 0, GitHubSSHPortDefault, GitHubSSHPortHTTPS:
+		return nil
 	default:
 		return ErrBastionGitHubSSHPortInvalid(b.GitHubSSHPort)
 	}
-
-	return validateBastionKeys(b.Keys)
 }
 
 // EffectiveGitHubSSHPort returns the port the bastion should use for GitHub
@@ -2427,6 +2427,10 @@ func validate(cfg *Config) error {
 	err = cfg.Bastion.Validate()
 	if err != nil {
 		return err
+	}
+
+	for _, warning := range cfg.Bastion.KeyWarnings(cfg.Name) {
+		_, _ = fmt.Fprintln(os.Stderr, warning)
 	}
 
 	// Validate opt-in ocfp-artifacts VM config.

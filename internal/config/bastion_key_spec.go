@@ -96,37 +96,55 @@ func ParseBastionKeySpec(spec string) (BastionKeySpec, error) {
 		return BastionKeySpec{Source: form.source, Value: user}, nil
 	}
 
+	if !strings.ContainsAny(spec, "/ \t") {
+		return BastionKeySpec{}, fmt.Errorf("names no key source: %w", ErrBastionKeySpecInvalid)
+	}
+
 	return BastionKeySpec{}, ErrBastionKeySpecInvalid
 }
 
-// validateBastionKeys parses every bastion.keys entry, in label order, and
-// fails on the first one it cannot read.
-func validateBastionKeys(keys map[string]string) error {
-	labels := make([]string, 0, len(keys))
-	for label := range keys {
+// KeyWarnings returns one warning line for each keys entry that
+// ParseBastionKeySpec cannot read, in label order, naming the bloc, the
+// entry's label, and the reason. An unreadable entry does not stop the bloc
+// from loading, so commands that only read the bloc keep working, but
+// ResolveKeySpecs still refuses it before ocfp init bastion touches the
+// bastion.
+func (b *Bastion) KeyWarnings(bloc string) []string {
+	labels := make([]string, 0, len(b.Keys))
+	for label := range b.Keys {
 		labels = append(labels, label)
 	}
 
 	sort.Strings(labels)
 
+	var warnings []string
+
 	for _, label := range labels {
-		_, err := ParseBastionKeySpec(keys[label])
+		_, err := ParseBastionKeySpec(b.Keys[label])
 		if err != nil {
-			return BastionKeyEntryError(label, keys[label], err)
+			warnings = append(warnings, fmt.Sprintf(
+				"WARNING: bloc %s: bastion.keys.%s %q cannot be read (%v); ocfp init bastion will refuse to install keys until it is fixed",
+				bloc, label, bastionKeyPreview(b.Keys[label]), err))
 		}
 	}
 
-	return nil
+	return warnings
 }
 
 // BastionKeyEntryError names a bastion.keys entry that failed to parse. It
 // repeats only the first line of the value, cut short, so a private key
 // pasted there by mistake is never echoed.
 func BastionKeyEntryError(label, value string, err error) error {
+	return fmt.Errorf("bastion config: keys.%s %q: %w", label, bastionKeyPreview(value), err)
+}
+
+// bastionKeyPreview returns the first line of a bastion.keys value, cut
+// short, so a private key pasted there by mistake is never echoed.
+func bastionKeyPreview(value string) string {
 	preview, _, _ := strings.Cut(strings.TrimSpace(value), "\n")
 	if len(preview) > bastionKeyErrPreviewLen {
 		preview = preview[:bastionKeyErrPreviewLen] + "..."
 	}
 
-	return fmt.Errorf("bastion config: keys.%s %q: %w", label, preview, err)
+	return preview
 }

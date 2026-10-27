@@ -66,3 +66,21 @@ func TestResolveKeySpecsFailsOnAnEmptyEntry(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blank")
 }
+
+// A bare name is neither a GitHub nor a GitLab user, so applying keys fails
+// on it before anything is fetched.
+func TestResolveKeySpecsFailsOnABareName(t *testing.T) {
+	t.Parallel()
+
+	var github, gitlab []string
+
+	resolved, err := ssh.ResolveKeySpecs(context.Background(), map[string]string{
+		"alice": "github/alice",
+		"wayne": "wayne",
+	}, recordingFetch(&github), recordingFetch(&gitlab))
+	require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid)
+	assert.Contains(t, err.Error(), "keys.wayne")
+	assert.Nil(t, resolved)
+	assert.Empty(t, github)
+	assert.Empty(t, gitlab)
+}
