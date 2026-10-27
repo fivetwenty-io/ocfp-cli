@@ -3,6 +3,12 @@ package pve
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+
+	pveapierrors "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/errors"
 )
 
 // Proxmox provider errors.
@@ -108,6 +114,28 @@ func (e *vmIDNotFoundError) Is(target error) bool { return target == ErrVMNotFou
 // ErrVMIDNotFound returns an error when a VM ID is not found.
 func ErrVMIDNotFound(vmid int) error {
 	return &vmIDNotFoundError{vmid: vmid}
+}
+
+// vmConfigMissingMessage matches the whole message PVE sends with HTTP 500
+// when a request names a VM that has no config file on the request's node.
+//
+//nolint:gochecknoglobals // compiled once, read-only
+var vmConfigMissingMessage = regexp.MustCompile(`^Configuration file 'nodes/[^/']+/qemu-server/([0-9]+)\.conf' does not exist$`)
+
+// isVMConfigMissing reports whether err is PVE's answer to a read of VM vmid
+// on a node that holds no config for it. PVE answers that with HTTP 500, not
+// 404, so only the status together with that exact message, naming the same
+// VM id, counts. Any other server error says nothing about whether the VM
+// exists.
+func isVMConfigMissing(err error, vmid int) bool {
+	var apiErr *pveapierrors.APIError
+	if !errors.As(err, &apiErr) || apiErr.HTTPCode != http.StatusInternalServerError {
+		return false
+	}
+
+	match := vmConfigMissingMessage.FindStringSubmatch(strings.TrimSpace(apiErr.Message))
+
+	return match != nil && match[1] == strconv.Itoa(vmid)
 }
 
 // ErrVMNameNotFound returns an error when a VM by name is not found.
