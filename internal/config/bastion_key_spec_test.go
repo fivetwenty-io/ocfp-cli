@@ -151,3 +151,65 @@ func TestBastionValidateAcceptsEveryKeyForm(t *testing.T) {
 
 	require.NoError(t, b.Validate())
 }
+
+// The short github/ and gitlab/ forms keep the username exactly as written,
+// as they always have, so gitlab/alice.keys still names the account
+// alice.keys and never alice. Only the host and URL forms drop a trailing
+// .keys.
+func TestParseBastionKeySpecKeepsShortFormUsernamesVerbatim(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		spec   string
+		source config.BastionKeySource
+		value  string
+	}{
+		{"gitlab/alice.keys", config.BastionKeyGitLab, "alice.keys"},
+		{"github/alice.keys", config.BastionKeyGitHub, "alice.keys"},
+		{"gitlab/bob.smith", config.BastionKeyGitLab, "bob.smith"},
+		{"gitlab.com/alice.keys", config.BastionKeyGitLab, "alice"},
+		{"https://gitlab.com/alice.keys", config.BastionKeyGitLab, "alice"},
+		{"github.com/alice.keys.keys", config.BastionKeyGitHub, "alice.keys"},
+	}
+
+	for _, tc := range cases {
+		got, err := config.ParseBastionKeySpec(tc.spec)
+		require.NoError(t, err, tc.spec)
+		assert.Equal(t, tc.source, got.Source, tc.spec)
+		assert.Equal(t, tc.value, got.Value, tc.spec)
+	}
+}
+
+// A username ends up in a fetch URL, so one that could reach a different
+// path than the user's keys is rejected in every form.
+func TestParseBastionKeySpecRejectsUsernamesThatLeaveThePath(t *testing.T) {
+	t.Parallel()
+
+	prefixes := []string{
+		"github/", "gitlab/",
+		"github.com/", "gitlab.com/",
+		"https://github.com/", "https://gitlab.com/",
+	}
+	users := []string{
+		"alice/extra",
+		"../alice",
+		"alice/..",
+		"a..b",
+		"alice..keys",
+		"..",
+		"alice?x=1",
+		"alice#frag",
+		"al ice",
+		"al\tice",
+		"alice%2F..",
+	}
+
+	for _, prefix := range prefixes {
+		for _, user := range users {
+			spec := prefix + user
+
+			_, err := config.ParseBastionKeySpec(spec)
+			require.ErrorIs(t, err, config.ErrBastionKeySpecInvalid, "%q must not parse", spec)
+		}
+	}
+}

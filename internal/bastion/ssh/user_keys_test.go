@@ -84,3 +84,21 @@ func TestResolveKeySpecsFailsOnABareName(t *testing.T) {
 	assert.Empty(t, github)
 	assert.Empty(t, gitlab)
 }
+
+// gitlab/alice.keys fetches the account alice.keys, as it did before the
+// host forms existed, and never alice.
+func TestResolveKeySpecsFetchesShortFormUsernamesVerbatim(t *testing.T) {
+	t.Parallel()
+
+	var github, gitlab []string
+
+	_, err := ssh.ResolveKeySpecs(context.Background(), map[string]string{
+		"alice": "gitlab/alice.keys",
+		"bob":   "github/bob.keys",
+		"carol": "https://gitlab.com/carol.keys",
+	}, recordingFetch(&github), recordingFetch(&gitlab))
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []string{"alice.keys", "carol"}, gitlab)
+	assert.Equal(t, []string{"bob.keys"}, github)
+}
