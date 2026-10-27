@@ -452,17 +452,12 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 				continue
 			}
 
-			tagMap := make(map[string]string, len(vmTags))
-			for _, tag := range vmTags {
-				tagMap[tag] = ""
-			}
-
 			instance := &cpi.Instance{
 				ID:               strconv.Itoa(vmid),
 				Name:             name,
 				State:            m.mapVMState(status),
 				AvailabilityZone: nodeInfo.Name,
-				Tags:             tagMap,
+				Tags:             pveTagMap(vmTags),
 			}
 
 			instances = append(instances, instance)
@@ -1465,14 +1460,27 @@ func matchesLabelFilters(vmTags []string, filters map[string]string) bool {
 	return true
 }
 
-// vmToInstance converts Proxmox VM data to CPI Instance.
+// pveTagMap turns a VM's PVE tags into an instance's Tags: each tag
+// identifier becomes a key with an empty value, the form FormatTag renders.
+func pveTagMap(vmTags []string) map[string]string {
+	tagMap := make(map[string]string, len(vmTags))
+	for _, tag := range vmTags {
+		tagMap[tag] = ""
+	}
+
+	return tagMap
+}
+
+// vmToInstance converts Proxmox VM data to CPI Instance. The VM's tags come
+// from its config, the same tags ListInstances reports, so a caller can check
+// who owns a VM it read by id.
 func (m *ComputeManager) vmToInstance(vmid int, node string, status, config map[string]interface{}) *cpi.Instance {
 	instance := &cpi.Instance{
 		ID:               strconv.Itoa(vmid),
 		Name:             getStringFromMap(config, "name"),
 		State:            m.mapVMState(getStringFromMap(status, "status")),
 		AvailabilityZone: node,
-		Tags:             make(map[string]string),
+		Tags:             pveTagMap(parsePVETags(getStringFromMap(config, "tags"))),
 	}
 
 	// Parse flavor from config

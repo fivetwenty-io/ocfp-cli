@@ -583,8 +583,8 @@ func TestBlocShowLive_Success(t *testing.T) {
 	seedLiveBloc(t)
 
 	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
-		"100": {ID: "100", State: cpi.ResourceState("running")},
-		"101": {ID: "101", State: cpi.ResourceState("stopped")},
+		"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+		"101": {ID: "101", State: cpi.ResourceState("stopped"), Tags: artifactsTags("lab")},
 	}}
 	useBlocLive(t, reader, nil)
 
@@ -628,7 +628,7 @@ func TestBlocShowLive_BastionFailureKeepsTheRest(t *testing.T) {
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": connectionRefused()},
 		listErr:   connectionRefused(),
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 	}
 	useBlocLive(t, reader, nil)
 
@@ -652,7 +652,7 @@ func TestBlocShowLive_ArtifactsDisabledIsALiveError(t *testing.T) {
 	isolateBlocEnv(t)
 	seedLiveBloc(t)
 
-	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}}}
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}}}
 
 	original := newBlocLiveSource
 	newBlocLiveSource = func(_ context.Context, _, _ string) (blocLiveSource, error) {
@@ -694,8 +694,8 @@ func TestBlocShowLive_ArtifactsFoundByTagWhenStateLacksThem(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		instances: map[string]*cpi.Instance{
-			"100": {ID: "100", State: cpi.ResourceState("running")},
-			"555": {ID: "555", State: cpi.ResourceState("running")},
+			"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			"555": {ID: "555", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
 		},
 		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")}},
 	}
@@ -1125,8 +1125,8 @@ func TestBlocShowLive_ReadsTheSameStateFileTheInventoryShowed(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "lab.json"), []byte(liveState), 0o600))
 
 	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
-		"100": {ID: "100", State: cpi.ResourceState("running")},
-		"101": {ID: "101", State: cpi.ResourceState("stopped")},
+		"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+		"101": {ID: "101", State: cpi.ResourceState("stopped"), Tags: artifactsTags("lab")},
 	}}
 	useBlocLive(t, reader, nil)
 
@@ -1177,7 +1177,7 @@ func TestBlocShowLive_StaleBastionIDFallsBackToTheBastionByName(t *testing.T) {
 	reader := &fakeComputeReader{
 		getErrs: map[string]error{"100": vmNotFound("100")},
 		instances: map[string]*cpi.Instance{
-			"101": {ID: "101", State: cpi.ResourceState("running")},
+			"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
 		},
 		listed: []*cpi.Instance{
 			// Look-alikes that must never be picked.
@@ -1211,7 +1211,7 @@ func TestBlocShowLive_StaleBastionIDWithNoMatchIsAShortError(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": vmNotFound("100")},
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 		listed: []*cpi.Instance{
 			{ID: "200", Name: "other-bastion", Tags: bastionTags("other")},
 			{ID: "204", Name: "xlab-bastion", Tags: bastionTags("lab")},
@@ -1236,7 +1236,7 @@ func TestBlocShowLive_TwoBastionsWithTheSameNameAreNotGuessedBetween(t *testing.
 
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": vmNotFound("100")},
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 		listed: []*cpi.Instance{
 			{ID: "102", Name: "lab-bastion", Tags: bastionTags("lab")},
 			{ID: "103", Name: "lab-bastion", Tags: bastionTags("lab")},
@@ -1267,7 +1267,7 @@ func TestBlocShowLive_OnlyAVMNotFoundErrorStartsTheSearchByName(t *testing.T) {
 
 			reader := &fakeComputeReader{
 				getErrs:   map[string]error{"100": tc.err},
-				instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+				instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 				// The listing would find the bastion under its recorded id.
 				listed: []*cpi.Instance{{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
 			}
@@ -1289,7 +1289,7 @@ func TestBlocShowLive_SameIDFromTheSearchIsNotCalledStale(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": vmNotFound("100")},
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 		listed:    []*cpi.Instance{{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
 	}
 	useBlocLive(t, reader, nil)
@@ -1310,7 +1310,7 @@ func TestBlocShowLive_FailedSearchAfterNotFoundSaysBoth(t *testing.T) {
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": vmNotFound("100")},
 		listErr:   connectionRefused(),
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 	}
 	useBlocLive(t, reader, nil)
 
@@ -1325,7 +1325,7 @@ func TestBlocShowLive_AnotherBlocsBastionIsNeverPicked(t *testing.T) {
 
 	reader := &fakeComputeReader{
 		getErrs:   map[string]error{"100": vmNotFound("100")},
-		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
 		// The only VM with lab's bastion name belongs to another bloc.
 		listed: []*cpi.Instance{{ID: "205", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")}},
 	}
@@ -1348,8 +1348,8 @@ func TestBlocShowLive_OwnershipIsCheckedOnTheVMItself(t *testing.T) {
 	reader := &unfilteredReader{fakeComputeReader{
 		getErrs: map[string]error{"100": vmNotFound("100")},
 		instances: map[string]*cpi.Instance{
-			"102": {ID: "102", State: cpi.ResourceState("running")},
-			"556": {ID: "556", State: cpi.ResourceState("stopped")},
+			"102": {ID: "102", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			"556": {ID: "556", State: cpi.ResourceState("stopped"), Tags: artifactsTags("lab")},
 		},
 		listed: []*cpi.Instance{
 			{ID: "205", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
@@ -1380,7 +1380,7 @@ func TestBlocShowLive_TwoArtifactsVMsAreNotGuessedBetween(t *testing.T) {
 	writeBlocState(t, "lab", showState)
 
 	reader := &fakeComputeReader{
-		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
 		listed: []*cpi.Instance{
 			{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")},
 			{ID: "556", Name: "lab-artifacts", Tags: artifactsTags("lab")},
@@ -1402,7 +1402,7 @@ func TestBlocShowLive_AnotherBlocsArtifactsVMIsNeverPicked(t *testing.T) {
 	writeBlocState(t, "lab", showState)
 
 	reader := &fakeComputeReader{
-		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running")}},
+		instances: map[string]*cpi.Instance{"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")}},
 		listed:    []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("other")}},
 	}
 	useBlocLive(t, reader, nil)
@@ -1445,4 +1445,133 @@ func TestBlocShowLive_TimeoutBecomesALiveError(t *testing.T) {
 	}
 
 	assert.Contains(t, got, "state", "the local part of the output is intact")
+}
+
+func TestBlocShowLive_RecycledBastionIDFallsBackToTheBastionByName(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			// State's id now belongs to another bloc's VM.
+			"100": {ID: "100", Name: "other-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
+		},
+		listed: []*cpi.Instance{
+			{ID: "100", Name: "other-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			{ID: "102", Name: "lab-bastion", State: cpi.ResourceState("stopped"), Tags: bastionTags("lab")},
+		},
+	}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "102", bastion["vm_id"])
+	assert.Equal(t, "stopped", bastion["power"], "never the recycled VM's power")
+	assert.Equal(t, "", bastion["error"])
+	assert.Equal(t, "state records VM 100, which is not this bloc's bastion; the bastion is VM 102, so state is stale", bastion["note"])
+}
+
+func TestBlocShowLive_RecycledBastionIDWithNoMatchIsNeverReportedAsOurs(t *testing.T) {
+	for name, recycled := range map[string]*cpi.Instance{
+		"another bloc's VM": {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+		"an untagged VM":    {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolateBlocEnv(t)
+			seedLiveBloc(t)
+
+			reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+				"100": recycled,
+				"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
+			}}
+			useBlocLive(t, reader, nil)
+
+			bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+			assert.Equal(t, "100", bastion["vm_id"])
+			assert.Equal(t, "", bastion["power"])
+			assert.Equal(t, "VM 100 is not this bloc's bastion", bastion["error"])
+			assert.Equal(t, 1, reader.lists, "the search by name runs")
+		})
+	}
+}
+
+func TestBlocShowLive_RecycledArtifactsIDFallsBackToTheArtifactsVMByName(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			"101": {ID: "101", Name: "other-artifacts", State: cpi.ResourceState("running"), Tags: artifactsTags("other")},
+			"556": {ID: "556", Name: "lab-artifacts", State: cpi.ResourceState("stopped"), Tags: artifactsTags("lab")},
+		},
+		listed: []*cpi.Instance{{ID: "556", Name: "lab-artifacts", State: cpi.ResourceState("stopped"), Tags: artifactsTags("lab")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "556", artifacts["vm_id"])
+	assert.Equal(t, "stopped", artifacts["power"], "never the recycled VM's power")
+	assert.Equal(t, "", artifacts["error"])
+	assert.Equal(t, "state records VM 101, which is not this bloc's artifacts VM; the artifacts VM is VM 556, so state is stale", artifacts["note"])
+
+	text, err := runBloc(t, "show", "lab", "--live")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Artifacts note")
+}
+
+func TestBlocShowLive_MissingArtifactsIDFallsBackToTheArtifactsVMByName(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			"556": {ID: "556", Name: "lab-artifacts", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
+		},
+		listed: []*cpi.Instance{{ID: "556", Name: "lab-artifacts", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "556", artifacts["vm_id"])
+	assert.Equal(t, "running", artifacts["power"])
+	assert.Equal(t, "state records VM 101, which does not exist; the artifacts VM is VM 556, so state is stale", artifacts["note"])
+}
+
+func TestBlocShowLive_RecycledArtifactsIDWithNoMatchIsNeverReportedAsOurs(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+		"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+		"101": {ID: "101", Name: "lab-artifacts", State: cpi.ResourceState("running"), Tags: artifactsTags("other")},
+	}}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "101", artifacts["vm_id"])
+	assert.Equal(t, "", artifacts["power"])
+	assert.Equal(t, "VM 101 is not this bloc's artifacts VM", artifacts["error"])
+}
+
+func TestBlocShowLive_DiscoveredArtifactsVMIsCheckedWhenRead(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			// By the time it is read, the listed id is another bloc's VM.
+			"555": {ID: "555", Name: "other-artifacts", State: cpi.ResourceState("running"), Tags: artifactsTags("other")},
+		},
+		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "555", artifacts["vm_id"])
+	assert.Equal(t, "", artifacts["power"])
+	assert.Equal(t, "VM 555 is not this bloc's artifacts VM", artifacts["error"])
 }
