@@ -8,6 +8,7 @@ import (
 
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/ocfp/ocfp-cli-go/internal/cpi/ownedvm"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -52,7 +53,8 @@ type LookupResult struct {
 }
 
 // Lookup resolves the artifacts VM by checking state first, then falling back
-// to a provider tag query. Returns nil + nil error when no artifacts VM exists.
+// to a provider tag query for a VM that carries the bloc's artifacts tags.
+// It errors when more than one distinct VM matches. Returns nil + nil error when no artifacts VM exists.
 func Lookup(ctx context.Context, sm *state.Manager, provider cpi.Provider, blocName string) (*LookupResult, error) {
 	vmName := blocName + "-artifacts"
 
@@ -64,25 +66,27 @@ func Lookup(ctx context.Context, sm *state.Manager, provider cpi.Provider, blocN
 		return nil, nil
 	}
 
-	insts, err := provider.ComputeManager().ListInstances(ctx, map[string]string{
+	inst, err := ownedvm.Find(ctx, provider.ComputeManager(), vmName, map[string]string{
 		"ocfp:role": "artifacts",
 		"ocfp:bloc": blocName,
 	})
 	if err != nil {
+		if errors.Is(err, ownedvm.ErrAmbiguous) {
+			return nil, fmt.Errorf("looking up artifacts VM: %w", err)
+		}
+
 		return nil, fmt.Errorf("listing artifacts instances by tag: %w", err)
 	}
 
-	for _, inst := range insts {
-		if inst.Name == vmName {
-			return &LookupResult{
-				VMID:      inst.ID,
-				Name:      inst.Name,
-				PrivateIP: inst.PrivateIP,
-			}, nil
-		}
+	if inst == nil {
+		return nil, nil
 	}
 
-	return nil, nil
+	return &LookupResult{
+		VMID:      inst.ID,
+		Name:      inst.Name,
+		PrivateIP: inst.PrivateIP,
+	}, nil
 }
 
 func resultFromResource(r *state.Resource) *LookupResult {
