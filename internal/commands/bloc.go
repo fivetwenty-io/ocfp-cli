@@ -96,9 +96,10 @@ fields, and a bloc with no state has a null updated_at.`,
 
 // blocInventoryOptions builds the inventory options for this process. The
 // primary config, which is the --config file or else config.yml in the XDG
-// config home, is read first. The inventory then scans the config home and the
-// directories findEnvironments has always scanned, and it reads state from the
-// XDG state home and then the legacy home.
+// config home, is read first. The inventory then scans the directories the
+// root command searches for config.yml, in the same order, followed by the
+// config home and the directories findEnvironments has always scanned, and it
+// reads state from the XDG state home and then the legacy home.
 func blocInventoryOptions() blocinv.Options {
 	primary := viper.GetString("config")
 	if primary == "" {
@@ -108,10 +109,33 @@ func blocInventoryOptions() blocinv.Options {
 	return blocinv.Options{
 		PrimaryConfig: primary,
 		ConfigFiles:   nil,
-		ConfigDirs:    append([]string{config.ConfigHome()}, configSearchPaths()...),
+		ConfigDirs:    blocConfigDirs(),
 		StateHomes:    []string{config.StateHome(), config.OcfpHome()},
 		Current:       currentBlocName(),
 	}
+}
+
+// blocConfigDirs lists the directories the inventory scans. A directory that
+// appears twice is scanned once, at its first place, which keeps the root
+// command's search order ahead of the others.
+func blocConfigDirs() []string {
+	candidates := append(config.ConfigSearchDirs(), config.ConfigHome())
+	candidates = append(candidates, configSearchPaths()...)
+
+	seen := make(map[string]bool, len(candidates))
+	dirs := make([]string, 0, len(candidates))
+
+	for _, dir := range candidates {
+		if dir == "" || seen[filepath.Clean(dir)] {
+			continue
+		}
+
+		seen[filepath.Clean(dir)] = true
+
+		dirs = append(dirs, dir)
+	}
+
+	return dirs
 }
 
 // currentBlocName resolves the current bloc in the order the root command's
