@@ -53,8 +53,8 @@ broken, so a damaged bloc stays visible instead of vanishing from the list.
 ocfp never deletes or repairs it.
 
 The CURRENT column marks the bloc ocfp resolves as current, using the same
-order as every other command: OCFP_BLOC, then the saved current bloc, then
---bloc, then the only configured bloc.
+order as every other command: --bloc, then OCFP_BLOC, then the saved current
+bloc, then the only configured bloc.
 
 ocfp bloc show prints a summary of one bloc. It never prints secrets: the
 config summary is built from an allowlist of safe fields, and the state
@@ -111,12 +111,17 @@ func blocInventoryOptions() blocinv.Options {
 	}
 }
 
-// currentBlocName resolves the current bloc in the order resolveBlocName in
-// internal/cli uses: OCFP_BLOC, the saved current bloc, the --bloc flag, and
-// then the only bloc the config defines. That function lives in a package
-// that imports this one, so the order is repeated here and the two must stay
-// in step.
+// currentBlocName resolves the current bloc in the order the root command's
+// pre-run handler uses: the --bloc flag, OCFP_BLOC, the saved current bloc,
+// and then the only bloc the config defines. The pre-run handler stores the
+// bloc it resolved in viper before any subcommand runs, so reading viper
+// first gives the flag its priority. The remaining steps repeat the
+// handler's order for callers that run without it.
 func currentBlocName() string {
+	if resolved := viper.GetString("bloc"); resolved != "" {
+		return resolved
+	}
+
 	if fromEnv := os.Getenv("OCFP_BLOC"); fromEnv != "" {
 		return fromEnv
 	}
@@ -124,10 +129,6 @@ func currentBlocName() string {
 	saved, err := config.GetCurrentBloc()
 	if err == nil && saved != "" {
 		return saved
-	}
-
-	if fromFlag := viper.GetString("bloc"); fromFlag != "" {
-		return fromFlag
 	}
 
 	names, err := config.ListBlocNames(viper.GetString("config"))

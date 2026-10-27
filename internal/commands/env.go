@@ -111,15 +111,8 @@ func runEnvList(cmd *cobra.Command, _args []string) error {
 	log := logger.WithOperation("env-list")
 	out := cmd.OutOrStdout()
 
-	// The ACTIVE marker follows the --bloc flag, then OCFP_BLOC, as it
-	// always has.
-	currentEnv := viper.GetString("bloc")
-	if currentEnv == "" {
-		currentEnv = os.Getenv("OCFP_BLOC")
-	}
-
+	// The ACTIVE marker follows the same current bloc `ocfp bloc list` marks.
 	opts := blocInventoryOptions()
-	opts.Current = currentEnv
 
 	envs, err := blocinv.Collect(opts)
 	if err != nil {
