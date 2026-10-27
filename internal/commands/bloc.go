@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,21 +94,23 @@ fields, and a bloc with no state has a null updated_at.`,
 	return cmd
 }
 
-// blocInventoryOptions builds the inventory options for this process. It
-// searches the explicit --config file, the XDG config home (which holds
-// config.yml), and the directories findEnvironments has always scanned, and it
-// reads state from the XDG state home and then the legacy home.
+// blocInventoryOptions builds the inventory options for this process. The
+// primary config, which is the --config file or else config.yml in the XDG
+// config home, is read first. The inventory then scans the config home and the
+// directories findEnvironments has always scanned, and it reads state from the
+// XDG state home and then the legacy home.
 func blocInventoryOptions() blocinv.Options {
-	var files []string
-	if explicit := viper.GetString("config"); explicit != "" {
-		files = append(files, explicit)
+	primary := viper.GetString("config")
+	if primary == "" {
+		primary = filepath.Join(config.ConfigHome(), "config.yml")
 	}
 
 	return blocinv.Options{
-		ConfigFiles: files,
-		ConfigDirs:  append([]string{config.ConfigHome()}, configSearchPaths()...),
-		StateHomes:  []string{config.StateHome(), config.OcfpHome()},
-		Current:     currentBlocName(),
+		PrimaryConfig: primary,
+		ConfigFiles:   nil,
+		ConfigDirs:    append([]string{config.ConfigHome()}, configSearchPaths()...),
+		StateHomes:    []string{config.StateHome(), config.OcfpHome()},
+		Current:       currentBlocName(),
 	}
 }
 
