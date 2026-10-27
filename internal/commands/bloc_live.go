@@ -371,6 +371,14 @@ func readArtifacts(ctx context.Context, source blocLiveSource, entry blocinv.Ent
 		part.Note = read.Note
 		part.Error = read.Error
 
+		if read.VMID != lookup.VMID {
+			// Endpoint and TLS mode came from state's record of the old VM,
+			// so they say nothing about the replacement.
+			part.Endpoint = ""
+			part.TLSMode = ""
+			part.Note += fmt.Sprintf("; the endpoint and TLS mode in state are for VM %s, so they are not shown", lookup.VMID)
+		}
+
 		return
 	}
 
