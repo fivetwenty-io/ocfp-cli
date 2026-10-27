@@ -232,6 +232,84 @@ func TestBlocList_ReadsTheConfigPathDirectory(t *testing.T) {
 	assert.Equal(t, "gamma", rows[0]["name"])
 }
 
+// A bloc name defined in more than one searched directory resolves to the
+// first definition. The home configs dir, the legacy dirs, and the working
+// directory keep the precedence they always had, so a stray file in the
+// working directory or a legacy dir never shadows the home configs dir.
+func TestBlocInventory_DuplicateNamesKeepTheSearchOrder(t *testing.T) {
+	for name, tc := range map[string]struct {
+		winner, loser string
+		legacyPrimary bool
+	}{
+		"home configs dir over working dir": {
+			winner: "home-configs", loser: "cwd",
+		},
+		"legacy configs dir over working dir": {
+			winner: "legacy-configs", loser: "cwd",
+		},
+		"legacy dir over working dir": {
+			winner: "legacy-root", loser: "cwd",
+		},
+		"home configs dir over legacy dir holding the config": {
+			winner: "home-configs", loser: "legacy-root", legacyPrimary: true,
+		},
+		"home configs dir over working dir configs": {
+			winner: "home-configs", loser: "cwd-configs",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolateBlocEnv(t)
+
+			cwd, err := os.Getwd()
+			require.NoError(t, err)
+
+			dirs := map[string]string{
+				"home-configs":   filepath.Join(config.ConfigHome(), "configs"),
+				"legacy-configs": filepath.Join(config.OcfpHome(), "configs"),
+				"legacy-root":    config.OcfpHome(),
+				"cwd":            cwd,
+				"cwd-configs":    filepath.Join(cwd, "configs"),
+			}
+
+			if tc.legacyPrimary {
+				require.NoError(t, os.MkdirAll(config.OcfpHome(), 0o750))
+				require.NoError(t, os.WriteFile(filepath.Join(config.OcfpHome(), "config.yml"),
+					[]byte("blocs:\n  alpha:\n    provider: pve\n"), 0o600))
+			} else {
+				writeBlocsConfig(t, "blocs:\n  alpha:\n    provider: pve\n")
+			}
+
+			writeEnvConfig(t, dirs[tc.winner], "lab.yml", "lab", "pve")
+			writeEnvConfig(t, dirs[tc.loser], "lab.yml", "lab", "aws")
+
+			out, err := runBloc(t, "list", "--json")
+			require.NoError(t, err)
+
+			var rows []map[string]any
+			require.NoError(t, json.Unmarshal([]byte(out), &rows), out)
+
+			providers := map[string]any{}
+			for _, row := range rows {
+				providers[row["name"].(string)] = row["provider"]
+			}
+
+			assert.Equal(t, "pve", providers["lab"], "bloc list: %s", out)
+
+			viper.Reset()
+
+			var labRow []string
+			for _, line := range runEnvListCmd(t) {
+				if fields := strings.Fields(line); len(fields) > 0 && fields[0] == "lab" {
+					labRow = fields
+				}
+			}
+
+			require.NotEmpty(t, labRow, "env list has no lab row")
+			assert.Equal(t, "pve", labRow[1], "env list: %v", labRow)
+		})
+	}
+}
+
 const showConfig = `blocs:
   lab:
     provider: pve
