@@ -305,7 +305,9 @@ func (m *ComputeManager) queryAgentPrimaryIP(ctx context.Context, node string, v
 
 	resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 	if err != nil {
-		logger.Debugf("PVE: guest-agent network-get-interfaces failed for vmid=%d: %v", vmid, err)
+		// The error's text can carry the provider's response, so only its
+		// class is logged.
+		logger.Debugf("PVE: guest agent read for VM %d on node %s failed (%s)", vmid, node, describeReadError(err))
 
 		return ""
 	}
@@ -413,7 +415,9 @@ func (m *ComputeManager) ListInstances(ctx context.Context, filters map[string]s
 
 		resp, err := m.client.pveClient.GetCtx(ctx, path, nil)
 		if err != nil {
-			logger.Warnf("Failed to list VMs on node %s: %v", nodeInfo.Name, err)
+			// The error's text can carry the provider's response, so only
+			// its class is logged.
+			logger.Warnf("PVE: listing VMs on node %s failed (%s)", nodeInfo.Name, describeReadError(err))
 
 			continue
 		}
