@@ -34,6 +34,7 @@ func isolateBlocEnv(t *testing.T) {
 
 	isolateXDGHome(t)
 	t.Setenv("OCFP_BLOC", "")
+	t.Setenv("OCFP_CONFIG_PATH", "")
 	t.Chdir(t.TempDir())
 	viper.Reset()
 	t.Cleanup(viper.Reset)
@@ -188,6 +189,47 @@ func TestBlocList_ExplicitConfigFile(t *testing.T) {
 	out, err := runBloc(t, "list")
 	require.NoError(t, err)
 	assert.Contains(t, out, "remote")
+}
+
+// The inventory searches the directories the CLI searches for its own
+// config.yml, so a bloc defined only in ./config/config.yml is listed even
+// when the config home has a config.yml of its own.
+func TestBlocList_ReadsTheRepoConfigDirectory(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, "blocs:\n  alpha:\n    provider: pve\n")
+
+	require.NoError(t, os.MkdirAll("config", 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join("config", "config.yml"),
+		[]byte("blocs:\n  beta:\n    provider: aws\n"), 0o600))
+
+	out, err := runBloc(t, "list", "--json")
+	require.NoError(t, err)
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows), out)
+	require.Len(t, rows, 2, out)
+	assert.Equal(t, "alpha", rows[0]["name"])
+	assert.Equal(t, "beta", rows[1]["name"])
+	assert.Equal(t, filepath.Join("config", "config.yml"), rows[1]["config_file"])
+}
+
+// OCFP_CONFIG_PATH names the directory the CLI searches first, so the
+// inventory searches it too.
+func TestBlocList_ReadsTheConfigPathDirectory(t *testing.T) {
+	isolateBlocEnv(t)
+
+	dir := t.TempDir()
+	t.Setenv("OCFP_CONFIG_PATH", dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yml"),
+		[]byte("blocs:\n  gamma:\n    provider: gcp\n"), 0o600))
+
+	out, err := runBloc(t, "list", "--json")
+	require.NoError(t, err)
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows), out)
+	require.Len(t, rows, 1, out)
+	assert.Equal(t, "gamma", rows[0]["name"])
 }
 
 const showConfig = `blocs:

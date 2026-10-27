@@ -1788,6 +1788,29 @@ func defaultConfigPath() string {
 	return path
 }
 
+// ConfigPathEnv names the environment variable that overrides the directory
+// searched first for config.yml.
+const ConfigPathEnv = "OCFP_CONFIG_PATH"
+
+// ConfigSearchDirs returns the directories searched for config.yml, in
+// precedence order: the OCFP_CONFIG_PATH directory when it is set, else the
+// directory holding the default config.yml (the config home, or the legacy
+// home when only that has a config.yml); then the repo's ./config directory;
+// then the current directory. The root command searches these for the config
+// it loads, and the bloc inventory scans them for every bloc they define, so
+// the two cannot disagree about where config lives.
+func ConfigSearchDirs() []string {
+	dirs := make([]string, 0, 3) //nolint:mnd // the three search locations
+
+	if dir := os.Getenv(ConfigPathEnv); dir != "" {
+		dirs = append(dirs, dir)
+	} else if path := defaultConfigPath(); path != "" {
+		dirs = append(dirs, filepath.Dir(path))
+	}
+
+	return append(dirs, "config", ".")
+}
+
 // determineConfigPath determines the configuration file path.
 func determineConfigPath(configFile string) string {
 	// Priority 1: Explicit config file
