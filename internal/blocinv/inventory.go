@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/ocfp/ocfp-cli-go/internal/state"
 )
 
@@ -340,6 +341,10 @@ func (e Entry) Source() string {
 	}
 }
 
+// errStatePathRejected marks a state file whose path the state loader's path
+// check refuses, so it is never opened.
+var errStatePathRejected = errors.New("state file path rejected")
+
 // loadState reads one bloc's state file through the state manager so the
 // inventory parses state exactly as every other command does.
 func loadState(name, statePath string) (*state.State, error) {
@@ -348,6 +353,14 @@ func loadState(name, statePath string) (*state.State, error) {
 	_, err := os.Stat(statePath)
 	if err != nil {
 		return nil, fmt.Errorf("checking state file: %w", err)
+	}
+
+	// The state manager refuses a path with characters outside a narrow set,
+	// such as a space in the state home. Check first so that refusal is
+	// reported as itself and not as a file that fails to parse.
+	err = security.ValidateConfigPath(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errStatePathRejected, err)
 	}
 
 	manager, err := state.NewManager(filepath.Dir(statePath))
@@ -369,6 +382,10 @@ func loadState(name, statePath string) (*state.State, error) {
 // parser's own message can quote the offending line of the file, and a state
 // file can hold secrets, so the inventory never repeats it.
 func describeStateError(err error) string {
+	if errors.Is(err, errStatePathRejected) {
+		return "state file path is not allowed (it holds characters ocfp rejects in paths)"
+	}
+
 	var pathErr *fs.PathError
 
 	if errors.As(err, &pathErr) {

@@ -523,3 +523,21 @@ func TestCollect_UnreadableStateHomeIsSkippedAndLogged(t *testing.T) {
 	assert.Equal(t, "real", entries[0].Name)
 	assert.Contains(t, readLog(), locked)
 }
+
+func TestCollect_StatePathTheLoaderRejectsHasItsOwnPhrase(t *testing.T) {
+	// The state loader accepts only a narrow set of path characters, and a
+	// space is not one of them.
+	home := filepath.Join(t.TempDir(), "state home")
+	path := writeState(t, home, "spaced", stateJSON("pve", "lab", "2026-10-25T18:02:11Z"))
+
+	entries, err := Collect(Options{StateHomes: []string{home}})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	spaced := entries[0]
+	assert.True(t, spaced.Broken)
+	assert.Equal(t, path, spaced.StatePath)
+	assert.Contains(t, spaced.BrokenError, "path")
+	assert.Contains(t, spaced.BrokenError, "not allowed")
+	assert.NotContains(t, spaced.BrokenError, "parse", "a valid file at a rejected path is not a parse failure")
+}
