@@ -1550,16 +1550,25 @@ func TestBlocShowLive_RecycledBastionIDFallsBackToTheBastionByName(t *testing.T)
 }
 
 func TestBlocShowLive_RecycledBastionIDWithNoMatchIsNeverReportedAsOurs(t *testing.T) {
-	for name, recycled := range map[string]*cpi.Instance{
-		"another bloc's VM": {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
-		"an untagged VM":    {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running")},
+	for name, tc := range map[string]struct {
+		recycled *cpi.Instance
+		want     string
+	}{
+		"another bloc's VM": {
+			&cpi.Instance{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: bastionTags("other")},
+			"VM 100 is not this bloc's bastion",
+		},
+		"an untagged VM": {
+			&cpi.Instance{ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running")},
+			"VM 100 has no ownership tags, so it cannot be confirmed as this bloc's bastion",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			isolateBlocEnv(t)
 			seedLiveBloc(t)
 
 			reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
-				"100": recycled,
+				"100": tc.recycled,
 				"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
 			}}
 			useBlocLive(t, reader, nil)
@@ -1567,10 +1576,50 @@ func TestBlocShowLive_RecycledBastionIDWithNoMatchIsNeverReportedAsOurs(t *testi
 			bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
 			assert.Equal(t, "100", bastion["vm_id"])
 			assert.Equal(t, "", bastion["power"])
-			assert.Equal(t, "VM 100 is not this bloc's bastion", bastion["error"])
+			assert.Equal(t, tc.want, bastion["error"])
 			assert.Equal(t, 1, reader.lists, "the search by name runs")
+
+			text, err := runBloc(t, "show", "lab", "--live")
+			require.NoError(t, err)
+			assert.Contains(t, text, "Bastion error:")
+			assert.Contains(t, text, tc.want)
 		})
 	}
+}
+
+func TestBlocShowLive_UntaggedStateVMsAreReportedAsUnconfirmed(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+		// Only an unrelated tag, none of the ownership ones.
+		"100": {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: pveTags(map[string]string{"team": "x"})},
+		"101": {ID: "101", Name: "lab-artifacts", State: cpi.ResourceState("running")},
+	}}
+	useBlocLive(t, reader, nil)
+
+	live := liveJSON(t)["live"].(map[string]any)
+	assert.Equal(t, "VM 100 has no ownership tags, so it cannot be confirmed as this bloc's bastion", live["bastion"].(map[string]any)["error"])
+	assert.Equal(t, "VM 101 has no ownership tags, so it cannot be confirmed as this bloc's artifacts VM", live["artifacts"].(map[string]any)["error"])
+
+	text, err := runBloc(t, "show", "lab", "--live")
+	require.NoError(t, err)
+	assert.Contains(t, text, "VM 101 has no ownership tags, so it cannot be confirmed as this bloc's artifacts VM")
+}
+
+func TestBlocShowLive_UntaggedVMWithOneOwnerTagIsAnotherOwners(t *testing.T) {
+	isolateBlocEnv(t)
+	seedLiveBloc(t)
+
+	reader := &fakeComputeReader{instances: map[string]*cpi.Instance{
+		// Carries managed-by but names no bloc: tags exist, so not "untagged".
+		"100": {ID: "100", Name: "lab-bastion", State: cpi.ResourceState("running"), Tags: pveTags(map[string]string{"managed-by": "ocfp"})},
+		"101": {ID: "101", State: cpi.ResourceState("running"), Tags: artifactsTags("lab")},
+	}}
+	useBlocLive(t, reader, nil)
+
+	bastion := liveJSON(t)["live"].(map[string]any)["bastion"].(map[string]any)
+	assert.Equal(t, "VM 100 is not this bloc's bastion", bastion["error"])
 }
 
 func TestBlocShowLive_RecycledArtifactsIDFallsBackToTheArtifactsVMByName(t *testing.T) {
@@ -1658,4 +1707,23 @@ func TestBlocShowLive_DiscoveredArtifactsVMIsCheckedWhenRead(t *testing.T) {
 	assert.Equal(t, "555", artifacts["vm_id"])
 	assert.Equal(t, "", artifacts["power"])
 	assert.Equal(t, "VM 555 is not this bloc's artifacts VM", artifacts["error"])
+}
+
+func TestBlocShowLive_DiscoveredArtifactsVMLosingItsTagsIsUnconfirmed(t *testing.T) {
+	isolateBlocEnv(t)
+	writeBlocsConfig(t, showConfig)
+	writeBlocState(t, "lab", showState)
+
+	reader := &fakeComputeReader{
+		instances: map[string]*cpi.Instance{
+			"100": {ID: "100", State: cpi.ResourceState("running"), Tags: bastionTags("lab")},
+			// By the time it is read, the listed VM carries no tags at all.
+			"555": {ID: "555", Name: "lab-artifacts", State: cpi.ResourceState("running")},
+		},
+		listed: []*cpi.Instance{{ID: "555", Name: "lab-artifacts", Tags: artifactsTags("lab")}},
+	}
+	useBlocLive(t, reader, nil)
+
+	artifacts := liveJSON(t)["live"].(map[string]any)["artifacts"].(map[string]any)
+	assert.Equal(t, "VM 555 has no ownership tags, so it cannot be confirmed as this bloc's artifacts VM", artifacts["error"])
 }
