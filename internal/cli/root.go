@@ -476,13 +476,13 @@ func initConfig(cfgFile string, verbose bool) {
 	// under ConfigHome() (the XDG config-class base), with a dual-read
 	// fallback to the pre-migration ~/.ocfp/config.yml when only that
 	// already exists.
-	if os.Getenv("OCFP_CONFIG_PATH") == "" {
+	if os.Getenv(config.ConfigPathEnv) == "" {
 		if configHome := config.ConfigHome(); configHome != "" {
 			newConfigFile := filepath.Join(configHome, "config.yml")
 			legacyConfigFile := filepath.Join(config.OcfpHome(), "config.yml")
 
 			resolvedFile, _ := config.ResolveExisting(newConfigFile, legacyConfigFile)
-			_ = os.Setenv("OCFP_CONFIG_PATH", filepath.Dir(resolvedFile))
+			_ = os.Setenv(config.ConfigPathEnv, filepath.Dir(resolvedFile))
 		}
 	}
 
@@ -494,13 +494,13 @@ func initConfig(cfgFile string, verbose bool) {
 		// Search for config.yml in standard locations
 		viper.SetConfigName("config")
 		viper.SetConfigType("yml")
-		// Prefer the resolved config-class directory (ConfigHome(), or the
-		// legacy ~/.ocfp when only that has a config.yml).
-		viper.AddConfigPath(os.Getenv("OCFP_CONFIG_PATH"))
-		// Then repo config directory
-		viper.AddConfigPath("config")
-		// And current directory
-		viper.AddConfigPath(".")
+		// Search the resolved config-class directory (ConfigHome(), or the
+		// legacy ~/.ocfp when only that has a config.yml), then the repo
+		// config directory, then the current directory. The bloc inventory
+		// scans the same directories.
+		for _, dir := range config.ConfigSearchDirs() {
+			viper.AddConfigPath(dir)
+		}
 	}
 
 	// Read config file if it exists
