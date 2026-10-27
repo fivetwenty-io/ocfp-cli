@@ -290,7 +290,9 @@ object.
 
 With --live, the command also makes read-only provider calls to report the
 power state of the bastion and artifacts VMs, and to find the artifacts VM
-when the state does not name it. It starts, stops, and changes nothing. A live
+when the state does not name it. When the bastion's VM id in state no longer
+exists, it finds the bastion by its exact name, "<bloc>-bastion", and notes
+that state is stale. It starts, stops, and changes nothing. A live
 call that fails, or a bloc with artifacts disabled, shows up as an error in
 the Live section and never fails the local part of the output.`,
 		Example: `  ocfp bloc show
