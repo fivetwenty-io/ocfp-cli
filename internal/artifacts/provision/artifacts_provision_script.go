@@ -117,11 +117,11 @@ fi
 mkdir -p {{ .Mountpoint }}
 disk_uuid="$(blkid -o value -s UUID /dev/sdb)"
 if ! grep -q "UUID=${disk_uuid} " /etc/fstab; then
-  echo "UUID=${disk_uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail 0 2" >> /etc/fstab
+  echo "UUID=${disk_uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail,discard 0 2" >> /etc/fstab
   systemctl daemon-reload
 fi
 mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
-# Periodic trim rather than the discard mount option.
+# The weekly trim backs up the discard mount option.
 systemctl enable --now fstrim.timer || true
 {{- end }}
 chown -R rustfs:rustfs {{ .Mountpoint }}

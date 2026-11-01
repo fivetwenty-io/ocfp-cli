@@ -107,7 +107,7 @@ fi
 mkdir -p "${MOUNT}"
 
 if ! findmnt -n "${MOUNT}" >/dev/null 2>&1; then
-  mount "${REAL}" "${MOUNT}" || { log "FATAL: mount ${REAL} at ${MOUNT} failed"; exit 1; }
+  mount -o discard "${REAL}" "${MOUNT}" || { log "FATAL: mount ${REAL} at ${MOUNT} failed"; exit 1; }
   log "mounted ${REAL} at ${MOUNT}"
 fi
 
@@ -115,7 +115,7 @@ fi
 # and so the entry survives the device path changing.
 UUID="$(blkid -o value -s UUID "${REAL}" 2>/dev/null || true)"
 if [ -n "${UUID}" ] && ! grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
-  printf 'UUID=%s %s %s defaults,nofail 0 2\n' "${UUID}" "${MOUNT}" "${FSTYPE}" >> /etc/fstab
+  printf 'UUID=%s %s %s defaults,nofail,discard 0 2\n' "${UUID}" "${MOUNT}" "${FSTYPE}" >> /etc/fstab
   log "recorded ${MOUNT} in /etc/fstab"
 fi
 
