@@ -212,7 +212,7 @@ runcmd:
   - |
     uuid="$(blkid -o value -s UUID /dev/sdb)"
     if ! grep -q "UUID=${uuid} " /etc/fstab; then
-      echo "UUID=${uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail 0 2" >> /etc/fstab
+      echo "UUID=${uuid} {{ .Mountpoint }} {{ .FS }} defaults,nofail,discard 0 2" >> /etc/fstab
     fi
   - mountpoint -q {{ .Mountpoint }} || mount {{ .Mountpoint }}
   - systemctl enable --now fstrim.timer || true

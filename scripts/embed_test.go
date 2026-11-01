@@ -6,8 +6,9 @@ import (
 )
 
 // A thin pool reclaims nothing unless the guest sends TRIM. ext4 and xfs get
-// it from the periodic fstrim timer, and a ZFS pool only with autotrim on,
-// including a pool an earlier provision created without it.
+// it from the discard mount option, with the periodic fstrim timer as a
+// backstop, and a ZFS pool only with autotrim on, including a pool an earlier
+// provision created without it.
 func TestArtifactsScriptTrimsFreedBlocks(t *testing.T) {
 	body, err := Provision.ReadFile("provision/artifacts")
 	if err != nil {
@@ -17,6 +18,7 @@ func TestArtifactsScriptTrimsFreedBlocks(t *testing.T) {
 	script := string(body)
 
 	for _, want := range []string{
+		"${ARTIFACTS_DATA_FILESYSTEM} defaults,nofail,discard 0 2",
 		"systemctl enable --now fstrim.timer",
 		`zpool create -f -o ashift=12 -o autotrim=on "${ZPOOL}" "${DATA_DEVICE}"`,
 		`zpool set autotrim=on "${ZPOOL}"`,

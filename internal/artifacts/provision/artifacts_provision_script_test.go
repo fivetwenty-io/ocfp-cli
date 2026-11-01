@@ -197,7 +197,7 @@ func TestRenderArtifactsProvisionScript_DefaultExt4(t *testing.T) {
 
 	for _, w := range []string{
 		"mkfs.ext4 /dev/sdb",
-		"/data/rustfs ext4 defaults,nofail 0 2",
+		"/data/rustfs ext4 defaults,nofail,discard 0 2",
 		"systemctl enable --now fstrim.timer || true",
 		"After=network-online.target\n",
 	} {
