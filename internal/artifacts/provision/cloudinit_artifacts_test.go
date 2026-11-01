@@ -210,7 +210,7 @@ func TestRenderArtifactsCloudInit_DefaultExt4(t *testing.T) {
 	for _, want := range []string{
 		"mkfs.ext4 /dev/sdb",
 		"blkid -o value -s UUID /dev/sdb",
-		"/data ext4 defaults,nofail 0 2",
+		"/data ext4 defaults,nofail,discard 0 2",
 		"systemctl enable --now fstrim.timer || true",
 		"After=network-online.target\n",
 	} {
@@ -240,7 +240,7 @@ func TestRenderArtifactsCloudInit_XFS(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, want := range []string{"- xfsprogs", "mkfs.xfs /dev/sdb", "/data xfs defaults,nofail 0 2", "systemctl enable --now fstrim.timer || true"} {
+	for _, want := range []string{"- xfsprogs", "mkfs.xfs /dev/sdb", "/data xfs defaults,nofail,discard 0 2", "systemctl enable --now fstrim.timer || true"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("xfs output missing %q\n----\n%s", want, out)
 		}

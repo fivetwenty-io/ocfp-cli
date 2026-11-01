@@ -154,11 +154,11 @@ case "${ARTIFACTS_DATA_FILESYSTEM}" in
     mkdir -p "${RUSTFS_VOLUMES}"
     if ! grep -q "UUID=${disk_uuid} " /etc/fstab; then
       log "Adding ${DATA_DEVICE} (UUID=${disk_uuid}) to /etc/fstab at ${RUSTFS_VOLUMES}"
-      echo "UUID=${disk_uuid} ${RUSTFS_VOLUMES} ${ARTIFACTS_DATA_FILESYSTEM} defaults,nofail 0 2" >> /etc/fstab
+      echo "UUID=${disk_uuid} ${RUSTFS_VOLUMES} ${ARTIFACTS_DATA_FILESYSTEM} defaults,nofail,discard 0 2" >> /etc/fstab
       systemctl daemon-reload
     fi
     mountpoint -q "${RUSTFS_VOLUMES}" || mount "${RUSTFS_VOLUMES}"
-    # Periodic trim rather than the discard mount option.
+    # The weekly trim backs up the discard mount option.
     systemctl enable --now fstrim.timer || true
     ;;
   zfs)
