@@ -136,11 +136,12 @@ fi
 func cloudWatchdog() string {
 	script := fileTransport(WatchdogScript)
 	script = strings.Replace(script, "# --- keep ingress", `# Retry initial service jobs after a late data disk or transient download failure.
-if [[ ! -f /var/lib/ocfp/firstboot-done ]]; then
+# The boot-time ingress-only run only builds the table, so it skips the retries.
+if [[ "${1:-}" != "--ingress-only" && ! -f /var/lib/ocfp/firstboot-done ]]; then
   systemctl start --no-block ocfp-firstboot.service
   exit 0
 fi
-if [[ -f /etc/ocfp/bootstrap.sh && ! -f /var/lib/ocfp/bootstrap-done ]]; then
+if [[ "${1:-}" != "--ingress-only" && -f /etc/ocfp/bootstrap.sh && ! -f /var/lib/ocfp/bootstrap-done ]]; then
   systemctl start --no-block ocfp-bootstrap.service
 fi
 # --- keep ingress`, 1)
@@ -224,6 +225,7 @@ func Render(provider string, req *cpi.InstanceRequest) (string, error) {
 	write("/etc/systemd/system/ocfp-firstboot.service", "0644", strings.Replace(FirstbootService, "[Service]", "StartLimitIntervalSec=0\n\n[Service]\nTimeoutStartSec=900\nRestart=on-failure\nRestartSec=15", 1))
 	write("/etc/systemd/system/ocfp-tailscale-watchdog.service", "0644", WatchdogService)
 	write("/etc/systemd/system/ocfp-tailscale-watchdog.timer", "0644", WatchdogTimer)
+	write("/etc/systemd/system/ocfp-ingress.service", "0644", IngressService)
 
 	if req.DataDisk != nil {
 		write("/usr/local/sbin/ocfp-dataset", "0755", cloudDataset())
@@ -233,7 +235,7 @@ func Render(provider string, req *cpi.InstanceRequest) (string, error) {
 		// that machine needs its own first boot.
 		write(KeepHostKeysConfigPath, "0644", KeepHostKeysConfig)
 
-		for _, service := range []string{"ssh", "sshd", "tailscaled", "ocfp-firstboot", "ocfp-tailscale-watchdog"} {
+		for _, service := range []string{"ssh", "sshd", "tailscaled", "ocfp-firstboot", "ocfp-tailscale-watchdog", "ocfp-ingress"} {
 			dir := "/etc/systemd/system/" + service + ".service.d"
 			fmt.Fprintf(&script, "install -d -m 0755 %s\n", dir)
 			write(dir+"/ocfp-dataset.conf", "0644", "[Unit]\nRequires=ocfp-dataset.service\nAfter=ocfp-dataset.service\n")
@@ -249,7 +251,7 @@ func Render(provider string, req *cpi.InstanceRequest) (string, error) {
 		fmt.Fprintf(&script, "chown %s:%s /home/%s/.ssh/authorized_keys\n", user, user, user)
 	}
 
-	units := "ocfp-firstboot.service ocfp-tailscale-watchdog.timer"
+	units := "ocfp-firstboot.service ocfp-tailscale-watchdog.timer ocfp-ingress.service"
 	if req.DataDisk != nil {
 		units += " ocfp-dataset.service"
 	}

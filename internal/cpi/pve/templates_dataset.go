@@ -30,6 +30,7 @@ func seedUnitFiles() []seedUnitFile {
 		{"/etc/systemd/system/ocfp-firstboot.service", firstbootService, "0644"},
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.service", watchdogService, "0644"},
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.timer", watchdogTimer, "0644"},
+		{"/etc/systemd/system/ocfp-ingress.service", ingressService, "0644"},
 		{"/etc/systemd/system/ocfp-dataset.service", datasetService, "0644"},
 		{guestboot.KeepHostKeysConfigPath, keepHostKeysConfig, "0644"},
 		{guestboot.TrustInstanceCacheConfigPath, trustInstanceCacheConfig, "0644"},
@@ -42,6 +43,7 @@ func seedEnableCommands() []string {
 		"sudo systemctl daemon-reload",
 		"sudo systemctl enable ocfp-firstboot.service",
 		"sudo systemctl enable ocfp-tailscale-watchdog.timer",
+		"sudo systemctl enable ocfp-ingress.service",
 		"sudo systemctl enable ocfp-dataset.service",
 	}
 }

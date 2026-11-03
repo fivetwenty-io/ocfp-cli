@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 )
 
 // These tests pin the high-level invariants of the firstboot + watchdog
@@ -283,9 +285,11 @@ func runWatchdogIngress(t *testing.T, existing string) (calls, table string) {
 		t.Fatal(err)
 	}
 
-	for name, body := range map[string]string{"dmidecode": fakeDmidecode, "nft": fakeNft, "logger": fakeLogger} {
+	for name, body := range map[string]string{"dmidecode": fakeDmidecode, "nft": fakeNft, "logger": fakeLogger, "flock": "#!/bin/bash\nexit 0\n"} {
 		writeFakeExecutableFile(t, filepath.Join(bin, name), body)
 	}
+
+	head = strings.ReplaceAll(head, guestboot.IngressLockPath, filepath.Join(dir, "ingress.lock"))
 
 	script := filepath.Join(dir, "watchdog.sh")
 	if err := os.WriteFile(script, []byte(head), 0o600); err != nil {
