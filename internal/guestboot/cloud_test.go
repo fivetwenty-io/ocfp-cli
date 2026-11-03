@@ -273,3 +273,15 @@ func TestCloudDatasetWithoutJQStaysReachable(t *testing.T) {
 		t.Errorf("cloud dataset without jq does not name jq:\n%s", out)
 	}
 }
+
+// The same holds when jq is present but cannot run.
+func TestCloudDatasetWithBrokenJQStaysReachable(t *testing.T) {
+	out, err := runDatasetWithJQStub(t, cloudDataset(), "exit 127")
+	if err != nil {
+		t.Fatalf("cloud dataset with a broken jq: %v; output:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "FATAL: jq failed with exit status 127") {
+		t.Errorf("cloud dataset with a broken jq does not name the failure:\n%s", out)
+	}
+}

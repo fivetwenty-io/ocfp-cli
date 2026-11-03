@@ -109,9 +109,10 @@ func cloudDataset() string {
 	script = script[:start] + `REAL=$(/usr/local/sbin/ocfp-disk-resolve bastion) || exit 1
 ` + script[end:]
 	// ssh, sshd, and tailscaled require this unit here, so failing it would
-	// keep the bastion off the network. A missing jq still logs its FATAL
-	// but exits zero, which leaves the bastion reachable.
+	// keep the bastion off the network. A missing or broken jq still logs its
+	// FATAL but exits zero, which leaves the bastion reachable.
 	script = strings.Replace(script, "apt-get install jq.\"\n  exit 1\n", "apt-get install jq.\"\n  exit 0\n", 1)
+	script = strings.Replace(script, "install --reinstall jq.\"\n  exit 1\n", "install --reinstall jq.\"\n  exit 0\n", 1)
 	script = strings.Replace(script, "if [ -z \"${EXISTING}\" ]; then", `if [ -z "${EXISTING}" ]; then
   signatures=$(wipefs -n --noheadings -o TYPE "${REAL}") || { log "cannot inspect disk signatures"; exit 1; }
   if [ -n "$signatures" ]; then
