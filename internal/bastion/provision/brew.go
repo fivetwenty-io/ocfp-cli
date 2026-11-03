@@ -602,6 +602,68 @@ func (bm *BrewManager) generateSpruceOrigLinkScript() string {
 	return strings.Join(lines, "\n")
 }
 
+// GenerateJQBrewLinkScript points /usr/local/bin/jq at Homebrew's jq, so units
+// that run under systemd's default PATH, which does not include Linuxbrew, all
+// find the same jq. The ocfp-dataset, ocfp-firstboot, and
+// ocfp-tailscale-watchdog scripts need one.
+//
+// The link names Homebrew's own path rather than the Cellar file behind it, so
+// a brew upgrade is followed. A jq from apt or anywhere else does not stop the
+// link. A link counts as converged only when its immediate target is that
+// path. Any other link of ours is repointed, meaning a dangling one, one whose
+// target or resolved file is under the Linuxbrew tree (a direct link into the
+// versioned Cellar included), or one whose target names graft. A relative
+// target is read against the link's directory. Anything else at that path, a
+// real binary or a foreign symlink, is left alone with a warning.
+//
+// Homebrew's jq is linked only when it exists and runs. The units put
+// /usr/local/bin ahead of /usr/bin, so a link to a jq that cannot run would
+// replace a working apt jq with a broken one and could stop the boot units
+// that need it. When it does not run, the script warns and changes nothing,
+// leaving a link of ours in place rather than guessing which jq is better.
+//
+// Every branch exits zero, since the link is a convenience and must not stop
+// init.
+func (bm *BrewManager) GenerateJQBrewLinkScript(_ctx context.Context) string {
+	lines := []string{
+		"# Link Homebrew's jq into /usr/local/bin",
+		"",
+		"if [ ! -e " + jqBrewPath + " ]; then",
+		"    log_warning 'Homebrew jq not found at " + jqBrewPath + "; not linking jq'",
+		"elif ! " + jqBrewPath + " -n . >/dev/null 2>&1; then",
+		"    log_warning 'Homebrew jq at " + jqBrewPath + " does not run; not touching " + jqLinkPath + "'",
+		"else",
+		"    link_jq=0",
+		"    if [ ! -e " + jqLinkPath + " ] && [ ! -L " + jqLinkPath + " ]; then",
+		"        link_jq=1",
+		"    elif [ -L " + jqLinkPath + " ]; then",
+		"        jq_target=$(readlink " + jqLinkPath + ")",
+		`        case "$jq_target" in /*) jq_abs="$jq_target" ;; *) jq_abs="` + jqLinkDir + `/$jq_target" ;; esac`,
+		"        jq_real=$(readlink -f " + jqLinkPath + " 2>/dev/null || true)",
+		`        if [ "$jq_target" = "` + jqBrewPath + `" ]; then`,
+		"            log_info 'jq already linked to Homebrew jq'",
+		"        elif [ ! -e " + jqLinkPath + ` ] || case "$jq_abs" in *graft*|` + jqBrewRoot + `/*) true ;; *) false ;; esac || case "$jq_real" in ` + jqBrewRoot + `/*) true ;; *) false ;; esac; then`,
+		"            link_jq=1",
+		"        else",
+		"            log_warning '" + jqLinkPath + " exists and is not ours; leaving it alone'",
+		"        fi",
+		"    else",
+		"        log_warning '" + jqLinkPath + " exists and is not ours; leaving it alone'",
+		"    fi",
+		`    if [ "$link_jq" = 1 ]; then`,
+		"        if sudo mkdir -p " + jqLinkDir + " && sudo ln -sfn " + jqBrewPath + " " + jqLinkPath + ` && [ "$(readlink ` + jqLinkPath + `)" = "` + jqBrewPath + `" ]; then`,
+		"            log_success 'Linked Homebrew jq as " + jqLinkPath + "'",
+		"        else",
+		"            log_warning 'could not link Homebrew jq; continuing'",
+		"        fi",
+		"    fi",
+		"fi",
+		"",
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // shouldSkipCondition evaluates whether a condition should be skipped.
 func (bm *BrewManager) shouldSkipCondition(condition string) bool {
 	if condition == "" {

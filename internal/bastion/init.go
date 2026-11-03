@@ -167,6 +167,10 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	// not block the narrow modes on a bastion that never needed sudo for them.
 	_ = m.syncCloudInitDropIns(ctx)
 
+	// The same goes for the Homebrew jq link, on every provider, because the
+	// guest scripts that need jq run on AWS and GCP bastions too.
+	_ = m.syncJQBrewLink(ctx)
+
 	return m.runModeOrPhases(ctx)
 }
 

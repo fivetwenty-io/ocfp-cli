@@ -101,7 +101,15 @@ func (m *Manager) installBrewPackages(ctx context.Context) error {
 
 	// The `spruce` command has to exist before Genesis or any kit runs, so the
 	// link goes in right after the packages it points at.
-	return m.executeScript(ctx, brewMgr.GenerateGraftSpruceLinkScript(ctx), "graft-spruce-link")
+	err := m.executeScript(ctx, brewMgr.GenerateGraftSpruceLinkScript(ctx), "graft-spruce-link")
+	if err != nil {
+		return err
+	}
+
+	// Units run under systemd's default PATH, which does not include
+	// Linuxbrew, so Homebrew's jq is linked into /usr/local/bin. A failure
+	// only warns.
+	return m.syncJQBrewLink(ctx)
 }
 
 // installPostBrewPackages installs APT packages that have no brew formula,

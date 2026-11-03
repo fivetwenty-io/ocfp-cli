@@ -32,6 +32,16 @@ const (
 	spruceOrigPath = "/usr/local/bin/spruce-orig"
 )
 
+// Paths for the jq link. /usr/local/bin/jq always points at Homebrew's jq, by
+// its Linuxbrew path rather than the Cellar file it resolves to, so a brew
+// upgrade is followed without another init run.
+const (
+	jqBrewRoot = "/home/linuxbrew/.linuxbrew"
+	jqBrewPath = jqBrewRoot + "/bin/jq"
+	jqLinkDir  = "/usr/local/bin"
+	jqLinkPath = jqLinkDir + "/jq"
+)
+
 // SHIELD CLI install target. The version is pinned because the CLI and the
 // SHIELD core it talks to speak a versioned API, so the bastion gets the same
 // release the mgmt plane deploys.
