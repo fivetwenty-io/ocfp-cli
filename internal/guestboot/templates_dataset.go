@@ -52,6 +52,17 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+# A jq that is found but cannot run, such as one with a missing library, would
+# otherwise read the same way. Run it on a constant first, so a failure here is
+# jq itself and never the SKU, which is not JSON on a host that is not an ocfp
+# VM and which must not reach the log.
+JQSTATUS=0
+jq -n . >/dev/null 2>&1 || JQSTATUS=$?
+if [ "${JQSTATUS}" -ne 0 ]; then
+  log "FATAL: jq failed with exit status ${JQSTATUS}; cannot read the data-disk block, so the data disk was not prepared and the host keys were not restored. Reinstall it with apt-get install --reinstall jq."
+  exit 1
+fi
+
 DATA="$(printf '%s' "${SKU}" | jq -r '.data // empty' 2>/dev/null || true)"
 if [ -z "${DATA}" ]; then
   log "no data-disk block in SKU; nothing to do"
