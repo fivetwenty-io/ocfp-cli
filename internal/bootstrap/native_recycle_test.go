@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
 	"github.com/ocfp/ocfp-cli-go/internal/config"
 	"github.com/ocfp/ocfp-cli-go/internal/cpi"
 	"github.com/ocfp/ocfp-cli-go/internal/recycle"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func nativeTestCluster(t *testing.T) *NativeBastionRecycle {
@@ -247,5 +249,41 @@ func TestNativeCompleteRefusesRootDrift(t *testing.T) {
 	}
 	if current, err := c.Load(t.Context()); err != nil || current == nil {
 		t.Fatal("discarded recovery journal")
+	}
+}
+
+type scriptedGuest struct {
+	failed   bool
+	commands []string
+}
+
+func (s *scriptedGuest) run(_ context.Context, cmd string) (*ssh.CommandResult, error) {
+	s.commands = append(s.commands, cmd)
+	if cmd == nativeDatasetFailedCommand && s.failed {
+		return &ssh.CommandResult{ExitCode: 0}, nil
+	}
+	return &ssh.CommandResult{ExitCode: 1}, nil
+}
+
+// A failed dataset unit never becomes active, so waiting out the deadline
+// only hides the cause. The wait stops at once and says where to look.
+func TestNativeGuestWaitStopsWhenDatasetUnitFailed(t *testing.T) {
+	g := &scriptedGuest{failed: true}
+	err := waitForNativeGuest(t.Context(), g.run, "verify", time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "ocfp-dataset failed") || !strings.Contains(err.Error(), "journalctl -u ocfp-dataset") {
+		t.Fatalf("err = %v, want the failed unit and the journal command", err)
+	}
+	if len(g.commands) != 2 {
+		t.Fatalf("commands = %v, want one verification and one failure probe", g.commands)
+	}
+}
+
+func TestNativeGuestWaitKeepsWaitingWhileDatasetUnitIsNotFailed(t *testing.T) {
+	g := &scriptedGuest{}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	err := waitForNativeGuest(ctx, g.run, "verify", time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "readiness deadline exceeded") || strings.Contains(err.Error(), "ocfp-dataset failed") {
+		t.Fatalf("err = %v, want the plain deadline error", err)
 	}
 }
