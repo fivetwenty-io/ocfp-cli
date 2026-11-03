@@ -1023,6 +1023,9 @@ func (sg *ScriptGenerator) addPackageManagementSections(ctx context.Context, pro
 	// graft (brew) linked as spruce
 	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateGraftSpruceLinkScript(ctx))
 
+	// Homebrew jq linked into /usr/local/bin
+	sg.appendIfNotEmpty(scriptParts, brewMgr.GenerateJQBrewLinkScript(ctx))
+
 	// Post-brew APT packages (packages with no brew formula, installed after brew)
 	postBrewPackages := map[string]PackageGroup{
 		"post_brew": NewConfig(sg.provider, sg.config, nil).GetPostBrewPackages(),

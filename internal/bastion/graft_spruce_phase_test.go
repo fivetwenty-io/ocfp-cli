@@ -104,3 +104,54 @@ func TestInstallBrewPackages_FallsBackToUpstreamSpruce(t *testing.T) {
 	assert.Contains(t, got, "/usr/local/bin/spruce-orig /usr/local/bin/spruce")
 	assert.NotContains(t, got, "Link graft as spruce")
 }
+
+// jq has to be findable by systemd units, so the brew phase converges the
+// Homebrew jq link right after the spruce link, for every provider.
+func TestInstallBrewPackages_EmitsJQBrewLinkAfterSpruceLink(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "pve"} {
+		m, mock := managerWithMockSSH(provider)
+
+		require.NoError(t, m.installBrewPackages(context.Background()))
+
+		got := executedScripts(mock)
+		spruceIdx := strings.Index(got, "Link graft as spruce")
+		jqIdx := strings.Index(got, "/usr/local/bin/jq")
+
+		require.NotEqual(t, -1, spruceIdx, provider)
+		require.NotEqual(t, -1, jqIdx, "%s: jq brew link missing", provider)
+		assert.Less(t, spruceIdx, jqIdx, provider)
+	}
+}
+
+// A failing link must warn and let the rest of init carry on.
+func TestInstallBrewPackages_JQBrewLinkFailureIsSoft(t *testing.T) {
+	m, _ := managerWithMockSSH("aws")
+	m.sshClient = &failOnJQSSHClient{}
+
+	require.NoError(t, m.installBrewPackages(context.Background()))
+}
+
+// Bastions that are already provisioned take the fast path, which never runs
+// the brew phase, so the converge has to be callable on its own and soft.
+func TestConvergeJQBrewLink_FailureDoesNotAbortInit(t *testing.T) {
+	m, _ := managerWithMockSSH("pve")
+	m.sshClient = &failOnJQSSHClient{}
+
+	require.Error(t, m.convergeJQBrewLink(context.Background()))
+	require.NoError(t, m.syncJQBrewLink(context.Background()))
+}
+
+func TestConvergeJQBrewLink_RunsOnEveryProviderAndSkipsDryRun(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "pve"} {
+		m, mock := managerWithMockSSH(provider)
+
+		require.NoError(t, m.convergeJQBrewLink(context.Background()))
+		assert.Contains(t, executedScripts(mock), "/usr/local/bin/jq", provider)
+	}
+
+	m, mock := managerWithMockSSH("aws")
+	m.options.DryRun = true
+
+	require.NoError(t, m.convergeJQBrewLink(context.Background()))
+	assert.Empty(t, mock.executedCommands)
+}
