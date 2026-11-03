@@ -230,7 +230,7 @@ func Render(provider string, req *cpi.InstanceRequest) (string, error) {
 		// TrustInstanceCacheConfig stays off AWS and GCP. A new instance-id
 		// there means a new machine, such as one launched from an image, and
 		// that machine needs its own first boot.
-		write("/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg", "0644", KeepHostKeysConfig)
+		write(KeepHostKeysConfigPath, "0644", KeepHostKeysConfig)
 
 		for _, service := range []string{"ssh", "sshd", "tailscaled", "ocfp-firstboot", "ocfp-tailscale-watchdog"} {
 			dir := "/etc/systemd/system/" + service + ".service.d"
