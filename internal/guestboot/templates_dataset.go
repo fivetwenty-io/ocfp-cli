@@ -290,7 +290,13 @@ ExecStart=/usr/local/sbin/ocfp-dataset
 WantedBy=sysinit.target
 `
 
-// seedUnitFile is one file the template seed installs into the image.
+// KeepHostKeysConfigPath and TrustInstanceCacheConfigPath are where the two
+// cloud-init drop-ins live on a bastion.
+const (
+	KeepHostKeysConfigPath       = "/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg"
+	TrustInstanceCacheConfigPath = "/etc/cloud/cloud.cfg.d/99-ocfp-trust-instance-cache.cfg"
+)
+
 // KeepHostKeysConfig stops cloud-init from replacing the SSH host keys that
 // ocfp-dataset restores off the data disk.
 //
