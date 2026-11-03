@@ -26,3 +26,26 @@ func TestDatasetScriptMountsDataDiskWithDiscard(t *testing.T) {
 		t.Error("dataset script adds discard to a bind mount")
 	}
 }
+
+// cloud-init's init stage runs the ssh module, so the dataset unit has to
+// finish first. Ubuntu Resolute renamed that stage's unit from
+// cloud-init.service to cloud-init-network.service, and ordering against a
+// unit that does not exist orders against nothing. Both names stay, because
+// Ubuntu Noble still ships the old one.
+func TestDatasetServiceOrdersBeforeBothCloudInitNetworkUnits(t *testing.T) {
+	before := map[string]bool{}
+
+	for _, line := range strings.Split(DatasetService, "\n") {
+		if names, ok := strings.CutPrefix(line, "Before="); ok {
+			for _, name := range strings.Fields(names) {
+				before[name] = true
+			}
+		}
+	}
+
+	for _, want := range []string{"cloud-init.service", "cloud-init-network.service", "ssh.service", "sshd.service", "tailscaled.service", "ocfp-firstboot.service", "sysinit.target"} {
+		if !before[want] {
+			t.Errorf("ocfp-dataset.service is not ordered before %s:\n%s", want, DatasetService)
+		}
+	}
+}

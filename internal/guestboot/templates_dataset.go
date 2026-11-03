@@ -246,12 +246,21 @@ exit 0
 // same reason: it runs "tailscale up" with an auth key, and if it wins the race
 // the bastion registers as a brand new node and the identity we went to the
 // trouble of preserving never gets used.
+//
+// cloud-init's network stage is in the list because that stage runs the ssh
+// module. Ubuntu Resolute renamed its unit from cloud-init.service to
+// cloud-init-network.service, and an ordering against a unit that does not
+// exist orders against nothing, so both names are listed for Noble and
+// Resolute alike. The local stage is left unordered on purpose. It touches
+// neither the host keys nor the home directory, and ordering it after this
+// unit would put udev settling and a first-boot mkfs in front of network
+// setup.
 const DatasetService = `[Unit]
 Description=OCFP bastion data disk
 DefaultDependencies=no
 After=systemd-udev-settle.service local-fs.target
 Wants=systemd-udev-settle.service
-Before=ssh.service sshd.service tailscaled.service ocfp-firstboot.service cloud-init.service sysinit.target
+Before=ssh.service sshd.service tailscaled.service ocfp-firstboot.service cloud-init.service cloud-init-network.service sysinit.target
 ConditionVirtualization=!container
 
 [Service]
