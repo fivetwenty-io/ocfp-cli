@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ocfp/ocfp-cli-go/internal/guestboot"
@@ -20,15 +21,31 @@ var cloudInitDropIns = []struct{ path, content string }{
 	{guestboot.TrustInstanceCacheConfigPath, guestboot.TrustInstanceCacheConfig},
 }
 
-// dropInInstallScript writes one drop-in. It decodes the content into a
-// temporary file first and installs that, so a failed decode leaves the
-// existing file as it was. The script holds no single quote, so it is safe
-// inside bash -c '...'.
+const (
+	dropInMode  = "644"
+	dropInOwner = "root:root"
+)
+
+// dropInInstallScript writes one drop-in. It stages the decoded content in a
+// file beside the destination, sets the owner and mode on that file, and then
+// renames it into place, so the destination is always either the old file or
+// the finished new one. A failure at any step removes the staged file. The
+// script holds no single quote, so it is safe inside bash -c '...'.
 const dropInInstallScript = `set -euo pipefail
-tmp="$(mktemp -d)"
-trap "rm -rf -- \"$tmp\"" EXIT
-echo {{CONTENT}} | base64 -d > "$tmp/dropin"
-sudo install -D -m 0644 -o root -g root "$tmp/dropin" {{PATH}}`
+tmp="$(sudo mktemp "$(dirname {{PATH}})/.ocfp-dropin.XXXXXX")"
+trap "sudo rm -f -- \"$tmp\"" EXIT
+echo {{CONTENT}} | base64 -d | sudo tee "$tmp" > /dev/null
+sudo chown root:root "$tmp"
+sudo chmod 0644 "$tmp"
+sudo mv -f "$tmp" {{PATH}}`
+
+// renderDropInInstall fills the install script in for one drop-in.
+func renderDropInInstall(path, content string) string {
+	return strings.NewReplacer(
+		"{{CONTENT}}", base64.StdEncoding.EncodeToString([]byte(content)),
+		"{{PATH}}", path,
+	).Replace(dropInInstallScript)
+}
 
 // syncCloudInitDropIns is the form init runs. The drop-ins are a convenience, so
 // a bastion that refuses them, for example because sudo asks for a password,
@@ -83,29 +100,29 @@ func (m *Manager) convergeCloudInitDropIns(ctx context.Context) error {
 }
 
 // convergeCloudInitDropIn writes content to path unless the bastion's copy
-// already has the same checksum. A probe that fails counts as a missing file,
+// already has the same checksum, mode, and owner. A probe that fails counts as a missing file,
 // so the install runs and reports any real problem.
 func (m *Manager) convergeCloudInitDropIn(ctx context.Context, path, content string) error {
 	localSum := sha256.Sum256([]byte(content))
 	localChecksum := hex.EncodeToString(localSum[:])
 
-	checkCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", path)
+	// The probe prints the checksum, then the mode and owner. A missing file
+	// prints nothing, which never matches.
+	want := []string{localChecksum, dropInMode, dropInOwner}
+	checkCmd := fmt.Sprintf("sha256sum '%[1]s' 2>/dev/null | awk '{print $1}'; stat -c '%%a %%U:%%G' '%[1]s' 2>/dev/null", path)
 
 	checkResult, err := m.sshClient.ExecuteCommand(ctx, checkCmd)
 	if err != nil {
 		m.log.Debugw("Could not check the cloud-init drop-in's checksum", "path", path, "error", err)
 	}
 
-	if checkResult != nil && strings.TrimSpace(checkResult.Stdout) == localChecksum {
+	if checkResult != nil && slices.Equal(strings.Fields(checkResult.Stdout), want) {
 		m.log.Infow("cloud-init drop-in already in place, skipping", "path", path)
 
 		return nil
 	}
 
-	script := strings.NewReplacer(
-		"{{CONTENT}}", base64.StdEncoding.EncodeToString([]byte(content)),
-		"{{PATH}}", path,
-	).Replace(dropInInstallScript)
+	script := renderDropInInstall(path, content)
 
 	result, err := m.sshClient.ExecuteCommand(ctx, "bash -c '"+script+"'")
 	if err != nil {
