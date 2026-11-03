@@ -44,6 +44,11 @@ const FirstbootScript = `#!/bin/bash
 # snippet uploads).
 set -euo pipefail
 
+# systemd starts this with a minimal PATH. Look in the same extra directories
+# the dataset script does, after the system ones, so a tool that only linuxbrew
+# supplies, such as jq, is still found.
+export PATH="${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}:/usr/local/sbin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
+
 family=$(dmidecode -s system-family 2>/dev/null || true)
 if [[ "$family" != "ocfp-bastion" ]]; then
   # Not a bastion clone — exit cleanly so artifacts/jumpbox VMs cloned from
@@ -148,6 +153,11 @@ const WatchdogScript = `#!/bin/bash
 #      reach the guest kernel — sshd/ICMP time out (not refused). Re-running
 #      tailscale up does NOT rebuild the tun device. Remedy: restart tailscaled.
 set -euo pipefail
+
+# systemd starts this with a minimal PATH. Look in the same extra directories
+# the dataset script does, after the system ones, so a tool that only linuxbrew
+# supplies, such as jq, is still found.
+export PATH="${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}:/usr/local/sbin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
 
 family=$(dmidecode -s system-family 2>/dev/null || true)
 [[ "$family" == "ocfp-bastion" ]] || exit 0
