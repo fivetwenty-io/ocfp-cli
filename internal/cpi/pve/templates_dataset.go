@@ -7,6 +7,10 @@ const (
 	datasetScript      = guestboot.DatasetScript
 	datasetService     = guestboot.DatasetService
 	keepHostKeysConfig = guestboot.KeepHostKeysConfig
+
+	// trustInstanceCacheConfig is PVE-only. The cloud providers leave it
+	// out on purpose, because a new instance-id there is a new machine.
+	trustInstanceCacheConfig = guestboot.TrustInstanceCacheConfig
 )
 
 type seedUnitFile struct {
@@ -28,6 +32,7 @@ func seedUnitFiles() []seedUnitFile {
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.timer", watchdogTimer, "0644"},
 		{"/etc/systemd/system/ocfp-dataset.service", datasetService, "0644"},
 		{"/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg", keepHostKeysConfig, "0644"},
+		{"/etc/cloud/cloud.cfg.d/99-ocfp-trust-instance-cache.cfg", trustInstanceCacheConfig, "0644"},
 	}
 }
 

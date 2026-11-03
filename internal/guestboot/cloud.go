@@ -223,6 +223,9 @@ func Render(provider string, req *cpi.InstanceRequest) (string, error) {
 	if req.DataDisk != nil {
 		write("/usr/local/sbin/ocfp-dataset", "0755", cloudDataset())
 		write("/etc/systemd/system/ocfp-dataset.service", "0644", strings.Replace(DatasetService, "[Service]", "StartLimitIntervalSec=0\n\n[Service]\nTimeoutStartSec=660\nExecStartPost=-/bin/systemctl try-restart --no-block ssh.service tailscaled.service\nRestart=on-failure\nRestartSec=15", 1))
+		// TrustInstanceCacheConfig stays off AWS and GCP. A new instance-id
+		// there means a new machine, such as one launched from an image, and
+		// that machine needs its own first boot.
 		write("/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg", "0644", KeepHostKeysConfig)
 
 		for _, service := range []string{"ssh", "sshd", "tailscaled", "ocfp-firstboot", "ocfp-tailscale-watchdog"} {
