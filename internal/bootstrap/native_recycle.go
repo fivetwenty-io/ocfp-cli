@@ -483,16 +483,33 @@ func (c *NativeBastionRecycle) checkGuest(ctx context.Context, inst *cpi.Instanc
 		return err
 	}
 
+	return waitForNativeGuest(ctx, client.ExecuteCommand, j.VerificationCommand, 5*time.Second)
+}
+
+// nativeDatasetFailedCommand succeeds when the dataset unit is in the failed
+// state, which it only leaves by being fixed, so no amount of waiting helps.
+const nativeDatasetFailedCommand = "systemctl is-failed --quiet ocfp-dataset.service"
+
+// waitForNativeGuest runs the verification command until it succeeds or ctx
+// ends. When a try fails it also asks whether the dataset unit has failed, and
+// if so stops there and names the unit, because the deadline error alone would
+// not say why the guest never became ready.
+func waitForNativeGuest(ctx context.Context, run func(context.Context, string) (*ssh.CommandResult, error), verification string, interval time.Duration) error {
 	for {
-		result, err := client.ExecuteCommand(ctx, j.VerificationCommand)
+		result, err := run(ctx, verification)
 		if err == nil && result != nil && result.ExitCode == 0 {
 			return nil
+		}
+
+		failed, probeErr := run(ctx, nativeDatasetFailedCommand)
+		if probeErr == nil && failed != nil && failed.ExitCode == 0 {
+			return errors.New("guest bootstrap/data readiness failed: ocfp-dataset failed on the bastion; run journalctl -u ocfp-dataset there for the cause")
 		}
 
 		select {
 		case <-ctx.Done():
 			return errors.New("guest bootstrap/data readiness deadline exceeded")
-		case <-time.After(5 * time.Second):
+		case <-time.After(interval):
 		}
 	}
 }
