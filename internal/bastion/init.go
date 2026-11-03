@@ -163,10 +163,9 @@ func (m *Manager) Initialize(ctx context.Context) error {
 
 	// Like the key sync, this has to reach a bastion that is already
 	// provisioned, because those are the ones built from older templates.
-	err = m.convergeCloudInitDropIns(ctx)
-	if err != nil {
-		return fmt.Errorf("cloud-init drop-in sync failed: %w", err)
-	}
+	// A failure only warns, because the drop-ins are a convenience and must
+	// not block the narrow modes on a bastion that never needed sudo for them.
+	_ = m.syncCloudInitDropIns(ctx)
 
 	return m.runModeOrPhases(ctx)
 }
@@ -781,7 +780,7 @@ func (m *Manager) parallelPrePhaseList() []struct {
 	}{
 		{"ssh_agent_forwarding", m.setupSSHAgentForwarding}, // MUST BE FIRST
 		{"bastion_keys", m.configureBastionKeys},            // inject authorized_keys early
-		{"cloudinit_dropins", m.convergeCloudInitDropIns},   // pin cloud-init's instance on PVE
+		{"cloudinit_dropins", m.syncCloudInitDropIns},       // pin cloud-init's instance on PVE
 		{"prerequisite_check", m.runPrerequisiteChecks},
 		{"system_setup", m.setupSystem},
 		{"directories", m.createDirectories},

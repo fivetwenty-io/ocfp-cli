@@ -210,3 +210,14 @@ func TestPhaseLists_ConvergeCloudInitDropInsAfterBastionKeys(t *testing.T) {
 		assert.Equal(t, keys+1, dropIns, "%s list must run cloudinit_dropins right after bastion_keys", list)
 	}
 }
+
+// The drop-ins are a convenience, so a bastion whose sudo refuses them must
+// still get through init. The converge error stays visible to its own tests,
+// and the init-facing wrapper turns it into a warning.
+func TestSyncCloudInitDropIns_FailureDoesNotAbortInit(t *testing.T) {
+	t.Parallel()
+
+	mock := &dropInMockSSHClient{installErr: errors.New("exit status 1")}
+	require.NoError(t, dropInManager("pve", mock, false).syncCloudInitDropIns(context.Background()))
+	assert.NotEmpty(t, installsOf(mock.commands), "the install should still have been attempted")
+}

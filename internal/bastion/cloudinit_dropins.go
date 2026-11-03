@@ -30,6 +30,20 @@ trap "rm -rf -- \"$tmp\"" EXIT
 echo {{CONTENT}} | base64 -d > "$tmp/dropin"
 sudo install -D -m 0644 -o root -g root "$tmp/dropin" {{PATH}}`
 
+// syncCloudInitDropIns is the form init runs. The drop-ins are a convenience, so
+// a bastion that refuses them, for example because sudo asks for a password,
+// still goes on to the rest of init. The error names the drop-in path, and the
+// next run converges whatever is left.
+func (m *Manager) syncCloudInitDropIns(ctx context.Context) error {
+	err := m.convergeCloudInitDropIns(ctx)
+	if err != nil {
+		m.log.Warnw("Could not converge the cloud-init drop-ins, continuing without them",
+			"error", err)
+	}
+
+	return nil
+}
+
 // convergeCloudInitDropIns writes each cloud-init drop-in on a PVE bastion
 // that lacks it or holds a different copy, and leaves a matching one alone.
 //
