@@ -31,7 +31,7 @@ import (
 // knownParallelOnlyPhaseNames lists phase names that intentionally exist only
 // in the parallel-mode phase lists (parallelPrePhaseList/parPhaseList/
 // postPhaseList), not in the sequential getInitializationPhases() list.
-// ssh_agent_forwarding and bastion_keys run unconditionally in Initialize()
+// ssh_agent_forwarding, bastion_keys, and cloudinit_dropins run unconditionally in Initialize()
 // before the provisioning gate in both modes; the sequential list omits them
 // by design (see the comment above getInitializationPhases), while the
 // parallel-mode pre-list re-lists them so they still execute first when that
@@ -41,6 +41,7 @@ import (
 var knownParallelOnlyPhaseNames = map[string]bool{
 	"ssh_agent_forwarding": true,
 	"bastion_keys":         true,
+	"cloudinit_dropins":    true,
 }
 
 // sequentialPhaseNameOrder returns the sequential phase list's names in

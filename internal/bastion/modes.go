@@ -286,6 +286,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		fn   func(context.Context) error
 	}{
 		{"bastion_keys", manager.configureBastionKeys},
+		{"cloudinit_dropins", manager.convergeCloudInitDropIns},
 		{"prerequisite_check", manager.runPrerequisiteChecks},
 		{"system_setup", manager.setupSystem},
 		{"directories", manager.createDirectories},

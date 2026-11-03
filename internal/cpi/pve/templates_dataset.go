@@ -31,8 +31,8 @@ func seedUnitFiles() []seedUnitFile {
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.service", watchdogService, "0644"},
 		{"/etc/systemd/system/ocfp-tailscale-watchdog.timer", watchdogTimer, "0644"},
 		{"/etc/systemd/system/ocfp-dataset.service", datasetService, "0644"},
-		{"/etc/cloud/cloud.cfg.d/99-ocfp-keep-host-keys.cfg", keepHostKeysConfig, "0644"},
-		{"/etc/cloud/cloud.cfg.d/99-ocfp-trust-instance-cache.cfg", trustInstanceCacheConfig, "0644"},
+		{guestboot.KeepHostKeysConfigPath, keepHostKeysConfig, "0644"},
+		{guestboot.TrustInstanceCacheConfigPath, trustInstanceCacheConfig, "0644"},
 	}
 }
 
