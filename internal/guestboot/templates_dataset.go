@@ -26,12 +26,30 @@ const DatasetScript = `#!/usr/bin/env bash
 # Managed by ocfp. Baked into the bastion template by the template seed.
 set -uo pipefail
 
+# systemd starts this with a minimal PATH. A bastion whose apt jq was removed
+# can still have one under /usr/local/bin or linuxbrew, so look there too, but
+# after the system directories, so they only ever supply a tool the system
+# lacks.
+export PATH="${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}:/usr/local/sbin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
+
 log() { logger -t ocfp-dataset -s -- "$*" 2>&1; }
 
 SKU="$(dmidecode -s system-sku-number 2>/dev/null || true)"
 if [ -z "${SKU}" ]; then
   log "no SMBIOS SKU; nothing to do"
   exit 0
+fi
+
+# Every field below comes out of the SKU through jq, and a lookup that fails
+# reads as an empty answer. Without this check a missing jq is reported as an
+# SKU with no data block, and the host keys are silently never restored.
+#
+# The non-zero exit marks the unit failed so systemctl shows it. On PVE that
+# blocks nothing, because sshd, tailscaled, and ocfp-firstboot are only
+# ordered after this unit and none of them requires it.
+if ! command -v jq >/dev/null 2>&1; then
+  log "FATAL: jq not found on PATH (${PATH}); cannot read the data-disk block, so the data disk was not prepared and the host keys were not restored. Install it with apt-get install jq."
+  exit 1
 fi
 
 DATA="$(printf '%s' "${SKU}" | jq -r '.data // empty' 2>/dev/null || true)"

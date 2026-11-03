@@ -259,3 +259,17 @@ func TestCloudGuestDoesNotTrustTheInstanceCache(t *testing.T) {
 		})
 	}
 }
+
+// On AWS and GCP, ssh, sshd, and tailscaled require the dataset unit, so a
+// failure there keeps the bastion off the network. A missing jq is logged as
+// the fault it is but exits zero, which leaves the bastion reachable.
+func TestCloudDatasetWithoutJQStaysReachable(t *testing.T) {
+	out, err := runDatasetWithoutJQ(t, cloudDataset())
+	if err != nil {
+		t.Fatalf("cloud dataset without jq: %v; output:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "FATAL: jq not found") {
+		t.Errorf("cloud dataset without jq does not name jq:\n%s", out)
+	}
+}
