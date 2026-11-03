@@ -77,6 +77,14 @@ func TestDatasetScriptExtendsPathForJQ(t *testing.T) {
 func runDatasetWithoutJQ(t *testing.T, script string) (string, error) {
 	t.Helper()
 
+	return runDatasetWithJQStub(t, script, "")
+}
+
+// runDatasetWithJQStub is runDatasetWithoutJQ with a jq stub on the PATH when
+// jqBody is not empty. The stub is the whole script after its shebang.
+func runDatasetWithJQStub(t *testing.T, script, jqBody string) (string, error) {
+	t.Helper()
+
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not installed")
@@ -90,6 +98,12 @@ func runDatasetWithoutJQ(t *testing.T, script string) (string, error) {
 		"logger":    "#!" + bash + "\nshift 4\nprintf '%s\\n' \"$*\" >&2\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if jqBody != "" {
+		if err := os.WriteFile(filepath.Join(dir, "jq"), []byte("#!"+bash+"\n"+jqBody+"\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -139,6 +153,31 @@ func TestDatasetScriptFailsLoudlyWithoutJQ(t *testing.T) {
 
 	if strings.Contains(out, "nothing to do") {
 		t.Errorf("dataset script without jq still reports nothing to do:\n%s", out)
+	}
+
+	if strings.Contains(out, "stub-serial") {
+		t.Errorf("dataset script output carries the SKU:\n%s", out)
+	}
+}
+
+// A jq that is on the PATH but cannot run, for example because a library is
+// missing, used to read as a SKU with no data block, and the script reported
+// that there was nothing to do. It now says jq failed and with what status,
+// and the output still never carries the SKU.
+func TestDatasetScriptFailsLoudlyWhenJQCannotRun(t *testing.T) {
+	out, err := runDatasetWithJQStub(t, DatasetScript, "exit 127")
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("dataset script with a broken jq: err = %v, want exit status 1; output:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "FATAL: jq failed with exit status 127") {
+		t.Errorf("dataset script does not name the jq failure:\n%s", out)
+	}
+
+	if strings.Contains(out, "nothing to do") {
+		t.Errorf("dataset script reports nothing to do for a broken jq:\n%s", out)
 	}
 
 	if strings.Contains(out, "stub-serial") {
