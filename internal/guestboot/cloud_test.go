@@ -229,3 +229,33 @@ func TestCloudTailscaleHonorsExplicitSSHFalse(t *testing.T) {
 		}
 	}
 }
+
+// A cloud bastion keeps cloud-init's own judgement of what a new instance is.
+// A new instance-id on AWS or GCP means a new machine, such as one launched
+// from an image, so only PVE bastions trust the cached instance.
+func TestCloudGuestDoesNotTrustTheInstanceCache(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp"} {
+		t.Run(provider, func(t *testing.T) {
+			data, err := Render(provider, &cpi.InstanceRequest{Hostname: "bastion", DataDisk: &cpi.DataDiskSpec{Serial: "ocfpdata"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := base64.StdEncoding.DecodeString(strings.Split(data, "'")[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			gz, err := gzip.NewReader(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gz.Close()
+			body, _ := io.ReadAll(gz)
+			if !strings.Contains(string(body), "99-ocfp-keep-host-keys.cfg") {
+				t.Fatal("the cloud payload no longer installs the keep-host-keys drop-in")
+			}
+			if strings.Contains(string(body), "manual_cache_clean") || strings.Contains(string(body), "trust-instance-cache") {
+				t.Error("the cloud payload trusts cloud-init's instance cache")
+			}
+		})
+	}
+}

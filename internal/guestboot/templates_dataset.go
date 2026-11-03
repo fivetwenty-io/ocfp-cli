@@ -279,3 +279,36 @@ const KeepHostKeysConfig = `# Managed by OCFP.
 # them, or a recycled bastion comes up as a stranger to every known_hosts file.
 ssh_deletekeys: false
 `
+
+// TrustInstanceCacheConfig makes cloud-init trust its cached instance on a
+// PVE bastion, so a change to the VM's config never turns a reboot into a
+// first boot.
+//
+// PVE generates the NoCloud instance-id as a digest of the user-data and
+// network-config it builds from the VM config, and the user-data carries the
+// VM name. Renaming the VM, as the recycle flow does once the retired bastion
+// is gone, changes the instance-id the next time QEMU starts. Without this,
+// cloud-init would then re-run every per-instance module, regenerating the
+// host keys, resetting the password from cipassword, and running a full apt
+// upgrade during boot. With manual_cache_clean set, the local stage restores
+// the cached datasource without checking its instance-id, so the instance
+// stays the one cloud-init already set up.
+//
+// It costs nothing on a fresh clone, because the template seed ends with
+// cloud-init clean and the clone has no cache to trust. It does mean that a
+// later change to the VM's cloud-init settings, such as sshkeys or
+// cipassword, no longer reaches a running bastion. ocfp delivers keys over
+// SSH, so nothing it does depends on that.
+//
+// AWS and GCP bastions do not get this file. A new instance-id there really
+// is a new machine, such as an instance launched from an image of another,
+// and it needs its own first boot.
+const TrustInstanceCacheConfig = `# Managed by OCFP.
+# A PVE bastion is the same machine after its VM config changes. PVE derives
+# the NoCloud instance-id from the user-data it generates, which carries the
+# VM name, so a rename would make the next cold start a new instance, with
+# new host keys, a reset password, and an apt upgrade during boot. Trust the
+# cached instance instead. A fresh clone has no cache, because the template
+# seed runs cloud-init clean, so it still gets a normal first boot.
+manual_cache_clean: true
+`

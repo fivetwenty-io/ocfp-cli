@@ -89,7 +89,9 @@ var seedQuiesceCommand = strings.Join([]string{
 // seedFinalizeCommand is the last shell line of the seed, run just before the
 // shutdown. It rotates and vacuums the journal so the build boot does not ship
 // in every clone, runs cloud-init clean so clones re-run cloud-init with their
-// own config, and then empties /etc/machine-id.
+// own config, and then empties /etc/machine-id. The clean is also what makes
+// the trust-instance-cache drop-in safe to bake in, because a clone that
+// starts with no cache gets a normal first boot.
 //
 // An empty /etc/machine-id, rather than a missing one, is what makes systemd
 // treat the next boot as a first boot and generate a fresh id. Without it
