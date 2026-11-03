@@ -34,6 +34,12 @@ const IngressNftTable = `table ip ocfp_ingress {
 }
 `
 
+// IngressLockPath is the lock file every writer of the ocfp_ingress table
+// holds, through flock, while it checks or builds the table. Without it the
+// watchdog, firstboot, and the boot-time ingress unit could each append the
+// same rules to a table the others had just made.
+const IngressLockPath = "/run/ocfp-ingress.lock"
+
 // FirstbootScript reads the bastion config from SMBIOS, installs tailscale
 // (idempotent), and runs `tailscale up`. Invoked once by
 // ocfp-firstboot.service after cloud-init + network-online.
@@ -127,10 +133,14 @@ ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$sku")
 ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$sku")
 if [[ -n "$ing_origin" ]]; then
   command -v nft >/dev/null 2>&1 || apt-get install -y nftables
-  # Idempotent: drop and recreate our own table only.
-  nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
-  nft -f - <<NFT
+  # Idempotent: drop and recreate our own table only, under the lock the
+  # watchdog and the boot-time ingress unit also take.
+  (
+    flock 9
+    nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
+    nft -f - <<NFT
 ` + IngressNftTable + `NFT
+  ) 9>` + IngressLockPath + `
 fi
 `
 
@@ -139,7 +149,8 @@ fi
 // only reflects the control-plane/disco view — probes the actual tun datapath
 // with a kernel-level ICMP and restarts tailscaled when that datapath is
 // wedged (disco answers while inbound packets never reach the kernel).
-// Triggered by ocfp-tailscale-watchdog.timer. Reads SMBIOS each invocation so
+// Triggered by ocfp-tailscale-watchdog.timer, and with --ingress-only by
+// ocfp-ingress.service at boot, which stops after the ingress block. Reads SMBIOS each invocation so
 // PVE-side config edits propagate without bastion restart.
 const WatchdogScript = `#!/bin/bash
 # ocfp-tailscale-watchdog v4 — recover tailscale connectivity automatically.
@@ -162,6 +173,14 @@ export PATH="${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}:/usr/local/sbin:/usr/local/b
 family=$(dmidecode -s system-family 2>/dev/null || true)
 [[ "$family" == "ocfp-bastion" ]] || exit 0
 
+# The boot-time ingress unit must fail visibly when it cannot read the SKU. A
+# missing or broken jq would otherwise leave no origin, build nothing, and
+# still report success.
+if [[ "${1:-}" == "--ingress-only" ]] && ! jq -n . >/dev/null 2>&1; then
+  logger -t ocfp-tailscale-watchdog "jq is missing or cannot run; the ingress table was not built"
+  exit 1
+fi
+
 # --- keep ingress forwarding rules present (lost on reboot; nft is not persisted).
 # This runs BEFORE the connectivity health checks: after a clean reboot
 # tailscale comes back healthy on its own, and the healthy-path exit-0s below
@@ -169,21 +188,34 @@ family=$(dmidecode -s system-family 2>/dev/null || true)
 ing_sku=$(dmidecode -s system-sku-number 2>/dev/null || true)
 ing_origin=$(jq -r '.ingress.origin_ip // ""' <<<"$ing_sku" 2>/dev/null || true)
 ing_ports=$(jq -r '.ingress.ports // [80,443] | join(", ")' <<<"$ing_sku" 2>/dev/null || true)
-ing_reason=""
-ing_current=""
-if [[ -n "$ing_origin" ]] && ! ing_current=$(nft list table ip ocfp_ingress 2>/dev/null); then
-  ing_reason="ingress nft table missing; reinstalling"
-fi
-# Tables from older scripts DNAT every tailnet 80/443 packet, including
-# subnet-routed traffic bound for other VMs. Replace them.
-if [[ -n "$ing_origin" && -z "$ing_reason" && "$ing_current" != *"fib daddr type local"* ]]; then
-  ing_reason="ingress nft table not scoped to local traffic; replacing"
-  nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
-fi
-if [[ -n "$ing_reason" ]]; then
-  logger -t ocfp-tailscale-watchdog "$ing_reason"
-  nft -f - <<NFT
+# The check and the build run together under one lock, so concurrent writers
+# cannot both see the table missing and append the same rules twice.
+(
+  flock 9
+  ing_reason=""
+  ing_current=""
+  if [[ -n "$ing_origin" ]] && ! ing_current=$(nft list table ip ocfp_ingress 2>/dev/null); then
+    ing_reason="ingress nft table missing; reinstalling"
+  fi
+  # Tables from older scripts DNAT every tailnet 80/443 packet, including
+  # subnet-routed traffic bound for other VMs. Replace them.
+  if [[ -n "$ing_origin" && -z "$ing_reason" && "$ing_current" != *"fib daddr type local"* ]]; then
+    ing_reason="ingress nft table not scoped to local traffic; replacing"
+    nft delete table ip ocfp_ingress >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ing_reason" ]]; then
+    logger -t ocfp-tailscale-watchdog "$ing_reason"
+    nft -f - <<NFT
 ` + IngressNftTable + `NFT
+  fi
+) 9>` + IngressLockPath + `
+
+# ocfp-ingress.service runs this script with --ingress-only early in each boot,
+# to rebuild the table before the timer first fires. It must not reach the
+# tailscale health and repair logic below, which pings peers and may restart
+# tailscaled or run tailscale up before tailscale is connected.
+if [[ "${1:-}" == "--ingress-only" ]]; then
+  exit 0
 fi
 
 status=$(tailscale status --json 2>/dev/null || true)
@@ -287,4 +319,34 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
+`
+
+// IngressService rebuilds the ocfp_ingress nft table early in every boot. The
+// table lives only in the kernel, and ocfp-firstboot skips itself after its
+// first run, so without this unit the table would wait for the watchdog timer's
+// first firing, up to a few minutes into the boot.
+//
+// It runs the watchdog script itself, in ingress-only mode, so the table is
+// built by the one ingress block the watchdog already keeps and cannot drift
+// from it. Ingress-only mode exits before any tailscale check, so nothing here
+// pings peers, restarts tailscaled, or runs tailscale up before tailscale is
+// connected. The rule matches the interface by name, so the table loads before
+// tailscale0 exists, and the unit has no need to wait for the network.
+//
+// The ExecCondition line skips the unit, without failing it, when a partial
+// install left an older watchdog in place. That script ignores the argument and
+// would run the full tailscale repair at boot. ExecCondition needs systemd 243,
+// and Ubuntu 22.04 and 24.04 ship 249 and 255.
+const IngressService = `[Unit]
+Description=OCFP ingress forwarding table
+After=ocfp-dataset.service ocfp-firstboot.service
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/grep -q -- --ingress-only /usr/local/sbin/ocfp-tailscale-watchdog
+ExecStart=/usr/local/sbin/ocfp-tailscale-watchdog --ingress-only
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
 `

@@ -29,7 +29,7 @@ Bastions clone from `ubuntu-noble-bastion-template` (see `internal/cpi/pve/templ
 3. Driving the boot console via the PVE termproxy WebSocket (`internal/cpi/pve/termproxy.go`) to:
    - wait for cloud-init,
    - `apt-get update && apt-get install -y jq qemu-guest-agent`,
-   - write `/usr/local/sbin/ocfp-firstboot`, `/usr/local/sbin/ocfp-tailscale-watchdog`, and the matching `ocfp-firstboot.service` / `ocfp-tailscale-watchdog.{service,timer}` units,
+   - write `/usr/local/sbin/ocfp-firstboot`, `/usr/local/sbin/ocfp-tailscale-watchdog`, and the matching `ocfp-firstboot.service`, `ocfp-ingress.service`, and `ocfp-tailscale-watchdog.{service,timer}` units,
    - enable the units and run `cloud-init clean --logs`,
    - shut the VM down.
 
@@ -121,12 +121,18 @@ cannot route back to, and the connection would blackhole. Masquerading
 rewrites the source to the bastion's own address so the reply naturally
 routes back through it.
 
-nftables state does not survive a reboot. `ocfp-tailscale-watchdog`
-reinstalls the `ocfp_ingress` table when `nft list table ip
-ocfp_ingress` comes back empty, so a reboot self-heals within one watchdog
-cycle (≤ 5 minutes). It also replaces a table whose prerouting rule lacks
+nftables state does not survive a reboot. `ocfp-ingress.service` runs
+`ocfp-tailscale-watchdog --ingress-only` early in every boot, which rebuilds
+the `ocfp_ingress` table without touching any tailscale health check. The
+rule matches `tailscale0` by name, so it loads before the interface exists.
+The watchdog timer keeps the same guarantee afterward. It reinstalls the
+table when `nft list table ip
+ocfp_ingress` comes back empty, so a deleted table self-heals within one
+watchdog cycle (≤ 5 minutes). It also replaces a table whose prerouting rule lacks
 `fib daddr type local`, which upgrades bastions that still carry the older
 unscoped rule. A table that is already correct is left alone.
+
+The unit does not wait for the network, since loading the table needs none. Firstboot, the watchdog, and the ingress unit all take the same `flock` on `/run/ocfp-ingress.lock` while they check or build the table, so two of them running at once cannot append duplicate rules. If `jq` is missing or cannot run, the ingress-only run logs that and fails, so `systemctl status ocfp-ingress` shows it. The unit also carries an `ExecCondition` that checks the installed watchdog understands `--ingress-only`, so a partial install that left an older watchdog in place skips the unit instead of running the full tailscale repair at boot.
 
 ## Operator prerequisites
 

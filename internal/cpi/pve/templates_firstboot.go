@@ -11,4 +11,5 @@ const (
 	firstbootService    = guestboot.FirstbootService
 	watchdogService     = guestboot.WatchdogService
 	watchdogTimer       = guestboot.WatchdogTimer
+	ingressService      = guestboot.IngressService
 )

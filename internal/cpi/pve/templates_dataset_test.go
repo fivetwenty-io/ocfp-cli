@@ -305,3 +305,38 @@ func TestDatasetService_OrderedBeforeFirstboot(t *testing.T) {
 		t.Errorf("ocfp-dataset.service does not order itself before ocfp-firstboot.service:\n%s", datasetService)
 	}
 }
+
+func TestSeedWritesAndEnablesIngressUnit(t *testing.T) {
+	t.Parallel()
+
+	var found bool
+
+	for _, f := range seedUnitFiles() {
+		if f.path == "/etc/systemd/system/ocfp-ingress.service" {
+			found = true
+
+			if f.content != ingressService || f.mode != "0644" {
+				t.Errorf("ingress unit must be the shared guestboot unit with mode 0644, got mode %q", f.mode)
+			}
+		}
+	}
+
+	if !found {
+		t.Error("the seed does not install ocfp-ingress.service")
+	}
+
+	var enabled, timer bool
+
+	for _, c := range seedEnableCommands() {
+		enabled = enabled || strings.Contains(c, "enable ocfp-ingress.service")
+		timer = timer || strings.Contains(c, "enable ocfp-tailscale-watchdog.timer")
+	}
+
+	if !enabled {
+		t.Errorf("the seed never enables ocfp-ingress.service: %v", seedEnableCommands())
+	}
+
+	if !timer {
+		t.Error("the watchdog timer must stay enabled")
+	}
+}

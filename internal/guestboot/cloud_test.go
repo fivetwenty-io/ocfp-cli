@@ -151,13 +151,14 @@ func TestCloudWatchdogRestartsConnectorWithoutTailscale(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(`{"cloudflare":{"token":"test-token"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"systemctl": "#!/bin/bash\necho \"$*\" >> " + log + "\n[[ \"$1\" != is-active ]]\n", "logger": "#!/bin/bash\nexit 0\n"} {
+	for name, body := range map[string]string{"systemctl": "#!/bin/bash\necho \"$*\" >> " + log + "\n[[ \"$1\" != is-active ]]\n", "logger": "#!/bin/bash\nexit 0\n", "flock": "#!/bin/bash\nexit 0\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	script := strings.ReplaceAll(cloudWatchdog(), "/etc/ocfp/guest.json", cfg)
 	script = strings.ReplaceAll(script, "/var/lib/ocfp/firstboot-done", cfg)
+	script = strings.ReplaceAll(script, IngressLockPath, filepath.Join(dir, "ingress.lock"))
 	cmd := exec.Command("bash")
 	cmd.Stdin = strings.NewReader(script)
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
