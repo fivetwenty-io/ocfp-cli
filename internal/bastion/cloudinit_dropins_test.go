@@ -2,8 +2,12 @@ package bastion
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +23,7 @@ import (
 type dropInMockSSHClient struct {
 	commands   []string
 	checksums  map[string]string
+	modes      map[string]string // "mode owner:group" per path, default "644 root:root"
 	installErr error
 }
 
@@ -34,7 +39,12 @@ func (c *dropInMockSSHClient) ExecuteCommand(_ context.Context, cmd string) (*ss
 	if strings.HasPrefix(cmd, "sha256sum ") {
 		for path, sum := range c.checksums {
 			if strings.Contains(cmd, path) {
-				return &ssh.CommandResult{Stdout: sum + "\n"}, nil
+				mode := "644 root:root"
+				if m, ok := c.modes[path]; ok {
+					mode = m
+				}
+
+				return &ssh.CommandResult{Stdout: sum + "\n" + mode + "\n"}, nil
 			}
 		}
 
@@ -97,8 +107,8 @@ func TestConvergeCloudInitDropIns_WritesMissingDropInsOnPVE(t *testing.T) {
 		{trustInstanceCachePath, guestboot.TrustInstanceCacheConfig},
 	} {
 		cmd := installs[i]
-		assert.Equal(t, want.content, installedFile(t, cmd, "dropin"), "content of %s", want.path)
-		assert.Contains(t, cmd, "sudo install -D -m 0644 -o root -g root \"$tmp/dropin\" "+want.path)
+		assert.Equal(t, want.content, dropInContent(t, cmd), "content of %s", want.path)
+		assert.Contains(t, cmd, "sudo mv -f \"$tmp\" "+want.path)
 	}
 
 	for _, cmd := range mock.commands {
@@ -160,7 +170,7 @@ func TestConvergeCloudInitDropIns_RewritesOnlyTheFileThatDiffers(t *testing.T) {
 	installs := installsOf(mock.commands)
 	require.Len(t, installs, 1)
 	assert.Contains(t, installs[0], trustInstanceCachePath)
-	assert.Equal(t, guestboot.TrustInstanceCacheConfig, installedFile(t, installs[0], "dropin"))
+	assert.Equal(t, guestboot.TrustInstanceCacheConfig, dropInContent(t, installs[0]))
 }
 
 // AWS and GCP bastions are left alone. A new instance-id there is a new
@@ -220,4 +230,96 @@ func TestSyncCloudInitDropIns_FailureDoesNotAbortInit(t *testing.T) {
 	mock := &dropInMockSSHClient{installErr: errors.New("exit status 1")}
 	require.NoError(t, dropInManager("pve", mock, false).syncCloudInitDropIns(context.Background()))
 	assert.NotEmpty(t, installsOf(mock.commands), "the install should still have been attempted")
+}
+
+// dropInContent decodes the drop-in out of the install command.
+func dropInContent(t *testing.T, cmd string) string {
+	t.Helper()
+
+	match := regexp.MustCompile(`echo ([A-Za-z0-9+/=]+) \| base64 -d`).FindStringSubmatch(cmd)
+	require.Len(t, match, 2, "the install command carries the drop-in base64-encoded")
+
+	text, err := base64.StdEncoding.DecodeString(match[1])
+	require.NoError(t, err)
+
+	return string(text)
+}
+
+// A file with the right bytes but the wrong mode or owner is not converged,
+// because cloud-init may skip one it cannot read.
+func TestConvergeCloudInitDropIns_RewritesWrongModeOrOwner(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"600 root:root", "644 ubuntu:ubuntu"} {
+		mock := &dropInMockSSHClient{
+			checksums: map[string]string{
+				keepHostKeysPath:       sha256Hex(guestboot.KeepHostKeysConfig),
+				trustInstanceCachePath: sha256Hex(guestboot.TrustInstanceCacheConfig),
+			},
+			modes: map[string]string{trustInstanceCachePath: mode},
+		}
+		require.NoError(t, dropInManager("pve", mock, false).convergeCloudInitDropIns(context.Background()))
+
+		installs := installsOf(mock.commands)
+		require.Len(t, installs, 1, "mode %q", mode)
+		assert.Contains(t, installs[0], trustInstanceCachePath)
+	}
+}
+
+// The install runs for real here, with sudo and chown stubbed, because a
+// parse check cannot show that the destination is replaced whole or that a
+// failure leaves nothing behind.
+func TestDropInInstallScript_ReplacesAtomicallyAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+
+	run := func(t *testing.T, chownFails bool) (dest string, err error) {
+		t.Helper()
+
+		dir := t.TempDir()
+		stubs := t.TempDir()
+		dest = filepath.Join(dir, "99-test.cfg")
+		require.NoError(t, os.WriteFile(dest, []byte("old\n"), 0o600))
+
+		chown := "#!/bin/sh\nexit 0\n"
+		if chownFails {
+			chown = "#!/bin/sh\nexit 1\n"
+		}
+
+		require.NoError(t, os.WriteFile(filepath.Join(stubs, "sudo"), []byte("#!/bin/sh\nexec \"$@\"\n"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(stubs, "chown"), []byte(chown), 0o755))
+
+		script := renderDropInInstall(dest, "new\n")
+		cmd := exec.CommandContext(context.Background(), bash, "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+stubs+":"+os.Getenv("PATH"))
+		_, err = cmd.CombinedOutput()
+
+		entries, readErr := os.ReadDir(dir)
+		require.NoError(t, readErr)
+		require.Len(t, entries, 1, "only the destination may remain in %s", dir)
+
+		return dest, err
+	}
+
+	dest, err := run(t, false)
+	require.NoError(t, err)
+
+	got, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	assert.Equal(t, "new\n", string(got))
+
+	info, statErr := os.Stat(dest)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+
+	dest, err = run(t, true)
+	require.Error(t, err)
+
+	got, readErr = os.ReadFile(dest)
+	require.NoError(t, readErr)
+	assert.Equal(t, "old\n", string(got), "a failed install leaves the previous file alone")
 }
