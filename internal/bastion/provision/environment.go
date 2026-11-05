@@ -107,6 +107,14 @@ func (em *EnvironmentManager) generateEtcEnvironmentUpdate(envVars map[string]st
 		lines = append(lines, fmt.Sprintf("    echo '%s' >> \"$TMP_ENV\"", desired))
 	}
 
+	// Non-interactive ssh sessions never reach the PATH block in ~/.bashrc,
+	// so put Linuxbrew first on the PATH that pam_env hands every session.
+	lines = append(lines,
+		"    # Put Linuxbrew first on the PATH line when brew is installed",
+		"    "+etcEnvironmentPathFunction(linuxbrewPrefix),
+		"    "+etcEnvironmentPathFunctionName+` "$TMP_ENV" /etc/environment`,
+	)
+
 	lines = append(lines, "    sudo install -m 0644 \"$TMP_ENV\" /etc/environment")
 	lines = append(lines, "    rm -f \"$TMP_ENV\"")
 
@@ -114,6 +122,12 @@ func (em *EnvironmentManager) generateEtcEnvironmentUpdate(envVars map[string]st
 		desired := fmt.Sprintf("%s=%s", key, value)
 		lines = append(lines, fmt.Sprintf("    grep -qF '%s' /etc/environment && log_success '%s set in /etc/environment' || log_warning '%s missing in /etc/environment'", desired, key, key))
 	}
+
+	lines = append(lines,
+		fmt.Sprintf("    if [ -d %s/bin ]; then", linuxbrewPrefix),
+		"        "+etcEnvironmentPathCheck(linuxbrewPrefix, "/etc/environment"),
+		"    fi",
+	)
 
 	lines = append(lines, "    ")
 

@@ -347,9 +347,13 @@ Two inits on the same account take turns through a lock on `~/.ocfp/rc-path.lock
 
 Installers such as bun and nvm append to the rc files without taking that lock. To keep their lines, the phase keeps an exact copy of each file as it read it, and just before the rename it compares that copy with the live file. If the file changed in between, the phase reads it again and rebuilds the new content, up to three times. If the file is still changing after the third try, the phase warns and leaves it alone for the next init.
 
-An existing bastion converges too. Before `init bastion` looks for the provisioned marker, it runs the shell environment script once, in the same way for a bastion that is already provisioned and for a new one. A failure there only logs a warning. A dry run changes nothing.
+An existing bastion converges to the new order on the next `ocfp init bastion`, including the `/etc/environment` and `/etc/profile.d/ocfp.sh` changes. Before `init bastion` looks for the provisioned marker, it runs the shell environment script and the system environment script once each, in the same way for a bastion that is already provisioned and for a new one. A failure there only logs a warning. A dry run changes nothing.
 
 `/etc/profile.d/ocfp.sh` applies the same ordering right after it loads Homebrew's environment, so a login shell has the right order before it reads the user's own files.
+
+A command run over a non-interactive SSH session reads none of those files, because Ubuntu's `~/.bashrc` returns early when the shell is not interactive. For those sessions the `system_environment` phase also rewrites the `PATH` line in `/etc/environment` so that the two Homebrew directories come first, followed by the existing entries without duplicates. It does this only when Homebrew is installed. `/etc/environment` cannot refer to `$HOME`, so `~/bin` is not part of that line.
+
+The phase rewrites every `PATH` line it recognizes and keeps each line's indentation, its `export` prefix, and its quoting. It recognizes a line made of optional indentation, an optional `export `, and then `PATH=` followed by a value that is either unquoted with no spaces, quotes, or `#`, or wrapped whole in one kind of quote that does not appear inside it. If any line sets `PATH` some other way, for example with a trailing `#` comment, unbalanced quotes, or a backslash, or a `PATH` line holds no directories, the phase leaves `/etc/environment` exactly as it was and warns with the line number and the reason. Only a file with no `PATH` line at all gets a new one, built from Ubuntu's default `PATH`.
 
 ## Directory Structure
 
