@@ -119,7 +119,7 @@ The bastion initialization proceeds through these phases:
 
 ### Development Tools
 - **Node.js** (via NVM): JavaScript runtime
-- **Bun**: Fast JavaScript runtime and toolkit
+- **Bun**: A fast JavaScript runtime and toolkit that init installs into `~/.bun/bin`. Init skips the install when `~/.bun/bin/bun` already runs, even though that directory is not on the provisioning shell's `PATH`.
 - **Neovim**: Modern text editor
 - **Snap Tools**: go, kubectl, helm
 - **yq**: YAML processor
