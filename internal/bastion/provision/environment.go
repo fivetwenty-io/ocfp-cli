@@ -32,28 +32,17 @@ func (em *EnvironmentManager) GetSystemEnvironmentVarsForPreview() map[string]st
 
 // GenerateShellEnvironmentScript generates .bashrc configuration.
 func (em *EnvironmentManager) GenerateShellEnvironmentScript(_ctx context.Context) string {
-	// Preallocate a sensible capacity; mostly fixed-size content
-	lines := make([]string, 0, scriptBufferEnvironmentBase)
+	return em.shellEnvironmentScript(rcLockWaitSeconds)
+}
 
-	lines = append(lines, "# Shell environment configuration")
-	lines = append(lines, "")
-
-	// Generate bashrc additions
-	bashrcContent := em.generateBashrcAdditions()
-
-	lines = append(lines, "# Check if shell environment already configured")
-	lines = append(lines, `if grep -q "OCFP Environment Configuration" "$HOME/.bashrc" 2>/dev/null; then`)
-	lines = append(lines, "    log_success 'Shell environment already configured'")
-	lines = append(lines, "else")
-	lines = append(lines, "    log_info 'Configuring shell environment'")
-	lines = append(lines, "    cat >> \"$HOME/.bashrc\" << 'BASHRC_EOF'")
-	lines = append(lines, bashrcContent)
-	lines = append(lines, "BASHRC_EOF")
-	lines = append(lines, "    log_success 'Shell environment configured'")
-	lines = append(lines, "fi")
-	lines = append(lines, "")
-
-	return strings.Join(lines, "\n")
+// shellEnvironmentScript builds the shell environment phase with lockWait as
+// the number of seconds it waits for the per-user rc lock.
+func (em *EnvironmentManager) shellEnvironmentScript(lockWait int) string {
+	// Runs on every init. The one-time OCFP configuration is added only when
+	// ~/.bashrc lacks it, while the PATH block is moved back to the end of
+	// each rc file every time, even after installers append PATH lines.
+	return "# Shell environment configuration\n\n" +
+		generateRcConvergeScript(em.generateBashrcAdditions(), lockWait)
 }
 
 // GenerateSystemEnvironmentScript generates /etc/environment and /etc/profile.d setup.
@@ -150,6 +139,8 @@ func (em *EnvironmentManager) generateProfileDScript(envVars map[string]string) 
 		`    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"`,
 		"fi",
 		"",
+		"# PATH order: ~/bin, then Linuxbrew, then the rest without duplicates",
+		pathOrderSnippet(linuxbrewPrefix),
 	)
 
 	for key, value := range envVars {

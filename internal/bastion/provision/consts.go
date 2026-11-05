@@ -69,7 +69,6 @@ const (
 	scriptBufferBase                = 64
 	scriptBufferDirectoriesBase     = 16
 	scriptBufferDirectoriesPerItem  = 16
-	scriptBufferEnvironmentBase     = 32
 	scriptBufferEnvironmentPerItem  = 3
 	scriptBufferOCFPBase            = 16
 	scriptBufferOCFPPerTool         = 6
