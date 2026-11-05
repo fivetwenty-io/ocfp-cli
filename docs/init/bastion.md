@@ -335,6 +335,22 @@ AZURE_CLIENT_ID=<from-config>
 AZURE_CLIENT_SECRET=<from-config>
 ```
 
+### Shell PATH
+
+Every shell on the bastion puts `~/bin` first, then Homebrew's `/home/linuxbrew/.linuxbrew/bin` and `/home/linuxbrew/.linuxbrew/sbin`, and then the rest of `PATH` in the order it already had. Each directory appears only once, and empty entries are dropped. `~/bin` is added only when the directory exists, and the Homebrew directories are added only when Homebrew is installed. If nothing is left after that, as with a `PATH` made only of colons, the shell gets `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
+
+The `shell_environment` phase keeps this order by writing a block between the lines `# >>> ocfp PATH order (managed by ocfp) >>>` and `# <<< ocfp PATH order (managed by ocfp) <<<`. The block goes at the end of `~/.bashrc`, which the phase creates when it is missing, and at the end of `~/.profile`, `~/.bash_profile`, and `~/.bash_login` when each of those files exists. The phase runs on every init, so when an installer appends its own `PATH` line, the next init moves the block back to the end and removes any other copy of it from the file. A file that already ends with the current block is not rewritten. Any other file is replaced in one step. The phase stages the new content in a copy of the file in the same directory, so the copy keeps the file's mode, owner, and group, and then renames the copy over the file. An interrupted init therefore leaves either the old file or the new one, never a partly written file. When the rc file is a symlink, the phase updates the file it points to and leaves the link in place.
+
+The phase checks each file's markers before it writes anything. If a file has a begin marker without a matching end marker, or an end marker without a begin marker, the phase warns and leaves that file alone, because it could otherwise cut off whatever follows the marker. For `~/.bashrc` that also means the one-time OCFP configuration is not added until the markers are fixed.
+
+Two inits on the same account take turns through a lock on `~/.ocfp/rc-path.lock`. If the lock is still busy after 30 seconds, the phase warns and leaves the rc files for the next init rather than failing.
+
+Installers such as bun and nvm append to the rc files without taking that lock. To keep their lines, the phase keeps an exact copy of each file as it read it, and just before the rename it compares that copy with the live file. If the file changed in between, the phase reads it again and rebuilds the new content, up to three times. If the file is still changing after the third try, the phase warns and leaves it alone for the next init.
+
+An existing bastion converges too. Before `init bastion` looks for the provisioned marker, it runs the shell environment script once, in the same way for a bastion that is already provisioned and for a new one. A failure there only logs a warning. A dry run changes nothing.
+
+`/etc/profile.d/ocfp.sh` applies the same ordering right after it loads Homebrew's environment, so a login shell has the right order before it reads the user's own files.
+
 ## Directory Structure
 
 After initialization, the bastion will have this structure:

@@ -171,6 +171,10 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	// guest scripts that need jq run on AWS and GCP bastions too.
 	_ = m.syncJQBrewLink(ctx)
 
+	// The shell PATH order has the same problem, because the phases that set
+	// it are skipped on a provisioned bastion. Converge it here on every init.
+	m.syncShellPathOrder(ctx)
+
 	return m.runModeOrPhases(ctx)
 }
 
