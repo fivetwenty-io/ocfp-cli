@@ -466,13 +466,26 @@ func (atm *AdvancedToolManager) addSingleToolInstallation(lines *[]string, tool 
 // For tools with a VerifyCommand, we check that the tool actually runs successfully
 // (not just that it exists on PATH). This catches cases like a macOS binary installed
 // via brew on Linux — it will be on PATH but fail to execute.
+//
+// A tool with a PathAddition (bun's ~/.bun/bin) installs into a directory
+// the provisioning shell does not have on PATH, so the check looks there too.
+// Without that, the check never sees the earlier install and the tool is
+// reinstalled on every run.
 func (atm *AdvancedToolManager) getInstallCheckCondition(tool AdvancedBinaryTool) string {
+	withPathAddition := func(check string) string {
+		if tool.PathAddition == "" {
+			return check + " >/dev/null 2>&1"
+		}
+
+		return fmt.Sprintf("(PATH=\"%s:$PATH\"; %s) >/dev/null 2>&1", atm.expandVariables(tool.PathAddition), check)
+	}
+
 	if tool.VerifyCommand != "" {
-		return tool.VerifyCommand + " >/dev/null 2>&1"
+		return withPathAddition(tool.VerifyCommand)
 	}
 
 	if tool.CheckCommand != "" {
-		return fmt.Sprintf("command -v %s >/dev/null 2>&1", tool.CheckCommand)
+		return withPathAddition("command -v " + tool.CheckCommand)
 	}
 
 	if tool.CheckFile != "" {
