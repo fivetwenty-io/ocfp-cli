@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	ocfpexec "github.com/ocfp/ocfp-cli-go/internal/exec"
+	ocfpexec "github.com/fivetwenty-io/ocfp-cli/internal/exec"
 )
 
 // T36 TestRunWithEnv_InjectsEnvNotArgv

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/ui"
 )
 
 // TestFormatStateOutput tests the state table formatter with various resource counts

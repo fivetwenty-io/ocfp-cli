@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
 )
 
 // TestLeafNotAfterRFC3339_ValidCertReturnsFormattedNotAfter (task 6.2) asserts

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // guestOptioner is the provider capability that converges a VM's

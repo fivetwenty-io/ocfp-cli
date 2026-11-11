@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	ocfpconfig "github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	ocfpconfig "github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 
 	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/network"
 	"github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/api/qemu"

@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/ownedvm"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/ownedvm"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/pve"
 )
 
 // pveLister filters the way PVE's ListInstances does.

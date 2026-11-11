@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	ocfpexec "github.com/ocfp/ocfp-cli-go/internal/exec"
-	"github.com/ocfp/ocfp-cli-go/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	ocfpexec "github.com/fivetwenty-io/ocfp-cli/internal/exec"
+	"github.com/fivetwenty-io/ocfp-cli/internal/security"
 )
 
 const (

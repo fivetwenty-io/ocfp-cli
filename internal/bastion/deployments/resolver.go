@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // Resolver determines deployment modes and derived paths for bastion provisioning.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 )
 
 // slotRoleInfra and slotRoleOCFP are the two role values LayerASlots

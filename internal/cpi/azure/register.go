@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // envTrue is the string representation of true for environment variable comparisons.

@@ -13,8 +13,8 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 const (

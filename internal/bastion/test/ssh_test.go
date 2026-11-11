@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 )
 
 // TestSSHClientCreation tests SSH client creation (pure instantiation, no connection).

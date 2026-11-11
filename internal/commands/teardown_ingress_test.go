@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // teardownIngressDNS must be a no-op (nil error) when the resolved ingress

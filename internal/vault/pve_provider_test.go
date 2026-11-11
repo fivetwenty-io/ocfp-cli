@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -5,7 +5,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // TestBastionGitHubSSHPortAcceptsBothKeyStyles guards githubSshPort against

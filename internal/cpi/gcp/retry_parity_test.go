@@ -4,7 +4,7 @@ import (
 	compute "cloud.google.com/go/compute/apiv1"
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"context"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/encoding/protojson"
 	"net/http"

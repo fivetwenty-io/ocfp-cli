@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
-	"github.com/ocfp/ocfp-cli-go/internal/version"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
+	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
 // fakeCASafe is a minimal vault.SafeInterface stub backed by an in-memory

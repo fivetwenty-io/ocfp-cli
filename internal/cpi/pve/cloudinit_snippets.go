@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // Snippet content types and naming conventions for PVE storage upload.

@@ -2,7 +2,7 @@ package gcp
 
 import (
 	"cloud.google.com/go/compute/apiv1/computepb"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"testing"
 )
 

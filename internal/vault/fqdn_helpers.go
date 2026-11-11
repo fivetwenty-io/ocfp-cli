@@ -3,7 +3,7 @@ package vault
 import (
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // systemScopedServices are infra-service web UIs that are only reachable behind

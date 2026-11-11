@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
 )
 
 // TestValidateBand covers wide and compact's shared ValidateBand behavior:

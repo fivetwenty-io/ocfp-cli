@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // networkModeSDN is the network mode value for Proxmox SDN networking.

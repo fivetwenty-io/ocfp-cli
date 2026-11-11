@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // SMBIOSPayload carries role-specific configuration OCFP injects into a VM via

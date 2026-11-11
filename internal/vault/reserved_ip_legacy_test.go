@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

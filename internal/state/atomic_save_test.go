@@ -2,7 +2,7 @@ package state_test
 
 import (
 	"bytes"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"os"
 	"path/filepath"
 	"testing"

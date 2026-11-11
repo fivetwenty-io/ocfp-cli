@@ -1,6 +1,6 @@
 package bootstrap
 
-import "github.com/ocfp/ocfp-cli-go/internal/state"
+import "github.com/fivetwenty-io/ocfp-cli/internal/state"
 
 // artifactsDataVolumeResource builds the state record for the artifacts VM's
 // data disk.

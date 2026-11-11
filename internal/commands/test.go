@@ -18,10 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/security"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

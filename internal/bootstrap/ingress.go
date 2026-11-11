@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cloudflare"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cloudflare"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // cloudflareDoer is the HTTP seam ConfigureIngressDNS hands to

@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/output"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
 	"go.uber.org/zap"
 )
 

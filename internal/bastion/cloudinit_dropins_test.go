@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
-	"github.com/ocfp/ocfp-cli-go/internal/guestboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 )
 
 // dropInMockSSHClient answers each checksum probe with the checksum held for

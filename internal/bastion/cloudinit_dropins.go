@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/guestboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 )
 
 // cloudInitDropIns are the cloud.cfg.d files that keep a PVE bastion the same

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 )
 
 // wideGoldenTable is the Layer B assignment table the hand-written

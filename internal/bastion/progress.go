@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 )
 
 // No constants needed - renderers handle all configuration

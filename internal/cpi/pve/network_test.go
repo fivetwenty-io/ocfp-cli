@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 
 	pveclient "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/client"
 	pmetrics "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/metrics"

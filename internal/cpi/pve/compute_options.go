@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // PVE config keys for the two guest options ocfp manages.

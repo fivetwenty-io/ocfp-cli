@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // RetryConfig configures retry behavior.

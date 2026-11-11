@@ -7,10 +7,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/blocinv"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

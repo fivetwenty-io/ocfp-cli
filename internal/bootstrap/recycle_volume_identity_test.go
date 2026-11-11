@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // TestIsPreservedDataVolume covers the identity problem a handover creates.

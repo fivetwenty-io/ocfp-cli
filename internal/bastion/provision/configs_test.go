@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 func TestGenerateGenesisConfig(t *testing.T) {

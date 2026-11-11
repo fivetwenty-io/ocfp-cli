@@ -7,7 +7,7 @@
 # tree exhausted runner memory.
 set -euo pipefail
 
-pkg=github.com/ocfp/ocfp-cli-go/internal/version
+pkg=github.com/fivetwenty-io/ocfp-cli/internal/version
 version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 ldflags="-s -w"
 ldflags="${ldflags} -X ${pkg}.Version=${version}"

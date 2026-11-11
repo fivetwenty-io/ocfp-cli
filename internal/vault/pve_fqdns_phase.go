@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
 )
 
 // fqdnPlanes are the planes the fqdns phase covers, in report order.

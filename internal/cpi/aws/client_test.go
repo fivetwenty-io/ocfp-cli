@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	ocfpconfig "github.com/ocfp/ocfp-cli-go/internal/config"
+	ocfpconfig "github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 func TestNewClient(t *testing.T) {

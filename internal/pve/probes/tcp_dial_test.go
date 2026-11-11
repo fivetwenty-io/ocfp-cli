@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/probes"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/probes"
 )
 
 // listenTCP starts a TCP listener on an ephemeral port and returns the listener

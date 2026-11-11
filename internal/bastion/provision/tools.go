@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // ErrVersionNotFoundWithPattern returns an error when a version cannot be found using the given regex pattern.

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/ownedvm"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/ownedvm"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // ErrArtifactsCAMissing is returned by EndpointForLookup when an https

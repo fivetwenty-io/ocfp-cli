@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // KeyFetchFunc fetches SSH public keys for a given username from a provider.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
+	"github.com/fivetwenty-io/ocfp-cli/internal/keyfile"
 )
 
 // sealKeyHexLength is the length of the unseal key safe local prints. safe

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	gcpcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	gcpcpi "github.com/fivetwenty-io/ocfp-cli/internal/cpi/gcp"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
 	"go.uber.org/zap"
 )
 

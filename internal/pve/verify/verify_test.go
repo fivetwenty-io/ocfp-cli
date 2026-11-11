@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/verify"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/verify"
 )
 
 // pveData wraps a data payload in the PVE API envelope.

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
+	"github.com/fivetwenty-io/ocfp-cli/internal/keyfile"
 	"go.uber.org/zap"
 )
 

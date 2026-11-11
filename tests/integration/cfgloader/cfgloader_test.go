@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/tests/integration/cfgloader"
+	"github.com/fivetwenty-io/ocfp-cli/tests/integration/cfgloader"
 )
 
 // testdataPath returns the absolute path of a file under testdata/ adjacent to

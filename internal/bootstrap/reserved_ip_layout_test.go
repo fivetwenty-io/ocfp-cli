@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // newPVEBandTestManager builds a PVE-provider Manager over a fresh state

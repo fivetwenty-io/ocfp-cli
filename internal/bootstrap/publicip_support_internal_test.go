@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // declaringNet reports public IP support explicitly, the way a provider whose

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // brewSkipped must be false for every provider: Linuxbrew is the primary tool

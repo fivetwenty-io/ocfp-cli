@@ -4,7 +4,7 @@ import (
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"context"
 	"errors"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"slices"
 	"strconv"
 )

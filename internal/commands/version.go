@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/version"
+	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 	"github.com/spf13/cobra"
 )
 

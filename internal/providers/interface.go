@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // ProgressReporter defines the interface for progress reporting during vault operations.

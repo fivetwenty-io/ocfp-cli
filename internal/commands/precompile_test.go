@@ -14,9 +14,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/spf13/cobra"
 )
 

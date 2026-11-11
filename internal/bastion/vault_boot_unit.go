@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
-	"github.com/ocfp/ocfp-cli-go/internal/vaultboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vaultboot"
 )
 
 var (

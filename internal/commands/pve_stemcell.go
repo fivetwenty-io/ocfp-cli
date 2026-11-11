@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/precompile"
-	"github.com/ocfp/ocfp-cli-go/internal/pve/stemcell"
+	"github.com/fivetwenty-io/ocfp-cli/internal/precompile"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/stemcell"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

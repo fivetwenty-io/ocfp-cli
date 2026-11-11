@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/ocfp/ocfp-cli-go/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/security"
 	"github.com/spf13/cobra"
 )
 

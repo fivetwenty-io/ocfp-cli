@@ -3,7 +3,7 @@ package state
 import (
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // MergeOptions configures how resources are merged into state.

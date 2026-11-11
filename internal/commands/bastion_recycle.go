@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/recycle"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/recycle"
 )
 
 // ErrArchiveStorageRequired is returned when --archive is given with no

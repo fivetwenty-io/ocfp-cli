@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/gorilla/websocket"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 )
 
 const (

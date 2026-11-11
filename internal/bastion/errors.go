@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // ErrorType represents different categories of errors.

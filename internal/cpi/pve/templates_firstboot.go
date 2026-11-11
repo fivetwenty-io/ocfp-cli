@@ -1,6 +1,6 @@
 package pve
 
-import "github.com/ocfp/ocfp-cli-go/internal/guestboot"
+import "github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 
 // Shared guest services retain the PVE SMBIOS transport.
 const (

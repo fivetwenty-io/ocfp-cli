@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // TestSelectVirtualSubnetStrategy_Mapping verifies the factory maps

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/ocfp/ocfp-cli-go/internal/vaultboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vaultboot"
 )
 
 const (

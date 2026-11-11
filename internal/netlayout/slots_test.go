@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
 )
 
 // parseRangeSpec splits a simple "start-end" RangeSpec (as emitted by

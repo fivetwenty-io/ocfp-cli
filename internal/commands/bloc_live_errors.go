@@ -7,14 +7,14 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/blocinv"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/aws"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/azure"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/gcp"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/pve"
 	pveapierrors "github.com/fivetwenty-io/proxmox-apiclient-go/v3/pkg/errors"
-	"github.com/ocfp/ocfp-cli-go/internal/blocinv"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/aws"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/azure"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
 )
 
 // The text of a config or provider error can carry what the error is about:

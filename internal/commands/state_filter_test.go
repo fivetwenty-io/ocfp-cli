@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 func TestNewResourceFilter(t *testing.T) {

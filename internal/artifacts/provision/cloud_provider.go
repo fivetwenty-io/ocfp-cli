@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/guestboot"
 )
 
 func cloudArtifactsScript(in ArtifactsCloudInitInputs, script string) string {

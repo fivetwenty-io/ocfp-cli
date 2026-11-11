@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
+	pveclient "github.com/fivetwenty-io/ocfp-cli/internal/cpi/pve"
 )
 
 // Errors returned by the template commands.

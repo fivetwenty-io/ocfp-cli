@@ -52,9 +52,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/verify"
-	"github.com/ocfp/ocfp-cli-go/tests/integration/cleanup"
-	"github.com/ocfp/ocfp-cli-go/tests/integration/cpirpc"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/verify"
+	"github.com/fivetwenty-io/ocfp-cli/tests/integration/cleanup"
+	"github.com/fivetwenty-io/ocfp-cli/tests/integration/cpirpc"
 )
 
 // lifecycleEnv holds all environment-derived test parameters.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

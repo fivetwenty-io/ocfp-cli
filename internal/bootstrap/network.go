@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	pveclient "github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	pveclient "github.com/fivetwenty-io/ocfp-cli/internal/cpi/pve"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // Network-specific constants.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/opsfiles"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/opsfiles"
 )
 
 // TestNatsTuning_PingInterval30s — T01c: embedded content non-empty and contains

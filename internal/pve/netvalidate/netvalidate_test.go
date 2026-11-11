@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/netvalidate"
 )
 
 // T26 TestValidateNetworkPairing_MatchingCIDRs_OK verifies that identical

@@ -2,7 +2,7 @@
 package cli
 
 import (
-	"github.com/ocfp/ocfp-cli-go/internal/commands"
+	"github.com/fivetwenty-io/ocfp-cli/internal/commands"
 	"github.com/spf13/cobra"
 )
 

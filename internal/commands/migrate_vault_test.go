@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // fakeMigrateVaults scripts what config migrate's liveness probes find: what

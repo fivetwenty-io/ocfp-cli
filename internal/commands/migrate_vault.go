@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // ErrMigrateInceptionVaultRunning is returned when a bloc that config migrate

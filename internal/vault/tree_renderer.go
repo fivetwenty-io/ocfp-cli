@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 )
 
 // TreeRenderer handles hierarchical display during vault migration.

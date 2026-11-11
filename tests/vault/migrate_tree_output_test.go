@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/output"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
 )
 
 // TestVaultMigrateTreeOutput_Integration is an integration test for tree-based output.

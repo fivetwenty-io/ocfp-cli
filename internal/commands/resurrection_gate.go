@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // WithResurrectionGate wraps deployFn by toggling the BOSH director's
