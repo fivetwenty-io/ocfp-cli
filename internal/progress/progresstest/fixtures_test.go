@@ -51,8 +51,11 @@ func TestFixturesMatchEncoder(t *testing.T) {
 		enc := progress.NewEncoder(&buf, fixedClock{})
 		header(t, enc)
 		must(t, enc.Encode(progress.KindEvent, eventBody{Kind: "step_started", Step: "noop"}))
-		must(t, enc.Encode(progress.KindEvent, eventBody{Kind: "step_finished", Step: "noop", Outcome: "ok"}))
-		must(t, enc.Encode(progress.KindLog, progress.LogBody{Stream: "stdout", Line: "noop complete"}))
+		must(t, enc.Encode(progress.KindLog, progress.LogBody{
+			Stream: "stdout",
+			Line:   `{"hostname":"host-fixture","version":"0.0.0-fixture"}`,
+		}))
+		must(t, enc.Encode(progress.KindEvent, eventBody{Kind: "step_finished", Step: "noop", Outcome: "succeeded"}))
 		must(t, enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: 0}))
 
 		if got, want := buf.Bytes(), progresstest.Fixture("stream-noop-v1.ndjson"); !bytes.Equal(got, want) {
