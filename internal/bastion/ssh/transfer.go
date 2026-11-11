@@ -511,7 +511,7 @@ func (tm *TransferManager) buildSCPArgs(local, remote string, isUpload bool) []s
 		"-o", "StrictHostKeyChecking=accept-new",
 	}
 
-	knownHostsPath, err := homeKnownHostsFile()
+	knownHostsPath, err := KnownHostsFile()
 	if err == nil {
 		args = append(args, "-o", "UserKnownHostsFile="+sshConfigPath(knownHostsPath))
 	}

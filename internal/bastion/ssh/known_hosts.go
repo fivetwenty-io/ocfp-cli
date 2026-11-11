@@ -11,9 +11,9 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// homeKnownHostsFile returns the path of the user's known_hosts file, the
+// KnownHostsFile returns the path of the user's known_hosts file, the
 // same file OpenSSH reads by default.
-func homeKnownHostsFile() (string, error) {
+func KnownHostsFile() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)

@@ -437,7 +437,7 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 // else, a changed key above all, is refused.
 func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		knownHostsPath, err := homeKnownHostsFile()
+		knownHostsPath, err := KnownHostsFile()
 		if err != nil {
 			return err
 		}
@@ -469,7 +469,7 @@ func (c *Client) prepareSSHConfig() (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("failed to create host key callback: %w", err)
 	}
 
-	knownHostsPath, err := homeKnownHostsFile()
+	knownHostsPath, err := KnownHostsFile()
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +592,7 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 		return ErrExternalSSHNotAvailable
 	}
 
-	knownHostsPath, err := homeKnownHostsFile()
+	knownHostsPath, err := KnownHostsFile()
 	if err != nil {
 		return err
 	}
