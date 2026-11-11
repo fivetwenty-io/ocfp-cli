@@ -62,6 +62,13 @@ func ErrFileIntegrityCheckFailed(localHash, remoteHash string) error {
 	return fmt.Errorf("file integrity check failed: local=%s remote=%s", localHash, remoteHash) //nolint:err113 // dynamic error with context
 }
 
+// ErrHostKeyRejected reports a host key check that failed for a reason
+// other than a changed or revoked key, such as a known_hosts file that
+// cannot be read. Like a mismatch it is terminal, since no retry can change
+// the answer. A revoked key matches ErrHostKeyMismatch instead, as it does
+// in Stream.
+var ErrHostKeyRejected = errors.New("host key rejected")
+
 // HostKeyMismatchError describes a host key that differs from the one on
 // record. errors.Is matches it against ErrHostKeyMismatch, the sentinel
 // Stream uses for the same refusal. It is terminal: a client that sees it

@@ -79,8 +79,8 @@ func TestFallbackHostKeyCallbackRefusesUnreadableKnownHosts(t *testing.T) {
 	}
 
 	err = newFallbackTestClient().createFallbackHostKeyCallback()("10.0.0.5:22", fallbackRemote, newEd25519Signer(t).PublicKey())
-	if err == nil {
-		t.Fatal("fallback callback trusted a key it could not check against a corrupt known_hosts")
+	if !errors.Is(err, ErrHostKeyRejected) {
+		t.Fatalf("fallback callback error = %v, want ErrHostKeyRejected for a corrupt known_hosts", err)
 	}
 }
 
