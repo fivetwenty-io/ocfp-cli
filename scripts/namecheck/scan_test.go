@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1064,4 +1065,216 @@ func TestScanRangeTakesSeveralRevisions(t *testing.T) {
 	if code != 0 || out != "" {
 		t.Fatalf("excluding everything: code %d out %q err %q", code, out, errs)
 	}
+}
+
+// tagRepo makes a repository with one commit and returns it.
+func tagRepo(t *testing.T) string {
+	t.Helper()
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	gitIn(t, repo, "commit", "-q", "-m", "First")
+	return repo
+}
+
+func TestScanTagMessage(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+
+	t.Run("term in the message", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitIn(t, repo, "tag", "-a", "-m", "release for zebracorp", "v1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/v1")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		want := "CLIENT_NAME_FOUND tag refs/tags/v1 message term 1\n"
+		if code != 1 || out != want {
+			t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+		}
+	})
+
+	t.Run("term in the tagger", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitInEnv(t, repo, []string{"GIT_COMMITTER_NAME=zebracorp"}, "tag", "-a", "-m", "clean", "v1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/v1")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 1 || !strings.HasPrefix(out, "CLIENT_NAME_FOUND tag refs/tags/v1 message term 1") {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("clean message", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitIn(t, repo, "tag", "-a", "-m", "release", "v1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/v1")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("lightweight tag", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		sha := gitIn(t, repo, "rev-parse", "HEAD")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("tag of a tag", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitIn(t, repo, "tag", "-a", "-m", "inner zebracorp", "inner")
+		gitIn(t, repo, "tag", "-a", "-m", "outer", "outer", "refs/tags/inner")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/outer")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/outer", sha)
+		want := "CLIENT_NAME_FOUND tag refs/tags/outer message term 1\n"
+		if code != 1 || out != want {
+			t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+		}
+	})
+
+	t.Run("object and type lines are not scanned", func(t *testing.T) {
+		t.Parallel()
+		// Every hex digit is a term, so a scan of the object line would find
+		// the hash. The message and tagger hold none of them.
+		hex := setupConfig(t, []byte("a PART\nb PART\nc PART\nd PART\ne PART\nf PART\n"), 0o600)
+		repo := tagRepo(t)
+		gitInEnv(t, repo, []string{"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x.io"}, "tag", "-a", "-m", "ok", "v1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/v1")
+		code, out, errs := runIn(t, repo, hex, "--tag", "refs/tags/v1", sha)
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("fake signature marker before a term", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitIn(t, repo, "tag", "-a", "--cleanup=verbatim", "-m", "-----BEGIN PGP SIGNATURE-----\nzebracorp\n", "v1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/v1")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 1 || !strings.Contains(out, "CLIENT_NAME_FOUND tag refs/tags/v1") {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	// rawTag writes a tag object with the given name line and body, points
+	// refs/tags/raw at it, and returns its hash.
+	rawTag := func(t *testing.T, repo, name, body string) string {
+		t.Helper()
+		commit := gitIn(t, repo, "rev-parse", "HEAD")
+		obj := "object " + commit + "\ntype commit\ntag " + name + "\ntagger t <t@x.io> 1 +0000\n\n" + body
+		sha := gitInput(t, repo, obj, "mktag")
+		gitIn(t, repo, "update-ref", "refs/tags/raw", sha)
+		return sha
+	}
+
+	// A block that only looks like a signature must not hide its contents.
+	for _, kind := range []string{"PGP SIGNATURE", "SSH SIGNATURE", "SIGNED MESSAGE"} {
+		t.Run("fake trailing "+kind+" block", func(t *testing.T) {
+			t.Parallel()
+			repo := tagRepo(t)
+			sha := rawTag(t, repo, "v1", "release\n-----BEGIN "+kind+"-----\nzebracorp is here\n-----END "+kind+"-----\n")
+			code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+			if code != 1 || !strings.Contains(out, "CLIENT_NAME_FOUND tag refs/tags/v1") {
+				t.Fatalf("code %d out %q err %q", code, out, errs)
+			}
+		})
+	}
+
+	t.Run("term spelled in base64 characters inside a well-formed block", func(t *testing.T) {
+		t.Parallel()
+		// The safe choice is to scan the lines of a block too, so a term
+		// written in base64 characters is found.
+		repo := tagRepo(t)
+		sha := rawTag(t, repo, "v1", "release\n-----BEGIN PGP SIGNATURE-----\n\niQEzBAABCAAdFiEE+zebracorp/Q0WfM+9cA7pQ\n=AbCd\n-----END PGP SIGNATURE-----\n")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 1 || !strings.Contains(out, "CLIENT_NAME_FOUND tag refs/tags/v1") {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("well-formed block with no term is clean", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		sha := rawTag(t, repo, "v1", "release\n-----BEGIN PGP SIGNATURE-----\n\niQEzBAABCAAdFiEEQ0WfM+/9cA7pQ\n=AbCd\n-----END PGP SIGNATURE-----\n")
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/v1", sha)
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("term in the tag's own name", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		sha := rawTag(t, repo, "zebracorp-1", "release\n")
+		// Pushed by hash under another name, so only the object holds it.
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/x", sha)
+		if code != 1 || !strings.Contains(out, "CLIENT_NAME_FOUND tag refs/tags/x") {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("chain of exactly the cap passes", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		sha := tagChain(t, repo, maxTagChain)
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/deep", sha)
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("chain one past the cap fails closed", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		sha := tagChain(t, repo, maxTagChain+1)
+		code, out, errs := runIn(t, repo, getenv, "--tag", "refs/tags/deep", sha)
+		if code != 2 || out != "" || errs == "" {
+			t.Fatalf("code %d out %q err %q, want exit 2", code, out, errs)
+		}
+	})
+
+	t.Run("name with a term is masked", func(t *testing.T) {
+		t.Parallel()
+		repo := tagRepo(t)
+		gitIn(t, repo, "tag", "-a", "-m", "zebracorp", "zebracorp-1")
+		sha := gitIn(t, repo, "rev-parse", "refs/tags/zebracorp-1")
+		code, out, _ := runIn(t, repo, getenv, "--tag", "refs/tags/zebracorp-1", sha)
+		if code != 1 || strings.Contains(out, "zebracorp") {
+			t.Fatalf("code %d out %q", code, out)
+		}
+	})
+}
+
+// gitInput runs git with text on standard input and returns its output.
+func gitInput(t *testing.T, dir, input string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// tagChain makes n annotated tags, each pointing at the one before and the
+// first at HEAD, and returns the hash of the last.
+func tagChain(t *testing.T, repo string, n int) string {
+	t.Helper()
+	gitIn(t, repo, "tag", "-a", "-m", "m", "t1")
+	for i := 2; i <= n; i++ {
+		gitIn(t, repo, "tag", "-a", "-m", "m", fmt.Sprintf("t%d", i), fmt.Sprintf("refs/tags/t%d", i-1))
+	}
+	return gitIn(t, repo, "rev-parse", fmt.Sprintf("refs/tags/t%d", n))
 }

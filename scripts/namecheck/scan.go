@@ -558,6 +558,91 @@ func (s *scanner) scanLog(revs ...string) error {
 	return nil
 }
 
+// maxTagChain bounds how many tags a chain of tags is followed through.
+const maxTagChain = 32
+
+// scanTag scans the tagger and message of the annotated tag that sha names,
+// and of every tag it points at in turn. A finding names the pushed ref
+// masked. An object that is not a tag has no text of its own to scan. A
+// chain of more than maxTagChain tags is an error, because its later tags
+// would go unscanned.
+func (s *scanner) scanTag(ref, sha string) error {
+	masked := maskPath(s.terms, ref)
+
+	s.seen = map[string]bool{}
+	defer func() { s.seen = nil }()
+
+	for n := 0; ; n++ {
+		kind, err := s.git("cat-file", "-t", sha)
+		if err != nil {
+			return err
+		}
+
+		if strings.TrimSpace(string(kind)) != "tag" {
+			return nil
+		}
+
+		if n == maxTagChain {
+			return fmt.Errorf("a chain of tags is longer than %d, so it was not scanned", maxTagChain)
+		}
+
+		obj, err := s.git("cat-file", "tag", sha)
+		if err != nil {
+			return err
+		}
+
+		for _, f := range scanContent(s.terms, tagText(string(obj)), 1) {
+			s.failed = true
+			s.emit(fmt.Sprintf("CLIENT_NAME_FOUND tag %s message term %d", masked, f.term))
+		}
+
+		next := ""
+
+		head, _, _ := strings.Cut(string(obj), "\n\n")
+		for _, l := range strings.Split(head, "\n") {
+			if rest, ok := strings.CutPrefix(l, "object "); ok {
+				next = strings.TrimSpace(rest)
+
+				break
+			}
+		}
+
+		if next == "" {
+			return nil
+		}
+
+		sha = next
+	}
+}
+
+// tagText keeps the parts of a raw tag object that name a person, name the
+// tag, and carry the message. It skips the object and type lines, where a
+// short term could match inside a hash. It keeps the whole body, signature
+// block included. A block cannot be told from message text that imitates one,
+// so dropping it would let a person hide a term inside a fake block. A
+// signature that happens to spell a term is refused, never let through.
+func tagText(obj string) string {
+	head, body, _ := strings.Cut(obj, "\n\n")
+
+	var keep []string
+
+	for _, l := range strings.Split(head, "\n") {
+		if rest, ok := strings.CutPrefix(l, "tag "); ok {
+			keep = append(keep, rest)
+		}
+
+		if rest, ok := strings.CutPrefix(l, "tagger "); ok {
+			if i := strings.LastIndex(rest, ">"); i >= 0 {
+				rest = rest[:i+1]
+			}
+
+			keep = append(keep, rest)
+		}
+	}
+
+	return strings.Join(keep, "\n") + "\n" + body
+}
+
 // commitText keeps the parts of a raw commit object that name people and
 // carry the message. It skips the tree, parent, and signature lines, where a
 // short term could match inside a hash.
