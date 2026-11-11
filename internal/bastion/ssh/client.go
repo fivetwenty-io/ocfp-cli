@@ -121,6 +121,13 @@ func (c *Client) Connect(ctx context.Context) error {
 
 			client, err := strategy(ctx, sshConfig)
 			if err != nil {
+				// A changed host key is not a connectivity problem.
+				// Retrying or trying another strategy could only end
+				// in trusting the new key, so stop here.
+				if errors.Is(err, ErrHostKeyMismatch) {
+					return fmt.Errorf("failed to connect to %s: %w", c.config.Host, err)
+				}
+
 				lastErr = err
 				c.log.Debugw("Connection strategy failed",
 					"strategy", index+1,
@@ -343,48 +350,50 @@ func (c *Client) createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	return c.wrapHostKeyCallback(hostKeyCallback, knownHostsPath), nil
 }
 
-// wrapHostKeyCallback wraps the known hosts callback to handle new hosts.
+// wrapHostKeyCallback wraps the known hosts callback so a host with no
+// entry is recorded on first contact. A changed key is refused with a
+// HostKeyMismatchError.
 func (c *Client) wrapHostKeyCallback(knownHostsCallback ssh.HostKeyCallback, knownHostsPath string) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := knownHostsCallback(hostname, remote, key)
-		if err != nil {
-			errStr := err.Error()
-
-			// Check if this is a host key mismatch error
-			if strings.Contains(errStr, "mismatch") || strings.Contains(errStr, "differs") {
-				c.log.Errorw("Host key has changed! Possible security breach detected",
-					"host", hostname,
-					"error", err.Error())
-
-				return fmt.Errorf("host key verification failed - host key has changed: %w", err)
-			}
-
-			// Check if this is an unknown host error
-			if strings.Contains(errStr, "not in known_hosts") || strings.Contains(errStr, "unknown") {
-				c.log.Warnw("Unknown host, automatically adding to known_hosts",
-					"host", hostname,
-					"fingerprint", ssh.FingerprintSHA256(key))
-
-				// Auto-add the host key (bastion provisioning context)
-				addErr := c.addHostKey(knownHostsPath, hostname, key)
-				if addErr != nil {
-					c.log.Errorw("Failed to add host key", "error", addErr.Error())
-
-					return fmt.Errorf("failed to add host key: %w", addErr)
-				}
-
-				c.log.Infow("Host key added to known_hosts", "host", hostname)
-
-				return nil
-			}
-
-			// Other verification errors
-			return fmt.Errorf("host key verification failed: %w", err)
+		if err == nil {
+			return nil
 		}
 
-		// Host key verified successfully
-		return nil
+		return c.handleHostKeyError(err, knownHostsPath, hostname, key)
 	}
+}
+
+// handleHostKeyError decides what a failed known_hosts check means. A host
+// with no entry gets its key recorded. A host whose key differs from every
+// key on record is refused with a HostKeyMismatchError, and any other
+// failure, such as a revoked key, is refused as well.
+func (c *Client) handleHostKeyError(err error, knownHostsPath, hostname string, key ssh.PublicKey) error {
+	if mismatch := mismatchFromKeyError(err, knownHostsPath, hostname, key); mismatch != nil {
+		c.log.Errorw("Host key does not match known_hosts; refusing to connect",
+			"host", mismatch.Host,
+			"known_hosts", knownHostsPath,
+			"presented", mismatch.Presented,
+			"recorded", strings.Join(mismatch.Recorded, ", "))
+
+		return mismatch
+	}
+
+	if !isUnknownHost(err) {
+		return fmt.Errorf("host key verification failed: %w", err)
+	}
+
+	c.log.Infow("Recording host key on first contact",
+		"host", knownhosts.Normalize(hostname),
+		"known_hosts", knownHostsPath,
+		"fingerprint", ssh.FingerprintSHA256(key))
+
+	addErr := c.addHostKey(knownHostsPath, hostname, key)
+	if addErr != nil {
+		return fmt.Errorf("failed to add host key: %w", addErr)
+	}
+
+	return nil
 }
 
 // addHostKey adds a host key to the known_hosts file.
@@ -557,11 +566,9 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 	// Perform SSH handshake
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, sshConfig)
 	if err != nil {
-		err := conn.Close()
-		if err != nil {
-			// Connection close errors are typically not critical
-			_ = err
-		}
+		// A close error after a failed handshake adds nothing; the
+		// handshake error is the one the caller needs.
+		_ = conn.Close()
 
 		return nil, fmt.Errorf("SSH handshake failed: %w", err)
 	}

@@ -1,9 +1,13 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // homeKnownHostsFile returns the path of the user's known_hosts file, the
@@ -34,4 +38,35 @@ func knownHostKeyAlgorithms(knownHostsPath, address string) []string {
 	}
 
 	return preferredHostKeyAlgorithms(file.entriesFor(address))
+}
+
+// mismatchFromKeyError turns a knownhosts error into a HostKeyMismatchError
+// when the host has keys on record and none of them matched. It returns nil
+// for any other error, including a host with no entry at all.
+func mismatchFromKeyError(err error, knownHostsPath, hostname string, key ssh.PublicKey) *HostKeyMismatchError {
+	var keyErr *knownhosts.KeyError
+	if !errors.As(err, &keyErr) || len(keyErr.Want) == 0 {
+		return nil
+	}
+
+	recorded := make([]string, 0, len(keyErr.Want))
+	for _, known := range keyErr.Want {
+		recorded = append(recorded, fmt.Sprintf("%s (%s line %d)", ssh.FingerprintSHA256(known.Key), filepath.Base(known.Filename), known.Line))
+	}
+
+	return &HostKeyMismatchError{
+		Host:           knownhosts.Normalize(hostname),
+		KnownHostsPath: knownHostsPath,
+		Presented:      ssh.FingerprintSHA256(key),
+		Recorded:       recorded,
+		Err:            err,
+	}
+}
+
+// isUnknownHost reports whether err means known_hosts has no entry for the
+// host, which is the only case where a key may be added without asking.
+func isUnknownHost(err error) bool {
+	var keyErr *knownhosts.KeyError
+
+	return errors.As(err, &keyErr) && len(keyErr.Want) == 0
 }
