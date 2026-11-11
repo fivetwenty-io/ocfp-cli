@@ -22,6 +22,7 @@ type fakeNet struct {
 	createdSubnetReqs      []*cpi.SubnetRequest // Captures requests (gateway/SNAT not on Subnet)
 	createdSecurityGroups  []*cpi.SecurityGroup // Tracks NEW creations for test assertions
 	existingSecurityGroups []*cpi.SecurityGroup // Pre-existing SGs in "cloud" (for Get/List)
+	publicIPs              []*cpi.PublicIP      // Reserved public IPs in "cloud" (for ListPublicIPs)
 }
 
 func (f *fakeNet) CreateNetwork(_ctx context.Context, req *cpi.NetworkRequest) (*cpi.Network, error) {
@@ -176,8 +177,8 @@ func (f *fakeNet) CreatePublicIP(_ctx context.Context, _req *cpi.PublicIPRequest
 func (f *fakeNet) GetPublicIP(_ctx context.Context, _id string) (*cpi.PublicIP, error) { //nolint:nilnil // test fake
 	return nil, nil //nolint:nilnil // test fake
 }
-func (f *fakeNet) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) { //nolint:nilnil // test fake
-	return nil, nil //nolint:nilnil // test fake
+func (f *fakeNet) ListPublicIPs(_ctx context.Context) ([]*cpi.PublicIP, error) {
+	return f.publicIPs, nil
 }
 func (f *fakeNet) DeletePublicIP(_ctx context.Context, _id string) error { return nil }
 func (f *fakeNet) AllocateFloatingIP(_ctx context.Context, _req *cpi.AllocateFloatingIPRequest) (*cpi.FloatingIP, error) { //nolint:nilnil // test fake

@@ -13,6 +13,22 @@ func SetSleepFn(fn func(time.Duration)) {
 	sleepFn = fn
 }
 
+// SetKnownHostsFile points the package at a known_hosts file for tests. Call
+// once from TestMain before parallel tests start.
+func SetKnownHostsFile(path string) {
+	knownHostsFile = func() (string, error) { return path, nil }
+}
+
+// KnownHostsFile returns the known_hosts path the package uses.
+func KnownHostsFile() (string, error) {
+	return knownHostsFile()
+}
+
+// ForgetBastionHostKeys exposes forgetBastionHostKeys for testing.
+func (m *Manager) ForgetBastionHostKeys(instance *cpi.Instance) {
+	m.forgetBastionHostKeys(instance, m.options.BlocName+"-bastion")
+}
+
 // GetAvailabilityZone exposes getAvailabilityZone for testing.
 func (m *Manager) GetAvailabilityZone(index int) string {
 	return m.getAvailabilityZone(index)

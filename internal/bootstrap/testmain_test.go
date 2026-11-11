@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	// Also create the directory structure that tests expect
 	_ = os.MkdirAll(filepath.Join(tmpDir, "config"), 0o750)
 
+	// Keep bastion creation away from the real ~/.ssh/known_hosts.
+	bootstrap.SetKnownHostsFile(filepath.Join(tmpDir, "ssh", "known_hosts"))
+
 	code := m.Run()
 	os.RemoveAll(tmpDir)
 	os.Exit(code)

@@ -110,6 +110,11 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 		return m.recordBastionCreationFailure(instance, bastionName, err)
 	}
 
+	// The new VM holds the bastion's addresses with new host keys from
+	// this moment, so the old entries go now rather than after steps
+	// that can still fail. A rerun adopts the VM and clears nothing.
+	m.forgetBastionHostKeys(instance, bastionName)
+
 	// Save to state
 	err = m.saveBastionToState(instance, bastionName)
 	if err != nil {
@@ -123,6 +128,10 @@ func (m *Manager) CreateBastion(ctx context.Context) error {
 			logger.Warnf("Failed to attach public IP to bastion: %v", err)
 			// Don't fail the entire bootstrap if public IP attachment fails
 		} else {
+			// The reserved IP may have been found by its labels rather
+			// than in state, so it is known only now.
+			m.forgetBastionHostKeys(instance, bastionName)
+
 			// Wait for network configuration to stabilize and propagate
 			// STACKIT needs time for:
 			// - NIC/public IP association to complete
@@ -2268,6 +2277,12 @@ apt-get install -y build-essential zlib1g-dev ruby ruby-dev openssl libxslt1-dev
 
 func (m *Manager) recordBastionCreationFailure(instance *cpi.Instance, bastionName string, err error) error {
 	if instance != nil && instance.ID != "" {
+		// The VM exists and may already answer on the bastion's
+		// addresses with new host keys, and a rerun stops on the
+		// recorded failure instead of reaching the clear in
+		// CreateBastion.
+		m.forgetBastionHostKeys(instance, bastionName)
+
 		if saveErr := m.saveBastionToState(instance, bastionName); saveErr != nil {
 			return fmt.Errorf("bastion creation: %w; record recovery: %w", err, saveErr)
 		}
