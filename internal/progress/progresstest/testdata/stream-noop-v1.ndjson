@@ -1,0 +1,5 @@
+{"kind":"header","seq":0,"time":"2026-11-10T09:00:00Z","body":{"wireContract":1,"producer":"ocfp","version":"0.0.0-fixture","jobId":"job-fixture-01"}}
+{"kind":"event","seq":1,"time":"2026-11-10T09:00:00Z","body":{"kind":"step_started","step":"noop"}}
+{"kind":"event","seq":2,"time":"2026-11-10T09:00:00Z","body":{"kind":"step_finished","step":"noop","outcome":"ok"}}
+{"kind":"log","seq":3,"time":"2026-11-10T09:00:00Z","body":{"stream":"stdout","line":"noop complete"}}
+{"kind":"result","seq":4,"time":"2026-11-10T09:00:00Z","body":{"exitCode":0}}
