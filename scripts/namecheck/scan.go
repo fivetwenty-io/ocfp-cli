@@ -1,0 +1,521 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+// errTermsUnavailable marks every reason the term list cannot be used. Its
+// text never carries a term.
+var errTermsUnavailable = errors.New("CLIENT_TERMS_UNAVAILABLE")
+
+type term struct {
+	n    int // position among the list's term lines, counting from one
+	text []rune
+	part bool
+}
+
+// finding locates a match without quoting it.
+type finding struct {
+	line, col, term int
+}
+
+// termsPath returns where the term list lives for the given environment. It
+// returns false when neither XDG_CONFIG_HOME nor HOME is set, so the program
+// never falls back to a path relative to the current directory.
+func termsPath(getenv func(string) string) (string, bool) {
+	base := getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(base) { // the XDG rule: a relative value counts as unset
+		base = ""
+	}
+	if base == "" {
+		home := getenv("HOME")
+		if home == "" {
+			return "", false
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "fivetwenty", "client-terms"), true
+}
+
+// loadTerms reads the list. It fails closed: a missing, unreadable, empty,
+// or other-user-readable file, and a list with a line that folds to no
+// letter or digit, all yield errTermsUnavailable.
+func loadTerms(path string) ([]term, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errTermsUnavailable
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return nil, errTermsUnavailable
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errTermsUnavailable
+	}
+	var terms []term
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		part := false
+		if f := strings.Fields(line); len(f) > 1 {
+			flag := strings.ToLower(f[len(f)-1])
+			if flag == "part" || flag == "word" {
+				part = flag == "part"
+				line = strings.TrimSpace(line[:len(line)-len(f[len(f)-1])])
+			}
+		}
+		runes, _ := normalize(line)
+		if !hasAlnum(runes) {
+			return nil, errTermsUnavailable
+		}
+		terms = append(terms, term{n: len(terms) + 1, text: runes, part: part})
+	}
+	if len(terms) == 0 {
+		return nil, errTermsUnavailable
+	}
+	return terms, nil
+}
+
+func hasAlnum(rs []rune) bool {
+	for _, r := range rs {
+		if isAlnum(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAlnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+func isSep(r rune) bool { return r == '.' || r == '-' || r == '_' || r == ' ' }
+
+// normalize folds the whole of s with NFKC, lowercases it, and drops
+// separators that sit between two single letters. It returns the folded
+// runes and, for each, the one-based column in s of the start of the input
+// segment that produced it.
+func normalize(s string) ([]rune, []int) {
+	var runes []rune
+	var cols []int
+	var it norm.Iter
+	it.InitString(norm.NFKC, s)
+	for !it.Done() {
+		start := it.Pos()
+		col := utf8.RuneCountInString(s[:start]) + 1
+		for _, r := range string(it.Next()) {
+			runes = append(runes, unicode.ToLower(r))
+			cols = append(cols, col)
+		}
+	}
+	n := len(runes)
+	keepR := runes[:0:0]
+	keepC := cols[:0:0]
+	for i, r := range runes {
+		if isSep(r) && i > 0 && i+1 < n && isAlnum(runes[i-1]) && isAlnum(runes[i+1]) &&
+			(i < 2 || !isAlnum(runes[i-2])) && (i+2 >= n || !isAlnum(runes[i+2])) {
+			continue
+		}
+		keepR = append(keepR, r)
+		keepC = append(keepC, cols[i])
+	}
+	return keepR, keepC
+}
+
+// scanLine reports each term at most once for the line, at its first match.
+func scanLine(terms []term, text string) []finding {
+	runes, cols := normalize(text)
+	var out []finding
+	for _, t := range terms {
+		for i := 0; i+len(t.text) <= len(runes); i++ {
+			if !runesEqual(runes[i:i+len(t.text)], t.text) {
+				continue
+			}
+			if !t.part {
+				if i > 0 && isAlnum(runes[i-1]) {
+					continue
+				}
+				if j := i + len(t.text); j < len(runes) && isAlnum(runes[j]) {
+					continue
+				}
+			}
+			out = append(out, finding{col: cols[i], term: t.n})
+			break
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool { return out[a].col < out[b].col })
+	return out
+}
+
+func runesEqual(a, b []rune) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// maskPath replaces every path component that holds a match of any term
+// with ***, so that no output line can quote a term through a file name.
+func maskPath(terms []term, path string) string {
+	var b strings.Builder
+	start := 0
+	flush := func(end int) {
+		comp := path[start:end]
+		if len(scanLine(terms, comp)) > 0 {
+			b.WriteString("***")
+		} else {
+			b.WriteString(comp)
+		}
+	}
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' || path[i] == filepath.Separator {
+			flush(i)
+			b.WriteByte(path[i])
+			start = i + 1
+		}
+	}
+	flush(len(path))
+	return b.String()
+}
+
+// scanContent scans a block of text and numbers its lines from firstLine.
+func scanContent(terms []term, content string, firstLine int) []finding {
+	var out []finding
+	line := firstLine
+	start := 0
+	emit := func(end int) {
+		for _, f := range scanLine(terms, strings.TrimSuffix(content[start:end], "\r")) {
+			f.line = line
+			out = append(out, f)
+		}
+		line++
+	}
+	for i := 0; i < len(content); i++ {
+		if content[i] == '\n' || content[i] == 0 {
+			emit(i)
+			start = i + 1
+		}
+	}
+	emit(len(content))
+	return out
+}
+
+type scanner struct {
+	terms  []term
+	dir    string // working directory for git, empty for the process's own
+	out    func(string)
+	failed bool
+	// seen, when set, drops a line already printed for the current commit,
+	// because a merge is diffed against each parent in turn.
+	seen map[string]bool
+}
+
+func (s *scanner) emit(line string) {
+	if s.seen != nil {
+		if s.seen[line] {
+			return
+		}
+		s.seen[line] = true
+	}
+	s.out(line)
+}
+
+func (s *scanner) report(path string, fs []finding) {
+	masked := maskPath(s.terms, path)
+	for _, f := range fs {
+		s.failed = true
+		s.emit(fmt.Sprintf("CLIENT_NAME_FOUND %s:%d:%d term %d", masked, f.line, f.col, f.term))
+	}
+}
+
+func (s *scanner) reportCommit(hash string, fs []finding) {
+	for _, f := range fs {
+		s.failed = true
+		s.emit(fmt.Sprintf("CLIENT_NAME_FOUND commit %s message term %d", hash, f.term))
+	}
+}
+
+// scanName scans a path's own text. The finding prints the path masked.
+func (s *scanner) scanName(path string) {
+	masked := maskPath(s.terms, path)
+	for _, f := range scanLine(s.terms, path) {
+		s.failed = true
+		s.emit(fmt.Sprintf("CLIENT_NAME_FOUND path %s term %d", masked, f.term))
+	}
+}
+
+func (s *scanner) scanBytes(path string, b []byte) {
+	s.report(path, scanContent(s.terms, string(b), 1))
+}
+
+// pathErr rewrites an error so that it quotes the masked path only.
+func (s *scanner) pathErr(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s %s: %w", pe.Op, maskPath(s.terms, pe.Path), pe.Err)
+	}
+	return err
+}
+
+func (s *scanner) scanPaths(paths []string) error {
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	for _, root := range paths {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return s.pathErr(err)
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.Type()&fs.ModeSymlink != 0 {
+				// Scan the link's name and its target text. Never follow it.
+				s.scanName(p)
+				target, err := os.Readlink(p)
+				if err != nil {
+					return s.pathErr(err)
+				}
+				s.scanBytes(p, []byte(target))
+				return nil
+			}
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			s.scanName(p)
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return s.pathErr(err)
+			}
+			s.scanBytes(p, b)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// git runs a git command. On failure the error names only the subcommand
+// and its exit status, because git's own message can quote a path or a
+// revision argument that holds a term.
+func (s *scanner) git(args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"--no-replace-objects"}, args...)...)
+	cmd.Dir = s.dir
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return nil, fmt.Errorf("git %s failed with exit status %d", args[0], ee.ExitCode())
+		}
+		return nil, fmt.Errorf("git %s failed", args[0])
+	}
+	return out, nil
+}
+
+func (s *scanner) scanStaged(paths []string) error {
+	args := []string{"diff", "--cached", "--ignore-submodules=none", "--raw", "-z", "--no-renames", "--diff-filter=ACMRT"}
+	if len(paths) > 0 {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	raw, err := s.git(args...)
+	if err != nil {
+		return err
+	}
+	// The output alternates a ":oldmode newmode oldsha newsha status"
+	// record with the NUL-terminated name it describes.
+	toks := strings.Split(string(raw), "\x00")
+	for i := 0; i+1 < len(toks); i += 2 {
+		meta := strings.Fields(toks[i])
+		name := toks[i+1]
+		if len(meta) < 2 || name == "" {
+			return errors.New("unreadable index listing")
+		}
+		s.scanName(name)
+		if meta[1] == "160000" {
+			continue // a submodule entry holds a commit id and no content
+		}
+		b, err := s.git("cat-file", "blob", ":0:"+name)
+		if err != nil {
+			return err
+		}
+		s.scanBytes(name, b)
+	}
+	return nil
+}
+
+func (s *scanner) scanMessageFile(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return s.pathErr(err)
+	}
+	s.scanBytes(path, b)
+	return nil
+}
+
+// scanLog scans every commit that git rev-list reports for the revision
+// arguments. Each commit object, each list of changed names, and each patch
+// comes from its own git command, so no text inside a commit can pose as the
+// start of the next record.
+func (s *scanner) scanLog(revs ...string) error {
+	listing, err := s.git(append([]string{"rev-list", "--reverse", "--end-of-options"}, revs...)...)
+	if err != nil {
+		return err
+	}
+	for _, hash := range strings.Fields(string(listing)) {
+		s.seen = map[string]bool{}
+		obj, err := s.git("cat-file", "commit", hash)
+		if err != nil {
+			return err
+		}
+		s.reportCommit(hash, scanContent(s.terms, commitText(string(obj)), 1))
+
+		nameList, err := s.git("diff-tree", "--ignore-submodules=none", "-r", "-z", "--name-only", "-m", "--root", "--no-commit-id", "-M", hash)
+		if err != nil {
+			return err
+		}
+		names := map[string]bool{}
+		for _, n := range strings.Split(string(nameList), "\x00") {
+			if n != "" && !names[n] {
+				names[n] = true
+				s.scanName(n)
+			}
+		}
+		diff, err := s.git("diff-tree", "--ignore-submodules=none", "-p", "--text", "--no-ext-diff", "--no-textconv",
+			"--src-prefix=a/", "--dst-prefix=b/",
+			"-m", "--root", "--no-commit-id", "-M", "-U0", "--no-color", hash)
+		if err != nil {
+			return err
+		}
+		if err := s.scanDiff(string(diff), names); err != nil {
+			return err
+		}
+	}
+	s.seen = nil
+	return nil
+}
+
+// commitText keeps the parts of a raw commit object that name people and
+// carry the message. It skips the tree, parent, and signature lines, where a
+// short term could match inside a hash.
+func commitText(obj string) string {
+	head, body, _ := strings.Cut(obj, "\n\n")
+	var keep []string
+	for _, l := range strings.Split(head, "\n") {
+		if strings.HasPrefix(l, "author ") || strings.HasPrefix(l, "committer ") {
+			// Keep the name and the mail address only. The keyword before
+			// them and the timestamp and zone after them are left out.
+			_, rest, _ := strings.Cut(l, " ")
+			if i := strings.LastIndex(rest, ">"); i >= 0 {
+				rest = rest[:i+1]
+			}
+			keep = append(keep, rest)
+		}
+	}
+	return strings.Join(keep, "\n") + "\n" + body
+}
+
+// unquoteName turns a name from a patch header back into the real name.
+// Git appends one TAB to a header name that holds whitespace, after the
+// closing quote when the name is quoted. It writes a name that holds a
+// control character, a double quote, a backslash, or a byte above 0x7f as a
+// C-quoted string. The one TAB is removed before the unquote, so a name that
+// itself ends in a TAB (always quoted, so written \t) keeps it. The leading
+// b/ is removed last.
+func unquoteName(h string) (string, error) {
+	h = strings.TrimSuffix(h, "\t")
+	if strings.HasPrefix(h, `"`) {
+		u, err := strconv.Unquote(h)
+		if err != nil {
+			return "", errors.New("unreadable quoted name in patch header")
+		}
+		h = u
+	}
+	if h == "/dev/null" {
+		return h, nil
+	}
+	return strings.TrimPrefix(h, "b/"), nil
+}
+
+// scanDiff scans the added lines of one commit's patch. The names of the
+// changed files come from names, which git lists without quoting. A "+++ "
+// header counts only before a section's first hunk and says which file the
+// following added lines belong to, and a name that is not in names stops the
+// run, because the two readings of the patch then disagree. After the first
+// hunk, every line that starts with a plus sign is added text, including one
+// that begins with "++ ".
+func (s *scanner) scanDiff(diff string, names map[string]bool) error {
+	var path string
+	inHunk := false
+	line := 0
+	for _, l := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(l, "diff --git "):
+			inHunk = false
+			path = ""
+		case !inHunk && strings.HasPrefix(l, "+++ "):
+			p, err := unquoteName(l[4:])
+			if err != nil {
+				return err
+			}
+			if p == "/dev/null" {
+				path = ""
+				continue
+			}
+			if !names[p] {
+				return errors.New("patch header disagrees with the list of changed names")
+			}
+			path = p
+		case strings.HasPrefix(l, "@@"):
+			inHunk = true
+			line = newStart(l)
+		case inHunk && strings.HasPrefix(l, "+") && path != "":
+			for _, f := range scanContent(s.terms, strings.TrimSuffix(l[1:], "\r"), line) {
+				f.line = line
+				s.report(path, []finding{f})
+			}
+			line++
+		}
+	}
+	return nil
+}
+
+// newStart reads the new-file start line from a hunk header.
+func newStart(h string) int {
+	i := strings.Index(h, "+")
+	if i < 0 {
+		return 0
+	}
+	rest := h[i+1:]
+	end := strings.IndexAny(rest, ", ")
+	if end < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0
+	}
+	return n
+}
