@@ -43,7 +43,7 @@ const (
 
 // Refusal is an error that carries a Code, so a caller can act on the reason
 // without matching message text.
-type Refusal struct {
+type Refusal struct { //nolint:errname // callers match on this name through AsRefusal
 	Code    Code
 	Message string
 }
