@@ -431,37 +431,33 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	return nil
 }
 
-// createFallbackHostKeyCallback creates a host key callback that adds unknown hosts.
+// createFallbackHostKeyCallback creates the host key callback for the
+// external ssh fallback. It applies the same rules as the native path: a
+// host with no entry is recorded, a recorded key is accepted, and anything
+// else, a changed key above all, is refused.
 func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		homeDir, err := os.UserHomeDir()
+		knownHostsPath, err := homeKnownHostsFile()
 		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
+			return err
 		}
 
-		knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
-
-		// Try to verify against existing known_hosts
 		_, err = os.Stat(knownHostsPath)
-		if err == nil {
-			hostKeyCallback, err := knownhosts.New(knownHostsPath)
-			if err == nil {
-				err := hostKeyCallback(hostname, remote, key)
-				if err == nil {
-					return nil // Host key is known and valid
-				}
-			}
+		if errors.Is(err, os.ErrNotExist) {
+			return c.handleHostKeyError(&knownhosts.KeyError{Want: nil}, knownHostsPath, hostname, key)
 		}
 
-		// Host is unknown, add it to known_hosts
-		c.log.Infow("Adding unknown host to known_hosts", "host", hostname)
-
-		err = c.addHostKey(knownHostsPath, hostname, key)
+		hostKeyCallback, err := knownhosts.New(knownHostsPath)
 		if err != nil {
-			return fmt.Errorf("failed to add host key: %w", err)
+			return fmt.Errorf("failed to load known_hosts file: %w", err)
 		}
 
-		return nil
+		err = hostKeyCallback(hostname, remote, key)
+		if err == nil {
+			return nil
+		}
+
+		return c.handleHostKeyError(err, knownHostsPath, hostname, key)
 	}
 }
 
@@ -596,35 +592,15 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 		return ErrExternalSSHNotAvailable
 	}
 
-	// Build SSH command arguments
-	args := []string{
-		"-o", "ConnectTimeout=10",
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
+	knownHostsPath, err := homeKnownHostsFile()
+	if err != nil {
+		return err
 	}
 
-	// Add port if not default
-	if c.config.Port != DefaultSSHPort {
-		args = append(args, "-p", strconv.Itoa(c.config.Port))
-	}
-
-	// Add private key if specified
-	if c.config.PrivateKeyPath != "" {
-		args = append(args, "-i", c.config.PrivateKeyPath)
-	}
-
-	// Add custom SSH options
-	for _, opt := range c.config.SSHOptions {
-		args = append(args, "-o", opt)
-	}
-
-	// Add host and simple test command
-	args = append(args, fmt.Sprintf("%s@%s", c.config.User, c.config.Host), "echo", "connection-test")
+	args := c.externalProbeArgs(knownHostsPath)
 
 	// Execute SSH command
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 -- fixed binary; arguments never pass through a shell
 
 	// Set up environment if password authentication is needed.
 	// Password is injected via SSHPASS env var; -e tells sshpass to read it
@@ -662,6 +638,40 @@ func (c *Client) validateExternalSSHConnectivity(ctx context.Context) error {
 	c.log.Debug("External SSH connectivity validated")
 
 	return nil
+}
+
+// externalProbeArgs builds the arguments for the external ssh probe.
+func (c *Client) externalProbeArgs(knownHostsPath string) []string {
+	// accept-new records a host seen for the first time but refuses one
+	// whose key differs from the entry on record. Naming the file keeps
+	// the probe on the same known_hosts the Go client checks, whatever the
+	// user's ssh config says. These options come before SSHOptions because
+	// ssh keeps the first value it sees for each option.
+	args := []string{
+		"-o", "ConnectTimeout=10",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=" + sshConfigPath(knownHostsPath),
+		"-o", "LogLevel=ERROR",
+	}
+
+	// Add port if not default
+	if c.config.Port != DefaultSSHPort {
+		args = append(args, "-p", strconv.Itoa(c.config.Port))
+	}
+
+	// Add private key if specified
+	if c.config.PrivateKeyPath != "" {
+		args = append(args, "-i", c.config.PrivateKeyPath)
+	}
+
+	// Add custom SSH options
+	for _, opt := range c.config.SSHOptions {
+		args = append(args, "-o", opt)
+	}
+
+	// Add host and simple test command
+	return append(args, fmt.Sprintf("%s@%s", c.config.User, c.config.Host), "echo", "connection-test")
 }
 
 // handleTunnelConnection handles a single tunnel connection.

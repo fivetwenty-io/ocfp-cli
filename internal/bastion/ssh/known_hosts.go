@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -69,4 +70,14 @@ func isUnknownHost(err error) bool {
 	var keyErr *knownhosts.KeyError
 
 	return errors.As(err, &keyErr) && len(keyErr.Want) == 0
+}
+
+// sshConfigPath quotes path for an ssh -o option when it holds whitespace,
+// which ssh would otherwise read as a list of several files.
+func sshConfigPath(path string) string {
+	if !strings.ContainsAny(path, " \t") {
+		return path
+	}
+
+	return `"` + path + `"`
 }
