@@ -28,10 +28,14 @@ type hostKeyTestServer struct {
 func startHostKeyTestServer(t *testing.T, signers ...gossh.Signer) *hostKeyTestServer {
 	t.Helper()
 
-	cfg := &gossh.ServerConfig{NoClientAuth: true}
-	for _, signer := range signers {
-		cfg.AddHostKey(signer)
-	}
+	return startHostKeyTestServerFunc(t, func(int32) []gossh.Signer { return signers })
+}
+
+// startHostKeyTestServerFunc serves SSH on 127.0.0.1 until the test ends,
+// asking keysFor which host keys to present on each connection, numbered
+// from 1. It models a host whose keys change between connections.
+func startHostKeyTestServerFunc(t *testing.T, keysFor func(conn int32) []gossh.Signer) *hostKeyTestServer {
+	t.Helper()
 
 	var lc net.ListenConfig
 
@@ -56,7 +60,10 @@ func startHostKeyTestServer(t *testing.T, signers ...gossh.Signer) *hostKeyTestS
 				return
 			}
 
-			srv.conns.Add(1)
+			cfg := &gossh.ServerConfig{NoClientAuth: true}
+			for _, signer := range keysFor(srv.conns.Add(1)) {
+				cfg.AddHostKey(signer)
+			}
 
 			go serveHostKeyTestConn(conn, cfg)
 		}
@@ -101,6 +108,26 @@ func isolateSSHEnv(t *testing.T) string {
 	t.Setenv("PATH", t.TempDir())
 
 	return filepath.Join(home, ".ssh", "known_hosts")
+}
+
+// fakeSSHOnPath puts an executable named ssh on PATH that creates a marker
+// file and fails. It returns the marker's path, which exists only if
+// something started ssh.
+func fakeSSHOnPath(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ssh-ran")
+	script := "#!/bin/sh\n: > '" + marker + "'\nexit 1\n"
+
+	err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o700) //nolint:gosec // test executable
+	if err != nil {
+		t.Fatalf("write fake ssh: %v", err)
+	}
+
+	t.Setenv("PATH", dir)
+
+	return marker
 }
 
 // writeKnownHosts writes one known_hosts line per key for address.
