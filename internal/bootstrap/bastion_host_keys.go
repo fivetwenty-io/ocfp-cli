@@ -9,6 +9,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 // knownHostsFile locates the known_hosts file the bastion SSH client checks.
@@ -104,6 +105,36 @@ func (m *Manager) bastionAddresses(instance *cpi.Instance, bastionName string) [
 	}
 
 	return addresses
+}
+
+// noPreviousHostKeyError refuses to check a recycled bastion that has no
+// host key on record from before the recycle, and says how to go on.
+func noPreviousHostKeyError(bastionName string) error {
+	return fmt.Errorf("no previous host key is on record for bastion %s, so its host key cannot be checked "+
+		"after the recycle (%w). No key was recorded. Confirm the bastion's host key fingerprint out of band, "+
+		"for example in its console log, and then run `ocfp bastion init`, or recycle the bastion again with "+
+		"this version of ocfp, which records the host key before it replaces the root disk",
+		bastionName, ssh.ErrNoPreviousHostKey)
+}
+
+// parseHostKeys parses authorized_keys lines, skipping with a warning any
+// line that does not parse. A journal with no line that parses gives no
+// keys, and the check after the recycle then refuses to go on.
+func parseHostKeys(lines []string) []cryptossh.PublicKey {
+	keys := make([]cryptossh.PublicKey, 0, len(lines))
+
+	for _, line := range lines {
+		key, _, _, _, err := cryptossh.ParseAuthorizedKey([]byte(line))
+		if err != nil {
+			logger.Warnf("Ignoring an unreadable host key recorded before the recycle: %v", err)
+
+			continue
+		}
+
+		keys = append(keys, key)
+	}
+
+	return keys
 }
 
 func pluralEntries(n int) string {

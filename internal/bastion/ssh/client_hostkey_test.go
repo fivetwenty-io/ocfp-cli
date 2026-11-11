@@ -102,3 +102,44 @@ func TestConnectStopsOnRevokedHostKey(t *testing.T) {
 		t.Errorf("known_hosts changed after a revoked key:\nbefore: %q\nafter:  %q", content, after)
 	}
 }
+
+// HostKey reports the key the host presented and the host key check
+// accepted, whether that key was on record or recorded on first contact. A
+// client that has not connected reports none.
+func TestConnectReportsTheVerifiedHostKey(t *testing.T) {
+	for _, onRecord := range []bool{false, true} {
+		t.Run("on record "+strconv.FormatBool(onRecord), func(t *testing.T) {
+			knownHosts := isolateSSHEnv(t)
+
+			ed := newEd25519Signer(t)
+			srv := startHostKeyTestServer(t, newECDSASigner(t), ed)
+
+			if onRecord {
+				writeKnownHosts(t, knownHosts, srv.address(), ed.PublicKey())
+			}
+
+			client := newLoopbackClient(srv)
+			if client.HostKey() != nil {
+				t.Fatal("HostKey before Connect is not nil")
+			}
+
+			err := connectWithin(t, client, 5*time.Second)
+			if err != nil {
+				t.Fatalf("connect: %v", err)
+			}
+
+			got := client.HostKey()
+			if got == nil {
+				t.Fatal("HostKey after Connect is nil")
+			}
+
+			if onRecord && authorizedKey(got) != authorizedKey(ed.PublicKey()) {
+				t.Errorf("HostKey = %s, want the recorded key %s", authorizedKey(got), authorizedKey(ed.PublicKey()))
+			}
+
+			if !strings.Contains(readFile(t, knownHosts), authorizedKey(got)) {
+				t.Errorf("HostKey %s is not the key known_hosts holds", authorizedKey(got))
+			}
+		})
+	}
+}

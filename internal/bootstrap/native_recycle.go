@@ -17,6 +17,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/recycle"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 const nativeRecycleJournalType = "native_boot_refresh"
@@ -29,6 +30,8 @@ type NativeBastionRecycle struct {
 	compute    cpi.ComputeManager
 	boot       cpi.BootRefreshManager
 	guestCheck func(context.Context, *cpi.Instance, *recycle.NativeJournal) error
+	// guestPort is the port the guest check dials; zero means 22.
+	guestPort int
 }
 
 func NewNativeBastionRecycle(mgr *Manager) (*NativeBastionRecycle, error) {
@@ -147,7 +150,7 @@ func (c *NativeBastionRecycle) Plan(ctx context.Context) (*recycle.NativeJournal
 
 	j := &recycle.NativeJournal{Version: 1, RecordedInstanceID: old.ID, Token: strings.ToLower(rand.Text()), Identity: *identity, Image: resolved.ID, Tags: c.mgr.baseTags(), SSHUser: c.mgr.bastionDefaultUsername(), SSHKeyPath: key, VerificationCommand: nativeGuestVerificationForProvider(c.mgr.options.Provider, mount, req.DataDisk.HomeDir)}
 
-	if err = c.checkGuest(ctx, inst, j); err != nil {
+	if err = c.checkGuest(ctx, inst, j, false); err != nil {
 		return nil, fmt.Errorf("original guest/data readiness: %w", err)
 	}
 
@@ -462,9 +465,9 @@ func (c *NativeBastionRecycle) Verify(ctx context.Context, j *recycle.NativeJour
 		return errors.New("bastion not running")
 	}
 
-	return c.checkGuest(ctx, inst, j)
+	return c.checkGuest(ctx, inst, j, true)
 }
-func (c *NativeBastionRecycle) checkGuest(ctx context.Context, inst *cpi.Instance, j *recycle.NativeJournal) error {
+func (c *NativeBastionRecycle) checkGuest(ctx context.Context, inst *cpi.Instance, j *recycle.NativeJournal, recycled bool) error {
 	if c.guestCheck != nil {
 		return c.guestCheck(ctx, inst, j)
 	}
@@ -473,17 +476,55 @@ func (c *NativeBastionRecycle) checkGuest(ctx context.Context, inst *cpi.Instanc
 		return errors.New("guest verification connection or command missing")
 	}
 
+	// A recycled bastion presents keys its new root disk generated until it
+	// restores its own from the data disk, so the check waits for the key
+	// it presented before the recycle and never records a temporary one.
+	// With no such key there is nothing to check it against.
+	var expected []cryptossh.PublicKey
+
+	if recycled {
+		expected = parseHostKeys(j.ExpectedHostKeys)
+		if len(expected) == 0 {
+			return noPreviousHostKeyError(c.name())
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
-	client := ssh.NewClient(&ssh.ConnectionDetails{Host: bastionSSHHost(inst), Port: 22, User: j.SSHUser, PrivateKeyPath: j.SSHKeyPath}, &ssh.ProvisioningOptions{})
+	client := ssh.NewClient(&ssh.ConnectionDetails{Host: bastionSSHHost(inst), Port: c.sshPort(), User: j.SSHUser, PrivateKeyPath: j.SSHKeyPath}, &ssh.ProvisioningOptions{})
 	defer client.Close() //nolint:errcheck // preserve readiness failure
+
+	if recycled {
+		client.ExpectRecycledHostKeys(expected, ssh.DefaultRecycledHostKeyTimeout)
+	}
 
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
 
+	// Before the recycle, the journal keeps the one key this bastion
+	// presented and the check accepted. Keys known_hosts holds for the
+	// bastion's other addresses are left out, since a reused private IP
+	// or a stale address variable can name some other host.
+	if !recycled {
+		key := client.HostKey()
+		if key == nil {
+			return errors.New("guest verification connection reported no host key")
+		}
+
+		j.ExpectedHostKeys = []string{strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key)))}
+	}
+
 	return waitForNativeGuest(ctx, client.ExecuteCommand, j.VerificationCommand, 5*time.Second)
+}
+
+func (c *NativeBastionRecycle) sshPort() int {
+	if c.guestPort != 0 {
+		return c.guestPort
+	}
+
+	return ssh.DefaultSSHPort
 }
 
 // nativeDatasetFailedCommand succeeds when the dataset unit is in the failed
