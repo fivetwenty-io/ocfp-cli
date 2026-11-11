@@ -218,8 +218,6 @@ func (p *PVEBastionInit) checkKeyEncryption(privateKeyPath string) bool {
 // buildSSHOptions constructs the SSH options list.
 func (p *PVEBastionInit) buildSSHOptions() []string {
 	sshOptions := []string{
-		"StrictHostKeyChecking=no",
-		"UserKnownHostsFile=/dev/null",
 		"LogLevel=ERROR",
 		"ConnectTimeout=30",
 		"ForwardAgent=yes",

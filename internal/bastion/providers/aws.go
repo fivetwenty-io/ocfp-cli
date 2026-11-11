@@ -104,10 +104,8 @@ func (a *AWSBastionInit) PrepareEnvironment() map[string]string {
 
 // GetConnectionDetails returns SSH connection details for the bastion.
 //
-// SECURITY: The returned SSHOptions disable strict host-key checking. Bastion
-// IPs are dynamic and the operator-managed bastion is implicitly trusted. If
-// the threat model requires host-key pinning, override SSHOptions at the
-// caller.
+// The returned SSHOptions leave host-key checking to the SSH client, which
+// verifies the bastion against the user's known_hosts.
 //
 // SECURITY: When the SSH key is passphrase-protected, the bloc name is used
 // as the passphrase. This is a known limitation; rotate to vault-sourced
@@ -142,14 +140,7 @@ func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionD
 		a.log.Warn("Failed to check if key is encrypted", "error", err)
 	}
 
-	// SSH options — see SECURITY note above on host-key checking.
-	sshOptions := []string{
-		"StrictHostKeyChecking=no",
-		"UserKnownHostsFile=/dev/null",
-		"LogLevel=ERROR",
-		"ConnectTimeout=30",
-		"ForwardAgent=yes",
-	}
+	sshOptions := a.sshOptions()
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
@@ -378,4 +369,13 @@ func (a *AWSBastionInit) tryRestoreKeyFromConfig(keyManager *ssh.KeyManager) (st
 	a.log.Info("Restored SSH key from config", "path", restoredPath)
 
 	return restoredPath, nil
+}
+
+// sshOptions returns the ssh -o options for connections to the bastion.
+func (a *AWSBastionInit) sshOptions() []string {
+	return []string{
+		"LogLevel=ERROR",
+		"ConnectTimeout=30",
+		"ForwardAgent=yes",
+	}
 }

@@ -191,8 +191,6 @@ func (s *StackitBastionInit) checkKeyEncryption(privateKeyPath string) bool {
 // buildSSHOptions constructs the SSH options list.
 func (s *StackitBastionInit) buildSSHOptions() []string {
 	sshOptions := []string{
-		"StrictHostKeyChecking=no",
-		"UserKnownHostsFile=/dev/null",
 		"LogLevel=ERROR",
 		"ConnectTimeout=30",
 		"ForwardAgent=yes",

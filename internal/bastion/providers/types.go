@@ -12,9 +12,8 @@ const defaultAWSSSHUser = "ec2-user"
 
 // ConnectionDetails holds SSH connection information.
 //
-// SSHOptions disables strict host-key checking by default because bastion IPs
-// are dynamic and the operator-managed bastion is implicitly trusted. Callers
-// that pin known hosts should override SSHOptions.
+// SSHOptions holds extra ssh -o options. Host-key checking is not among
+// them: the SSH client verifies the bastion against the user's known_hosts.
 type ConnectionDetails struct {
 	Host           string
 	Port           int
