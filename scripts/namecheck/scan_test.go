@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -953,5 +954,114 @@ func TestScanNameWithInvalidUTF8(t *testing.T) {
 	want := "CLIENT_NAME_FOUND path *** term 1\nCLIENT_NAME_FOUND ***:1:1 term 1\n"
 	if code != 1 || out != want {
 		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func lineDigest(line string) string {
+	d := digestOf([]byte(line))
+	return hex.EncodeToString(d[:])
+}
+
+// TestAllowFileClearsOneLine checks the .namecheck-allow rules: an entry
+// clears the one line it names, a changed line is found again, an entry for
+// another path clears nothing, and the program prints no digest it was not
+// given.
+func TestAllowFileClearsOneLine(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	const line = "hello zebracorp"
+
+	cases := []struct {
+		name     string
+		content  string // the staged line
+		allow    string // the allow file, empty for none
+		wantCode int
+	}{
+		{"entry clears the line", line, "b.txt " + lineDigest(line) + " a harmless mention\n", 0},
+		{"changed line is found again", line + "!", "b.txt " + lineDigest(line) + " a harmless mention\n", 1},
+		{"entry for another path clears nothing", line, "c.txt " + lineDigest(line) + " a harmless mention\n", 1},
+		{"no allow file", line, "", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo, write := newRepo(t)
+			write("b.txt", tc.content+"\n")
+			if tc.allow != "" {
+				if err := os.WriteFile(filepath.Join(repo, ".namecheck-allow"), []byte(tc.allow), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, out, errs := runIn(t, repo, getenv, "--staged")
+			if code != tc.wantCode {
+				t.Fatalf("code %d, want %d; out %q err %q", code, tc.wantCode, out, errs)
+			}
+			if d := lineDigest(tc.content); strings.Contains(out+errs, d) {
+				t.Fatalf("output printed a digest: %q %q", out, errs)
+			}
+		})
+	}
+
+	t.Run("malformed entry stops the run", func(t *testing.T) {
+		t.Parallel()
+		repo, write := newRepo(t)
+		write("b.txt", "clean\n")
+		if err := os.WriteFile(filepath.Join(repo, ".namecheck-allow"), []byte("b.txt nothex a reason\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, out, errs := runIn(t, repo, getenv, "--staged")
+		if code != 2 {
+			t.Fatalf("code %d, want 2; out %q err %q", code, out, errs)
+		}
+	})
+}
+
+func TestScanNamesMode(t *testing.T) {
+	t.Parallel()
+	getenv := setupConfig(t, testTerms(t), 0o600)
+
+	t.Run("clean names pass", func(t *testing.T) {
+		t.Parallel()
+		code, out, errs := runScan(t, getenv, "--names", "refs/heads/work", "refs/tags/v1")
+		if code != 0 || out != "" {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+
+	t.Run("a name holding a term is masked", func(t *testing.T) {
+		t.Parallel()
+		code, out, errs := runScan(t, getenv, "--names", "refs/heads/work", "refs/tags/zebracorp-1")
+		if code != 1 || strings.Contains(out+errs, "zebracorp") || !strings.Contains(out, "CLIENT_NAME_FOUND") {
+			t.Fatalf("code %d out %q err %q", code, out, errs)
+		}
+	})
+}
+
+// TestScanRangeTakesSeveralRevisions checks that --range reads a list of
+// revisions, so that a hook can exclude what a remote already holds.
+func TestScanRangeTakesSeveralRevisions(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, write := newRepo(t)
+	write("a.txt", "clean\n")
+	gitIn(t, repo, "commit", "-q", "-m", "First")
+	first := gitIn(t, repo, "rev-parse", "HEAD")
+	write("b.txt", "hello zebracorp\n")
+	gitIn(t, repo, "commit", "-q", "-m", "Second")
+	second := gitIn(t, repo, "rev-parse", "HEAD")
+
+	code, out, errs := runIn(t, repo, getenv, "--range", second+" ^"+first)
+	if code != 1 || !strings.Contains(out, "b.txt:1:7") {
+		t.Fatalf("excluding the first commit: code %d out %q err %q", code, out, errs)
+	}
+	code, out, errs = runIn(t, repo, getenv, "--range", second+" ^"+second)
+	if code != 0 || out != "" {
+		t.Fatalf("excluding everything: code %d out %q err %q", code, out, errs)
 	}
 }

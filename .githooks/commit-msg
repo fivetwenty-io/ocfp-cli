@@ -1,0 +1,52 @@
+#!/bin/sh
+# Checks the shape of a commit message and runs the name check over it. The
+# subject is at most 48 bytes, so a subject with accented characters is held
+# to a stricter limit than 48 characters. It carries no "type:" prefix, and
+# the body lines are at most 72 bytes wide. The message names no phase, wave,
+# lane, or task, and no task id. Git's own comment lines, and the diff that
+# "git commit -v" appends below the scissors line, are not part of the
+# message. A carriage return at the end of a line is dropped.
+# OCFP_NAMECHECK names another program to run in place of the name check,
+# which the hook tests use.
+set -eu
+
+msgfile=$1
+cd "$(git rev-parse --show-toplevel)"
+
+cut=$(mktemp)
+trap 'rm -f "$cut"' EXIT
+
+sed '/^# -* >8 -*$/,$d' "$msgfile" | tr -d '\r' | grep -v '^#' >"$cut" || true
+subject=$(sed -n '1p' "$cut")
+
+fail() {
+	echo "commit-msg: $1" >&2
+	exit 1
+}
+
+if [ "$(printf '%s' "$subject" | wc -c | tr -d ' ')" -gt 48 ]; then
+	fail "the subject is longer than 48 characters"
+fi
+
+if printf '%s\n' "$subject" | grep -Eq '^[A-Za-z][A-Za-z-]*(\([^)]*\))?!?:'; then
+	fail "the subject starts with a type prefix; write an imperative sentence instead"
+fi
+
+if awk 'NR > 1 && length($0) > 72 { bad = 1 } END { exit !bad }' "$cut"; then
+	fail "a body line is wider than 72 characters"
+fi
+
+if grep -Eiq '(^|[^[:alnum:]])(waves?|lanes?|phases?|tasks?)([^[:alnum:]]|$)' "$cut"; then
+	fail "the message names a phase, wave, lane, or task; describe the code change instead"
+fi
+
+if grep -Eiq '(^|[^[:alnum:]])P[0-9]+[a-z]?-T[0-9]+([^[:alnum:]]|$)' "$cut"; then
+	fail "the message carries a task id; describe the code change instead"
+fi
+
+if [ -n "${OCFP_NAMECHECK:-}" ]; then
+	echo "commit-msg: OCFP_NAMECHECK replaces the real name check" >&2
+	"$OCFP_NAMECHECK" --msg "$cut"
+else
+	go run ./scripts/namecheck --msg "$cut"
+fi

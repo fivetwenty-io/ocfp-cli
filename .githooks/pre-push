@@ -1,21 +1,67 @@
 #!/usr/bin/env bash
-# Runs `make preflight` before a push that updates refs/heads/main or any
-# tag, since those are the pushes CI and the release workflow act on.
-# Feature-branch pushes and ref deletions skip it. Enable the hook with
-# `make hooks`; `git push --no-verify` bypasses it.
+# Runs the name check over the ref names and the commits of every push.
+# Then it runs `make preflight` before a push that updates refs/heads/main
+# or any tag, since those are the pushes CI and the release workflow act on.
+# Feature-branch pushes and ref deletions skip preflight, and a deletion
+# skips the name check too. Enable the hook with `make hooks`;
+# `git push --no-verify` bypasses it.
+#
+# The commits a push adds are measured against what the remote already has.
+# For a ref the remote holds, that is the range from the remote's commit to
+# the pushed one. For a new ref, or when the remote's commit is unknown here,
+# it is everything reachable from the pushed commit and not from the
+# remote's tracking refs, which is the whole history when there are none.
+#
+# OCFP_NAMECHECK names another program to run in place of the name check,
+# which the hook tests use. The hook says so on standard error when set.
 #
 # Preflight tests the checkout, not the pushed commit, so the hook refuses
 # a gated push unless the pushed sha is HEAD and no tracked file has
 # uncommitted changes. Untracked files do not count.
 set -euo pipefail
 
+remote=${1:-}
+
+if [ -n "${OCFP_NAMECHECK:-}" ]; then
+  echo "pre-push: OCFP_NAMECHECK replaces the real name check" >&2
+fi
+
+# The checker never reads the hook's input, which holds the other refs.
+namecheck() {
+  if [ -n "${OCFP_NAMECHECK:-}" ]; then
+    "$OCFP_NAMECHECK" "$@" </dev/null
+  else
+    go run ./scripts/namecheck "$@" </dev/null
+  fi
+}
+
+# Work from the top of the worktree, so the checker finds its sources and the
+# repository's own settings.
+cd "$(git rev-parse --show-toplevel)"
+
+# tracking lists the remote's tracking refs as exclusions for rev-list.
+tracking=$(git for-each-ref --format='^%(refname)' "refs/remotes/$remote/" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)
+
 gated_shas=()
 
 # git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>
-while read -r _local_ref local_sha remote_ref _remote_sha; do
+while read -r local_ref local_sha remote_ref remote_sha; do
   if [[ "$local_sha" =~ ^0+$ ]]; then
     continue # deleting a remote ref; the all-zero sha is 40 or 64 digits long
   fi
+
+  namecheck --names "$local_ref" "$remote_ref"
+
+  if ! [[ "$remote_sha" =~ ^0+$ ]] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    range="$remote_sha..$local_sha"
+  else
+    if ! [[ "$remote_sha" =~ ^0+$ ]]; then
+      echo "pre-push: the remote holds commits this clone does not; fetch first. Checking everything its tracking refs lack." >&2
+    fi
+    range="$local_sha${tracking:+ $tracking}"
+  fi
+  namecheck --range "$range"
+
   case "$remote_ref" in
     refs/heads/main | refs/tags/*) gated_shas+=("$local_sha") ;;
   esac

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Refuses a commit whose staged files hold a client term. Install the hooks
+# with "make hooks". OCFP_NAMECHECK names another program to run in place
+# of the name check, which the hook tests use.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+if [ -n "${OCFP_NAMECHECK:-}" ]; then
+	echo "pre-commit: OCFP_NAMECHECK replaces the real name check" >&2
+	"$OCFP_NAMECHECK" --staged
+else
+	go run ./scripts/namecheck --staged
+fi
