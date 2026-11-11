@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -68,6 +69,7 @@ type Client struct {
 	agentConn              net.Conn          // Connection to SSH agent - must stay alive for forwarding
 	agentForwardingEnabled bool              // Track if agent forwarding channel handler is set up
 	recycled               *recycledHostKeys // Set by ExpectRecycledHostKeys
+	hostKey                ssh.PublicKey     // Key the host presented and the check accepted
 }
 
 // NewClient creates a new SSH client.
@@ -203,6 +205,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("failed to connect after %d attempts, last error: %w", maxRetries, lastErr)
+}
+
+// HostKey returns the key the host presented on the last successful Connect,
+// which the host key check accepted, or nil before Connect succeeds.
+//
+//nolint:ireturn // ssh.PublicKey is the crypto/ssh interface
+func (c *Client) HostKey() ssh.PublicKey {
+	return c.hostKey
 }
 
 // waitingForRecycledKey reports whether Connect, in recycle mode, has seen
@@ -630,17 +640,65 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 		return nil, fmt.Errorf("failed to dial: %w", err)
 	}
 
-	// Perform SSH handshake
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, sshConfig)
+	client, err := c.handshake(conn, address, sshConfig)
+	if err != nil {
+		return nil, fmt.Errorf("SSH handshake failed: %w", err)
+	}
+
+	return client, nil
+}
+
+// handshake runs the SSH handshake on conn and, when it succeeds, keeps the
+// host key the check accepted for HostKey. A failed handshake closes conn.
+func (c *Client) handshake(conn net.Conn, address string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	accepted := &acceptedHostKey{}
+
+	checked := *config
+	checked.HostKeyCallback = accepted.wrap(config.HostKeyCallback)
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, &checked)
 	if err != nil {
 		// A close error after a failed handshake adds nothing; the
 		// handshake error is the one the caller needs.
 		_ = conn.Close()
 
-		return nil, fmt.Errorf("SSH handshake failed: %w", err)
+		return nil, err //nolint:wrapcheck // callers wrap it with the strategy that failed
 	}
 
+	c.hostKey = accepted.get()
+
 	return ssh.NewClient(sshConn, chans, reqs), nil
+}
+
+// acceptedHostKey remembers the first key a host key check accepted. The
+// check runs on the handshake's goroutine, and again on any later key
+// exchange, so the key is guarded.
+type acceptedHostKey struct {
+	mu  sync.Mutex
+	key ssh.PublicKey
+}
+
+func (a *acceptedHostKey) wrap(check ssh.HostKeyCallback) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := check(hostname, remote, key)
+		if err == nil {
+			a.mu.Lock()
+			if a.key == nil {
+				a.key = key
+			}
+			a.mu.Unlock()
+		}
+
+		return err
+	}
+}
+
+//nolint:ireturn // ssh.PublicKey is the crypto/ssh interface
+func (a *acceptedHostKey) get() ssh.PublicKey {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.key
 }
 
 // connectWithExternalSSH attempts connection using external SSH command as fallback.
@@ -1019,18 +1077,12 @@ func (c *Client) createNetDialer() net.Dialer {
 }
 
 func (c *Client) performSSHHandshake(conn net.Conn, address string, relaxedConfig *ssh.ClientConfig) (*ssh.Client, error) {
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, relaxedConfig)
+	client, err := c.handshake(conn, address, relaxedConfig)
 	if err != nil {
-		closeErr := conn.Close()
-		if closeErr != nil {
-			// Connection close errors are typically not critical
-			_ = closeErr
-		}
-
 		return nil, fmt.Errorf("SSH handshake failed with relaxed settings: %w", err)
 	}
 
 	c.log.Info("External SSH fallback successful - connected with relaxed settings")
 
-	return ssh.NewClient(sshConn, chans, reqs), nil
+	return client, nil
 }

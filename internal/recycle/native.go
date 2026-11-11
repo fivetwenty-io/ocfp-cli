@@ -23,6 +23,11 @@ type NativeJournal struct {
 	Image               string            `json:"image"`
 	ReplacementID       string            `json:"replacement_id"`
 	SnapshotID          string            `json:"snapshot_id"`
+	// ExpectedHostKeys holds, in authorized_keys form, the host key the
+	// bastion presented before the recycle and the host key check
+	// accepted. The check after the recycle accepts only these, and
+	// refuses to go on when there are none.
+	ExpectedHostKeys []string `json:"expected_host_keys,omitempty"`
 }
 
 // NativeCluster reconciles native boot operations against observed cloud state.
