@@ -53,10 +53,11 @@ func (r *Refusal) Error() string {
 	return string(r.Code) + ": " + r.Message
 }
 
-// AsRefusal finds a *Refusal anywhere in err's chain.
+// AsRefusal finds a *Refusal anywhere in err's chain. A typed-nil *Refusal in
+// the chain is not a refusal, so it answers false.
 func AsRefusal(err error) (*Refusal, bool) {
 	var r *Refusal
-	if errors.As(err, &r) {
+	if errors.As(err, &r) && r != nil {
 		return r, true
 	}
 
