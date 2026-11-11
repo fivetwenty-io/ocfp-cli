@@ -240,7 +240,7 @@ test-scripts: ## Run the shell script tests (scripts/ci/tests)
 	@echo "$(GREEN)✓ Script tests complete$(RESET)"
 
 .PHONY: hooks
-hooks: ## Enable the pre-push hook in .githooks (runs preflight on pushes to main and tags)
+hooks: ## Enable the hooks in .githooks (name check on commits and pushes, preflight on pushes to main and tags)
 	@git config core.hooksPath .githooks
 	@echo "$(GREEN)✓ core.hooksPath set to .githooks$(RESET)"
 

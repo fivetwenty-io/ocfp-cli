@@ -21,6 +21,12 @@ git -C "$REPO" commit -q -m first
 HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
 ROOT_PHYSICAL="$(cd "$REPO" && pwd -P)"
 
+# The name check runs a program of the repository, which the scratch
+# repository lacks, so a stand-in that passes takes its place.
+printf '#!/bin/sh\nexit 0\n' >"$FAKE_BIN/namecheck-stub"
+chmod +x "$FAKE_BIN/namecheck-stub"
+export OCFP_NAMECHECK="$FAKE_BIN/namecheck-stub"
+
 # The fake make records the directory it ran in and any GIT_DIR it inherited.
 # shellcheck disable=SC2016 # the fake expands these when it runs
 fake_cmd make 'echo "cwd=$(pwd -P)" >>"$CALLS_FILE"; echo "gitdir=${GIT_DIR:-unset}" >>"$CALLS_FILE"; exit "${FAKE_MAKE_EXIT:-0}"'

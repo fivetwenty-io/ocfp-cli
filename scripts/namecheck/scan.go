@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,6 +33,61 @@ type term struct {
 // finding locates a match without quoting it.
 type finding struct {
 	line, col, term int
+	// digest is the SHA-256 of the line in hex. It is never printed, and an
+	// entry in the allow file matches on it.
+	digest string
+}
+
+// allowFileName is the file, at the root of the scanned tree, that clears
+// false positives.
+const allowFileName = ".namecheck-allow"
+
+var errAllowUnreadable = errors.New("NAMECHECK_ALLOW_UNREADABLE")
+
+// allowList maps a path to the digests of the lines cleared in it.
+type allowList map[string]map[string]bool
+
+// loadAllow reads the allow file in dir, or in the current directory when dir
+// is empty. A missing file is an empty list. Each line holds a path, the
+// SHA-256 digest of the matching line in hex, and a reason, separated by
+// white space, so a path that holds white space cannot be listed and the
+// run stops instead. A blank line or one that starts with # is skipped. The error
+// never quotes a line.
+func loadAllow(dir string) (allowList, error) {
+	data, err := os.ReadFile(filepath.Join(dir, allowFileName)) //nolint:gosec // the allow file sits at a fixed name in the tree the developer is checking
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, errAllowUnreadable
+	}
+
+	list := allowList{}
+
+	for i, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		f := strings.Fields(line)
+		if len(f) < 3 || len(f[1]) != 64 {
+			return nil, fmt.Errorf("%w: line %d needs a path, a digest, and a reason", errAllowUnreadable, i+1)
+		}
+
+		if _, err := hex.DecodeString(f[1]); err != nil {
+			return nil, fmt.Errorf("%w: line %d has a digest that is not hex", errAllowUnreadable, i+1)
+		}
+
+		if list[f[0]] == nil {
+			list[f[0]] = map[string]bool{}
+		}
+
+		list[f[0]][strings.ToLower(f[1])] = true
+	}
+
+	return list, nil
 }
 
 // termsPath returns where the term list lives for the given environment. It
@@ -238,8 +294,11 @@ func scanContent(terms []term, content string, firstLine int) []finding {
 	line := firstLine
 	start := 0
 	emit := func(end int) {
-		for _, f := range scanLine(terms, strings.TrimSuffix(content[start:end], "\r")) {
+		text := strings.TrimSuffix(content[start:end], "\r")
+		for _, f := range scanLine(terms, text) {
 			f.line = line
+			d := digestOf([]byte(text))
+			f.digest = hex.EncodeToString(d[:])
 			out = append(out, f)
 		}
 
@@ -263,6 +322,7 @@ type scanner struct {
 	dir    string // working directory for git, empty for the process's own
 	out    func(string)
 	failed bool
+	allow  allowList
 	// seen, when set, drops a line already printed for the current commit,
 	// because a merge is diffed against each parent in turn.
 	seen map[string]bool
@@ -283,6 +343,10 @@ func (s *scanner) emit(line string) {
 func (s *scanner) report(path string, fs []finding) {
 	masked := maskPath(s.terms, path)
 	for _, f := range fs {
+		if s.allow[path][f.digest] {
+			continue
+		}
+
 		s.failed = true
 		s.emit(fmt.Sprintf("CLIENT_NAME_FOUND %s:%d:%d term %d", masked, f.line, f.col, f.term))
 	}

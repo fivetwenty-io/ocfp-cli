@@ -3,7 +3,12 @@
 //
 // Usage:
 //
-//	namecheck [--staged | --msg FILE | --range A..B | --history] [PATH...]
+//	namecheck [--staged | --msg FILE | --range REVS | --names | --history] [PATH...]
+//
+// --range takes a list of revisions separated by white space, as git
+// rev-list reads them, for example "SHA ^REMOTE_REF". --names scans each
+// PATH argument as a name only, without reading a file, for branch and tag
+// names.
 //
 // The hidden flag --C DIR runs the git-backed modes in DIR instead of the
 // process's working directory. Tests use it so that parallel tests can each
@@ -21,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -34,6 +40,7 @@ type options struct {
 	rangeMode bool
 	rng       string
 	history   bool
+	names     bool
 	dir       string
 	paths     []string
 }
@@ -60,6 +67,9 @@ func parseArgs(args []string) (options, error) {
 		switch a {
 		case "--staged":
 			o.staged = true
+			modes++
+		case "--names":
+			o.names = true
 			modes++
 		case "--history":
 			o.history = true
@@ -98,7 +108,7 @@ func parseArgs(args []string) (options, error) {
 	}
 
 	if modes > 1 {
-		return o, errors.New("use at most one of --staged, --msg, --range, --history")
+		return o, errors.New("use at most one of --staged, --msg, --range, --names, --history")
 	}
 
 	return o, nil
@@ -126,14 +136,25 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		return 2
 	}
 
-	s := &scanner{terms: terms, dir: opts.dir, out: func(l string) { _, _ = fmt.Fprintln(stdout, l) }}
+	allow, err := loadAllow(opts.dir)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+
+		return 2
+	}
+
+	s := &scanner{terms: terms, allow: allow, dir: opts.dir, out: func(l string) { _, _ = fmt.Fprintln(stdout, l) }}
 	switch {
 	case opts.staged:
 		err = s.scanStaged(opts.paths)
 	case opts.msgMode:
 		err = s.scanMessageFile(opts.msg)
 	case opts.rangeMode:
-		err = s.scanLog(opts.rng)
+		err = s.scanLog(strings.Fields(opts.rng)...)
+	case opts.names:
+		for _, n := range opts.paths {
+			s.scanName(n)
+		}
 	case opts.history:
 		err = s.scanLog("HEAD")
 	default:
