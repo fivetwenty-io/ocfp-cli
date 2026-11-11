@@ -640,7 +640,7 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 		return nil, fmt.Errorf("failed to dial: %w", err)
 	}
 
-	client, err := c.handshake(conn, address, sshConfig)
+	client, err := c.handshake(ctx, conn, address, sshConfig)
 	if err != nil {
 		return nil, fmt.Errorf("SSH handshake failed: %w", err)
 	}
@@ -650,19 +650,64 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 
 // handshake runs the SSH handshake on conn and, when it succeeds, keeps the
 // host key the check accepted for HostKey. A failed handshake closes conn.
-func (c *Client) handshake(conn net.Conn, address string, config *ssh.ClientConfig) (*ssh.Client, error) {
+//
+// The handshake is bounded. conn gets a deadline of config.Timeout, or
+// shortTimeout when that is unset, brought forward to ctx's deadline when
+// that comes first, and conn is closed if ctx is cancelled meanwhile, so a
+// peer that never sends its banner cannot hold the caller. The deadline is
+// cleared once the handshake succeeds.
+func (c *Client) handshake(ctx context.Context, conn net.Conn, address string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	limit := config.Timeout
+	if limit <= 0 {
+		limit = shortTimeout
+	}
+
+	deadline := time.Now().Add(limit)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+
+	err := conn.SetDeadline(deadline)
+	if err != nil {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("set handshake deadline: %w", err)
+	}
+
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+
 	accepted := &acceptedHostKey{}
 
 	checked := *config
 	checked.HostKeyCallback = accepted.wrap(config.HostKeyCallback)
 
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, &checked)
+
+	// stop reports false when ctx ended and conn was closed, which may
+	// have happened just after a handshake that had already succeeded.
+	if !stop() && err == nil {
+		_ = sshConn.Close()
+
+		return nil, fmt.Errorf("SSH handshake interrupted: %w", ctx.Err())
+	}
+
 	if err != nil {
 		// A close error after a failed handshake adds nothing; the
 		// handshake error is the one the caller needs.
 		_ = conn.Close()
 
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: %w", ctx.Err(), err)
+		}
+
 		return nil, err //nolint:wrapcheck // callers wrap it with the strategy that failed
+	}
+
+	err = conn.SetDeadline(time.Time{})
+	if err != nil {
+		_ = sshConn.Close()
+
+		return nil, fmt.Errorf("clear handshake deadline: %w", err)
 	}
 
 	c.hostKey = accepted.get()
@@ -1035,7 +1080,7 @@ func (c *Client) connectWithRelaxedConfig(ctx context.Context, sshConfig *ssh.Cl
 		return nil, fmt.Errorf("failed to dial with relaxed settings: %w", err)
 	}
 
-	return c.performSSHHandshake(conn, address, relaxedConfig)
+	return c.performSSHHandshake(ctx, conn, address, relaxedConfig)
 }
 
 func (c *Client) createRelaxedSSHConfig(sshConfig *ssh.ClientConfig) *ssh.ClientConfig {
@@ -1076,8 +1121,8 @@ func (c *Client) createNetDialer() net.Dialer {
 	}
 }
 
-func (c *Client) performSSHHandshake(conn net.Conn, address string, relaxedConfig *ssh.ClientConfig) (*ssh.Client, error) {
-	client, err := c.handshake(conn, address, relaxedConfig)
+func (c *Client) performSSHHandshake(ctx context.Context, conn net.Conn, address string, relaxedConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	client, err := c.handshake(ctx, conn, address, relaxedConfig)
 	if err != nil {
 		return nil, fmt.Errorf("SSH handshake failed with relaxed settings: %w", err)
 	}
