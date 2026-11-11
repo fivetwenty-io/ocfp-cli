@@ -37,7 +37,8 @@ type RemovedHostKey struct {
 // port. A line that lists several names goes as a whole, as with ssh-keygen
 // -R. Wildcard patterns, lines whose negated names cover host,
 // @cert-authority and @revoked lines, comments, and every other line stay
-// byte for byte. When path is a symlink the file it points at is rewritten
+// byte for byte. The rewrite holds the lock addHostKey takes, so an entry
+// appended meanwhile is not lost. When path is a symlink the file it points at is rewritten
 // and the link stays, and the file keeps its mode and, where the platform
 // allows, its owner. A missing file is not an error, and a file with nothing
 // to remove is not rewritten.
@@ -55,6 +56,12 @@ func RemoveKnownHost(path, host string, port int) ([]RemovedHostKey, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	unlock, err := lockKnownHosts(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	data, err := os.ReadFile(path) // #nosec G304 -- caller-chosen known_hosts path
 	if errors.Is(err, os.ErrNotExist) {

@@ -411,7 +411,9 @@ func (c *Client) handleHostKeyError(err error, knownHostsPath, hostname string, 
 	return nil
 }
 
-// addHostKey adds a host key to the known_hosts file.
+// addHostKey adds a host key to the known_hosts file. It holds the
+// known_hosts lock while it appends, so a concurrent RemoveKnownHost cannot
+// rename an older copy of the file over the new entry.
 func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) error {
 	// Ensure SSH directory exists
 	sshDir := filepath.Dir(knownHostsPath)
@@ -420,6 +422,17 @@ func (c *Client) addHostKey(knownHostsPath, hostname string, key ssh.PublicKey) 
 	if err != nil {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
+
+	knownHostsPath, err = knownHostsWritePath(knownHostsPath)
+	if err != nil {
+		return err
+	}
+
+	unlock, err := lockKnownHosts(knownHostsPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	// Open known_hosts file for appending
 	file, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, privateKeyMode) // #nosec G304 - safe path construction
