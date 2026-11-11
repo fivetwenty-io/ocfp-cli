@@ -39,6 +39,11 @@ const (
 	// CodeJobOrphaned reports an attach to a spool whose wrapper died without
 	// writing an exit record.
 	CodeJobOrphaned Code = "JOB_ORPHANED"
+
+	// CodeOwnerRecordInvalid reports an owner record on the host that does
+	// not parse or does not verify, so that a requester never reads it as a
+	// fault in its own request.
+	CodeOwnerRecordInvalid Code = "OWNER_RECORD_INVALID"
 )
 
 // Refusal is an error that carries a Code, so a caller can act on the reason
