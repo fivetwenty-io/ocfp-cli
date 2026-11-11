@@ -1,0 +1,1 @@
+{"id":"admin-passphrase","kind":"text","text":"Enter the admin passphrase for host-a.internal","choices":null,"default":null,"sensitive":true}
