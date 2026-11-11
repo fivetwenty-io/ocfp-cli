@@ -20,7 +20,7 @@ cross-platform compatibility, and maintainability.
 ```bash
 # Clone the repository
 git clone https://github.com/fivetwenty-io/ocfp-cli.git
-cd ocfp-cli/go
+cd ocfp-cli
 
 # Build the binary
 make build

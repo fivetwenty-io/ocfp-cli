@@ -58,7 +58,7 @@ gh release list --repo ocfp/ocfp-cli
 and for the go version
 
 ```shell
-gh repo view fivetwenty-io/ocfp-cli-go
+gh repo view fivetwenty-io/ocfp-cli
 ```
 
 ## OCFP Cli installation (dev container - skip in favor of the release path below)
@@ -151,13 +151,13 @@ ocfp -v
 * clone the repository
 macOS - apple silicon
 ```shell
-gh repo clone fivetwenty-io/ocfp-cli-go -- --branch dev
+gh repo clone fivetwenty-io/ocfp-cli -- --branch dev
 ```
 
 * cd into the directory
 
 ```shell
-cd ocfp-cli-go
+cd ocfp-cli
 
 ```
 
