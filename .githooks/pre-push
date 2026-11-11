@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Runs the name check over the ref names and the commits of every push.
-# Then it runs `make preflight` before a push that updates refs/heads/main
-# or any tag, since those are the pushes CI and the release workflow act on.
-# Feature-branch pushes and ref deletions skip preflight, and a deletion
-# skips the name check too. Enable the hook with `make hooks`;
-# `git push --no-verify` bypasses it.
+# Runs the name check over the ref names, the annotated tag messages, and the
+# commits of every push. Then it runs `make preflight` before a push that
+# updates refs/heads/main or any tag, since those are the pushes CI and the
+# release workflow act on. Feature-branch pushes and ref deletions skip
+# preflight, and a deletion skips the name check too. Enable the hook with
+# `make hooks`; `git push --no-verify` bypasses it.
 #
 # The commits a push adds are measured against what the remote already has.
 # For a ref the remote holds, that is the range from the remote's commit to
@@ -51,6 +51,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   namecheck --names "$local_ref" "$remote_ref"
+
+  # An annotated tag has a tagger line and a message of its own, which the
+  # commit scan below never reads. The object decides, not the ref name,
+  # because a tag object can be pushed by its hash under any name.
+  if [ "$(git --no-replace-objects cat-file -t "$local_sha" 2>/dev/null || true)" = tag ]; then
+    namecheck --tag "$remote_ref" "$local_sha"
+  fi
 
   if ! [[ "$remote_sha" =~ ^0+$ ]] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     range="$remote_sha..$local_sha"

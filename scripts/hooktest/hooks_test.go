@@ -625,6 +625,85 @@ func TestPreCommitFromSubdirectoryAndLinkedWorktree(t *testing.T) {
 	})
 }
 
+func TestPrePushRefusesTermInAnnotatedTagMessage(t *testing.T) {
+	t.Parallel()
+	e, _ := pushEnv(t, "clean\n")
+	e.git(t, "tag", "-a", "-m", "a line with quillmark", "v1")
+	tag := e.git(t, "rev-parse", "refs/tags/v1")
+	stdin := strings.NewReader("refs/tags/v1 " + tag + " refs/tags/v1 " + zeros + "\n")
+	code, out := e.run(stdin, "bash", hookPath(t, "pre-push"), "origin", "url")
+	if code == 0 {
+		t.Fatalf("a term in a tag message was accepted\n%s", out)
+	}
+	if strings.Contains(out, "quillmark") {
+		t.Fatalf("the hook printed the term\n%s", out)
+	}
+}
+
+func TestPrePushAcceptsCleanAnnotatedTag(t *testing.T) {
+	t.Parallel()
+	e, _ := pushEnv(t, "clean\n")
+	e.git(t, "tag", "-a", "-m", "release", "v1")
+	tag := e.git(t, "rev-parse", "refs/tags/v1")
+	stdin := strings.NewReader("refs/tags/v1 " + tag + " refs/tags/v1 " + zeros + "\n")
+	if code, out := e.run(stdin, "bash", hookPath(t, "pre-push"), "origin", "url"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestPrePushScansTagObjectsOnly(t *testing.T) {
+	t.Parallel()
+	e, _ := pushEnv(t, "clean\n")
+	log := logTools(t, e)
+	e.git(t, "tag", "light")
+	e.git(t, "tag", "-a", "-m", "release", "heavy")
+	light := e.git(t, "rev-parse", "refs/tags/light")
+	heavy := e.git(t, "rev-parse", "refs/tags/heavy")
+	stdin := strings.NewReader(
+		"refs/tags/light " + light + " refs/tags/light " + zeros + "\n" +
+			"refs/tags/heavy " + heavy + " refs/tags/heavy " + zeros + "\n")
+	if code, out := e.run(stdin, "bash", hookPath(t, "pre-push"), "origin", "url"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	var tags []string
+	for _, c := range readLog(t, log) {
+		if strings.HasPrefix(c, "namecheck --tag ") {
+			tags = append(tags, c)
+		}
+	}
+	wantCalls(t, tags, []string{"namecheck --tag refs/tags/heavy " + heavy})
+}
+
+func TestPrePushScansTagObjectPushedByHash(t *testing.T) {
+	t.Parallel()
+	e, _ := pushEnv(t, "clean\n")
+	e.git(t, "tag", "-a", "-m", "a line with quillmark", "v1")
+	tag := e.git(t, "rev-parse", "refs/tags/v1")
+	stdin := strings.NewReader(tag + " " + tag + " refs/tags/x " + zeros + "\n")
+	code, out := e.run(stdin, "bash", hookPath(t, "pre-push"), "origin", "url")
+	if code == 0 {
+		t.Fatalf("a term in a tag pushed by hash was accepted\n%s", out)
+	}
+	if strings.Contains(out, "quillmark") {
+		t.Fatalf("the hook printed the term\n%s", out)
+	}
+}
+
+func TestPrePushRefusesTagChainBeyondTheCap(t *testing.T) {
+	t.Parallel()
+	e, _ := pushEnv(t, "clean\n")
+	e.git(t, "tag", "-a", "-m", "m", "t0")
+	const depth = 40
+	for i := 1; i <= depth; i++ {
+		e.git(t, "tag", "-a", "-m", "m", fmt.Sprintf("t%d", i), fmt.Sprintf("refs/tags/t%d", i-1))
+	}
+	tag := e.git(t, "rev-parse", fmt.Sprintf("refs/tags/t%d", depth))
+	stdin := strings.NewReader("refs/tags/deep " + tag + " refs/tags/deep " + zeros + "\n")
+	if code, out := e.run(stdin, "bash", hookPath(t, "pre-push"), "origin", "url"); code == 0 {
+		t.Fatalf("a tag chain past the cap was accepted\n%s", out)
+	}
+}
+
 func TestPrePushKeepsPreflightForMain(t *testing.T) {
 	t.Parallel()
 	push := func(t *testing.T, ref string) (*env, int, string) {

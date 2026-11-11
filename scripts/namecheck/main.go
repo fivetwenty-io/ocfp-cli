@@ -3,12 +3,16 @@
 //
 // Usage:
 //
-//	namecheck [--staged | --msg FILE | --range REVS | --names | --history] [PATH...]
+//	namecheck [--staged | --msg FILE | --range REVS | --names | --history | --tag] [PATH...]
 //
 // --range takes a list of revisions separated by white space, as git
 // rev-list reads them, for example "SHA ^REMOTE_REF". --names scans each
 // PATH argument as a name only, without reading a file, for branch and tag
 // names.
+//
+// --tag takes two arguments, a ref name and an object name. When the object
+// is an annotated tag, or a chain of them, it scans each tag's tagger and
+// message. An object of any other kind is left alone.
 //
 // The hidden flag --C DIR runs the git-backed modes in DIR instead of the
 // process's working directory. Tests use it so that parallel tests can each
@@ -41,6 +45,7 @@ type options struct {
 	rng       string
 	history   bool
 	names     bool
+	tag       bool
 	dir       string
 	paths     []string
 }
@@ -49,6 +54,13 @@ func parseArgs(args []string) (options, error) {
 	var o options
 
 	modes := 0
+
+	switches := map[string]*bool{
+		"--staged":  &o.staged,
+		"--names":   &o.names,
+		"--tag":     &o.tag,
+		"--history": &o.history,
+	}
 
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -62,18 +74,16 @@ func parseArgs(args []string) (options, error) {
 			return args[i], nil
 		}
 
+		if flag, ok := switches[a]; ok {
+			*flag = true
+			modes++
+
+			continue
+		}
+
 		var err error
 
 		switch a {
-		case "--staged":
-			o.staged = true
-			modes++
-		case "--names":
-			o.names = true
-			modes++
-		case "--history":
-			o.history = true
-			modes++
 		case "--msg":
 			o.msgMode = true
 
@@ -107,8 +117,12 @@ func parseArgs(args []string) (options, error) {
 		}
 	}
 
+	if o.tag && len(o.paths) != 2 {
+		return o, errors.New("--tag needs a ref name and an object name")
+	}
+
 	if modes > 1 {
-		return o, errors.New("use at most one of --staged, --msg, --range, --names, --history")
+		return o, errors.New("use at most one of --staged, --msg, --range, --names, --history, --tag")
 	}
 
 	return o, nil
@@ -151,6 +165,8 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		err = s.scanMessageFile(opts.msg)
 	case opts.rangeMode:
 		err = s.scanLog(strings.Fields(opts.rng)...)
+	case opts.tag:
+		err = s.scanTag(opts.paths[0], opts.paths[1])
 	case opts.names:
 		for _, n := range opts.paths {
 			s.scanName(n)
