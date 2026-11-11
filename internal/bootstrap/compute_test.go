@@ -29,6 +29,10 @@ type fakeComputeEnhanced struct {
 	instances      map[string]*cpi.Instance
 	keypairs       map[string]*cpi.KeyPair
 	shouldFailNext string // For error path testing
+	// failAfterCreate makes CreateInstance return the instance it made
+	// together with an error, as a provider does when setup fails after
+	// the VM exists.
+	failAfterCreate bool
 }
 
 func newFakeComputeEnhanced() *fakeComputeEnhanced {
@@ -109,6 +113,10 @@ func (f *fakeComputeEnhanced) CreateInstance(_ctx context.Context, req *cpi.Inst
 	}
 
 	f.instances[instance.ID] = instance
+
+	if f.failAfterCreate {
+		return instance, fmt.Errorf("fake setup error after creating %s", instance.ID)
+	}
 
 	return instance, nil
 }
