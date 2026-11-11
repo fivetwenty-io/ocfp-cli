@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // ErrEmptyKnownHost reports a request to remove entries for an empty host.
@@ -103,6 +104,112 @@ func RemoveKnownHost(path, host string, port int) ([]RemovedHostKey, error) {
 	}
 
 	return removed, nil
+}
+
+// replaceKnownHostKey records key for hostname in the known_hosts file at
+// path in place of the entries that name that exact address, and returns
+// the entries it removed. It is for a host whose key has been proven some
+// other way, so the stale entries can go. hostname is "host:port", as a
+// host key callback receives it.
+//
+// An entry goes when one of its literal names, or its hashed name, is the
+// address as known_hosts writes it: "host" on port 22, "[host]:port" on any
+// other. Entries for the host on other ports, wildcard patterns, lines whose
+// negated names cover the host, marker lines, and comments stay byte for
+// byte. Like ssh-keygen -R, a line that lists several names goes as a whole.
+// The read, the removal, and the append happen in one rewrite under the
+// lock addHostKey and RemoveKnownHost take.
+func replaceKnownHostKey(path, hostname string, key ssh.PublicKey) ([]RemovedHostKey, error) {
+	address := knownhosts.Normalize(hostname)
+
+	path, err := knownHostsWritePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	unlock, err := lockKnownHosts(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	data, err := os.ReadFile(path) // #nosec G304 -- caller-chosen known_hosts path
+	missing := errors.Is(err, os.ErrNotExist)
+
+	if err != nil && !missing {
+		return nil, fmt.Errorf("read known_hosts: %w", err)
+	}
+
+	var (
+		kept    bytes.Buffer
+		removed []RemovedHostKey
+	)
+
+	for index, line := range bytes.SplitAfter(data, []byte("\n")) {
+		names, fingerprint, ok := knownHostsEntry(string(line))
+		if ok && entryNamesAddress(names, address) {
+			removed = append(removed, RemovedHostKey{Line: index + 1, Fingerprint: fingerprint})
+
+			continue
+		}
+
+		kept.Write(line)
+	}
+
+	if kept.Len() > 0 && !bytes.HasSuffix(kept.Bytes(), []byte("\n")) {
+		kept.WriteByte('\n')
+	}
+
+	kept.WriteString(knownhosts.Line([]string{address}, key) + "\n")
+
+	if missing {
+		err = os.WriteFile(path, kept.Bytes(), privateKeyMode)
+		if err != nil {
+			return nil, fmt.Errorf("write known_hosts: %w", err)
+		}
+
+		return nil, nil
+	}
+
+	err = replaceFile(path, kept.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return removed, nil
+}
+
+// entryNamesAddress reports whether a known_hosts name field names address
+// exactly, in the form knownhosts.Normalize gives it.
+func entryNamesAddress(names, address string) bool {
+	if strings.HasPrefix(names, "|1|") {
+		return hashedNameMatches(names, []string{address})
+	}
+
+	host := address
+	if inner, _, found := strings.Cut(address, "]:"); found && strings.HasPrefix(inner, "[") {
+		host = inner[1:]
+	}
+
+	matched := false
+
+	for pattern := range strings.SplitSeq(names, ",") {
+		if strings.HasPrefix(pattern, "!") {
+			// As in entryNamesHost, a line that excludes the host on
+			// any port is never removed for it.
+			if patternCoversHost(pattern[1:], host) {
+				return false
+			}
+
+			continue
+		}
+
+		if !strings.ContainsAny(pattern, "*?") && strings.EqualFold(pattern, address) {
+			matched = true
+		}
+	}
+
+	return matched
 }
 
 // knownHostsEntry splits a known_hosts line into its name field and the

@@ -65,8 +65,9 @@ type Client struct {
 	log                    logger.Logger
 	connected              bool
 	keyManager             *KeyManager
-	agentConn              net.Conn // Connection to SSH agent - must stay alive for forwarding
-	agentForwardingEnabled bool     // Track if agent forwarding channel handler is set up
+	agentConn              net.Conn          // Connection to SSH agent - must stay alive for forwarding
+	agentForwardingEnabled bool              // Track if agent forwarding channel handler is set up
+	recycled               *recycledHostKeys // Set by ExpectRecycledHostKeys
 }
 
 // NewClient creates a new SSH client.
@@ -93,6 +94,11 @@ func (c *Client) Connect(ctx context.Context) error {
 		"host", c.config.Host,
 		"user", c.config.User)
 
+	err := c.noPreviousHostKey()
+	if err != nil {
+		return err
+	}
+
 	// Retry configuration
 	maxRetries := 5
 	retryInterval := sshRetryBaseInterval
@@ -100,17 +106,37 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	var lastErr error
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
+	// Try multiple connection strategies. In recycle mode only the native
+	// client runs: system ssh applies its own known_hosts rules and could
+	// record a key the recycled host generated on first boot.
+	strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
+		c.connectWithNativeClient,
+		c.connectWithExternalSSH,
+	}
+
+	parent := ctx
+
+	if c.recycled != nil {
+		strategies = strategies[:1]
+
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, c.recycled.timeout)
+		defer cancel()
+
+		c.log.Infow("Waiting for the recycled bastion to present its previous host key",
+			"host", c.config.Host,
+			"expected", strings.Join(c.recycled.fingerprints(), ", "),
+			"timeout", c.recycled.timeout)
+	}
+
+	// A recycled host that is up but still presenting a temporary key is
+	// retried past maxRetries, until the recycle-mode wait runs out.
+	for attempt := 1; attempt <= maxRetries || c.waitingForRecycledKey(); attempt++ {
 		// Prepare SSH client configuration
 		sshConfig, err := c.prepareSSHConfig()
 		if err != nil {
 			return fmt.Errorf("failed to prepare SSH config: %w", err)
-		}
-
-		// Try multiple connection strategies
-		strategies := []func(context.Context, *ssh.ClientConfig) (*ssh.Client, error){
-			c.connectWithNativeClient,
-			c.connectWithExternalSSH,
 		}
 
 		for index, strategy := range strategies {
@@ -150,7 +176,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		}
 
 		// All strategies failed for this attempt
-		if attempt < maxRetries {
+		if attempt < maxRetries || c.waitingForRecycledKey() {
 			c.log.Warnw("Connection attempt failed, retrying",
 				"attempt", attempt,
 				"max_attempts", maxRetries,
@@ -160,6 +186,11 @@ func (c *Client) Connect(ctx context.Context) error {
 			// Wait before next attempt, respecting context cancellation
 			select {
 			case <-ctx.Done():
+				timeoutErr := c.recycledKeyTimeout(parent.Err() != nil)
+				if timeoutErr != nil {
+					return fmt.Errorf("failed to connect to %s: %w", c.config.Host, timeoutErr)
+				}
+
 				return fmt.Errorf("SSH connection cancelled: %w", ctx.Err())
 			case <-time.After(retryInterval):
 				// Exponential backoff
@@ -172,6 +203,12 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("failed to connect after %d attempts, last error: %w", maxRetries, lastErr)
+}
+
+// waitingForRecycledKey reports whether Connect, in recycle mode, has seen
+// the host present a temporary key and should keep waiting for its own.
+func (c *Client) waitingForRecycledKey() bool {
+	return c.recycled != nil && c.recycled.waiting()
 }
 
 // ExecuteCommand executes a command on the remote host.
@@ -503,6 +540,12 @@ func (c *Client) prepareSSHConfig() (*ssh.ClientConfig, error) {
 	}
 
 	address := net.JoinHostPort(c.config.Host, strconv.Itoa(c.config.Port))
+	algorithms := knownHostKeyAlgorithms(knownHostsPath, address)
+
+	if c.recycled != nil {
+		hostKeyCallback = c.recycledHostKeyCallback(knownHostsPath, c.recycled)
+		algorithms = c.recycled.algorithms()
+	}
 
 	config := &ssh.ClientConfig{
 		User:              c.config.User,
@@ -510,7 +553,7 @@ func (c *Client) prepareSSHConfig() (*ssh.ClientConfig, error) {
 		HostKeyCallback:   hostKeyCallback,
 		BannerCallback:    nil,
 		ClientVersion:     "",
-		HostKeyAlgorithms: knownHostKeyAlgorithms(knownHostsPath, address),
+		HostKeyAlgorithms: algorithms,
 		Timeout:           defaultCommandTimeout,
 		Config: ssh.Config{
 			Rand:           nil,
