@@ -1,0 +1,6 @@
+test-key.seed.hex is a published test vector and signs nothing real.
+
+It is the hex form of the SHA-256 digest of the text
+"ocfp owner record test vector, signs nothing real", so anyone can derive
+it. It exists only to sign the golden owner records in this directory.
+Never trust a record signed by this key outside tests.
