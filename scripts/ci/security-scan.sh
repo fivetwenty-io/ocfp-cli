@@ -16,7 +16,7 @@ go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 "$gobin/govulncheck" ./...
 
 # Use gosec v2.29.0 through the pinned golangci-lint distribution. Its
-# golang.org/x/tools loader supports Go 1.27.3; standalone gosec bundles an
+# golang.org/x/tools loader supports Go 1.27.4; standalone gosec bundles an
 # older loader and silently skips SSA analysis after package-load errors.
 # Findings remain advisory, but tool or package-loading failures must fail.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
