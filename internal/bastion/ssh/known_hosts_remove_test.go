@@ -3,7 +3,9 @@ package ssh
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -264,5 +266,68 @@ func TestRemoveKnownHostWritesThroughASymlink(t *testing.T) {
 
 	if targetInfo.Mode().Perm() != 0o640 {
 		t.Errorf("target mode = %v, want 0640 preserved", targetInfo.Mode().Perm())
+	}
+}
+
+// Recording a host on first contact must not be lost to a removal that read
+// the file a moment earlier and renames its rewrite over the append.
+func TestKnownHostsAppendsSurviveConcurrentRemoval(t *testing.T) {
+	t.Parallel()
+
+	path := writeRaw(t, "", 0o600)
+	client := newFallbackTestClient()
+
+	const adders = 40
+
+	stale := newEd25519Signer(t).PublicKey()
+	done := make(chan struct{})
+	removerErr := make(chan error, 1)
+
+	go func() {
+		defer close(removerErr)
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+
+			err := client.addHostKey(path, "10.0.0.5:22", stale)
+			if err == nil {
+				_, err = RemoveKnownHost(path, "10.0.0.5", DefaultSSHPort)
+			}
+
+			if err != nil {
+				removerErr <- err
+
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+
+	for i := range adders {
+		wg.Go(func() {
+			err := client.addHostKey(path, "10.1.0."+strconv.Itoa(i)+":22", newEd25519Signer(t).PublicKey())
+			if err != nil {
+				t.Errorf("addHostKey: %v", err)
+			}
+		})
+	}
+
+	wg.Wait()
+	close(done)
+
+	if err := <-removerErr; err != nil {
+		t.Fatalf("remover: %v", err)
+	}
+
+	content := readFile(t, path)
+	for i := range adders {
+		if !strings.Contains(content, "10.1.0."+strconv.Itoa(i)+" ") {
+			t.Errorf("entry for 10.1.0.%d was lost", i)
+		}
 	}
 }
