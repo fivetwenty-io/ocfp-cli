@@ -64,7 +64,7 @@ jobs:
     name: Lint
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -83,7 +83,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       - name: Run go fmt
@@ -121,7 +121,7 @@ jobs:
     name: Test
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -141,7 +141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       # Guest-boot regression tests execute the real watchdog shell script.
@@ -187,7 +187,7 @@ jobs:
     name: Build
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
     env:
@@ -209,7 +209,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       # One job cross-compiling in sequence, not a matrix. The lab runners
@@ -237,7 +237,7 @@ jobs:
     name: Integration Tests
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
     timeout-minutes: 20
     needs: build
     steps:
@@ -266,7 +266,7 @@ jobs:
     name: Security Scan
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -286,7 +286,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       # govulncheck is the gate; gosec is a report that never blocks a merge

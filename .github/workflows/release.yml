@@ -43,7 +43,7 @@ jobs:
     name: Test
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
         - /home/runner/gha-container-cache/go-build:/root/.cache/go-build
@@ -63,7 +63,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           # The mounted /go volume is the module cache; the action's own
           # cache would restore a second copy over it and fail on tar.
           cache: false
@@ -97,7 +97,7 @@ jobs:
     name: GoReleaser
     runs-on: self-hosted
     container:
-      image: golang:1.27.3
+      image: golang:1.27.4
       volumes:
         - /home/runner/gha-container-cache/go:/go
     env:
@@ -119,7 +119,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           # The mounted /go volume is the module cache; the action's own
           # cache would restore a second copy over it and fail on tar.
           cache: false
