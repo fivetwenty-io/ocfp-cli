@@ -41,6 +41,9 @@ type ConnectionDetails struct {
 	Password       string // #nosec -- field name is descriptive, not a hardcoded secret
 	SSHOptions     []string
 	UseSSHPass     bool
+	// KnownHostsPath is the known_hosts file that Client.Stream checks host
+	// keys against. Empty means $HOME/.ssh/known_hosts. Connect ignores it.
+	KnownHostsPath string
 }
 
 // CommandResult holds the result of a remote command execution.
