@@ -102,6 +102,28 @@ func TestOpenWithKeyNeverUsesThePayloadKey(t *testing.T) {
 
 	_, err = ownerrecord.OpenWithKey(live, "instance-fixture-b", targetKey.Public().(ed25519.PublicKey))
 	wantRefusal(t, err, progress.CodeRequestUnsigned)
+
+	// Here the payload's own key verifies and the id names the real signer,
+	// so only the supplied key is wrong. Falling back to the payload's key
+	// when the supplied one fails would let this record through.
+	got, err := ownerrecord.OpenWithKey(live, "instance-fixture-a", targetKey.Public().(ed25519.PublicKey))
+	wantRefusal(t, err, progress.CodeRequestUnsigned)
+
+	if got.SignerID != "" || got.InstallationID != "" {
+		t.Errorf("OpenWithKey returned a record with its refusal: %+v", got)
+	}
+}
+
+func TestOpenWithKeyRefusesAnEmptySignerID(t *testing.T) {
+	t.Parallel()
+
+	// The key verifies and the record's signer is its owner, so an empty id
+	// that fell through to the owner's id would match. OpenWithKey must
+	// refuse it before it gets that far.
+	live := seal(t, liveRecord())
+
+	_, err := ownerrecord.OpenWithKey(live, "", sourceKey())
+	wantRefusal(t, err, progress.CodeRequestUnsigned)
 }
 
 func TestOpenWithKeyBindsTheSignerID(t *testing.T) {
