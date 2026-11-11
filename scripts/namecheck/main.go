@@ -40,17 +40,23 @@ type options struct {
 
 func parseArgs(args []string) (options, error) {
 	var o options
+
 	modes := 0
+
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		value := func() (string, error) {
 			if i+1 >= len(args) {
 				return "", fmt.Errorf("%s needs a value", a)
 			}
+
 			i++
+
 			return args[i], nil
 		}
+
 		var err error
+
 		switch a {
 		case "--staged":
 			o.staged = true
@@ -60,17 +66,21 @@ func parseArgs(args []string) (options, error) {
 			modes++
 		case "--msg":
 			o.msgMode = true
+
 			o.msg, err = value()
 			if err == nil && o.msg == "" {
 				err = errors.New("--msg needs a non-empty value")
 			}
+
 			modes++
 		case "--range":
 			o.rangeMode = true
+
 			o.rng, err = value()
 			if err == nil && o.rng == "" {
 				err = errors.New("--range needs a non-empty value")
 			}
+
 			modes++
 		case "--C":
 			o.dir, err = value()
@@ -78,35 +88,45 @@ func parseArgs(args []string) (options, error) {
 			if len(a) > 1 && a[0] == '-' {
 				return o, fmt.Errorf("unknown flag %s", a)
 			}
+
 			o.paths = append(o.paths, a)
 		}
+
 		if err != nil {
 			return o, err
 		}
 	}
+
 	if modes > 1 {
 		return o, errors.New("use at most one of --staged, --msg, --range, --history")
 	}
+
 	return o, nil
 }
 
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	opts, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "namecheck: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "namecheck: %v\n", err)
+
 		return 2
 	}
+
 	path, ok := termsPath(getenv)
 	if !ok {
-		fmt.Fprintln(stderr, errTermsUnavailable)
+		_, _ = fmt.Fprintln(stderr, errTermsUnavailable)
+
 		return 2
 	}
+
 	terms, err := loadTerms(path)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
+
 		return 2
 	}
-	s := &scanner{terms: terms, dir: opts.dir, out: func(l string) { fmt.Fprintln(stdout, l) }}
+
+	s := &scanner{terms: terms, dir: opts.dir, out: func(l string) { _, _ = fmt.Fprintln(stdout, l) }}
 	switch {
 	case opts.staged:
 		err = s.scanStaged(opts.paths)
@@ -119,12 +139,16 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	default:
 		err = s.scanPaths(opts.paths)
 	}
+
 	if err != nil {
-		fmt.Fprintf(stderr, "namecheck: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "namecheck: %v\n", err)
+
 		return 2
 	}
+
 	if s.failed {
 		return 1
 	}
+
 	return 0
 }

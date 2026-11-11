@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -41,13 +42,16 @@ func termsPath(getenv func(string) string) (string, bool) {
 	if !filepath.IsAbs(base) { // the XDG rule: a relative value counts as unset
 		base = ""
 	}
+
 	if base == "" {
 		home := getenv("HOME")
 		if home == "" {
 			return "", false
 		}
+
 		base = filepath.Join(home, ".config")
 	}
+
 	return filepath.Join(base, "fivetwenty", "client-terms"), true
 }
 
@@ -59,21 +63,27 @@ func loadTerms(path string) ([]term, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, errTermsUnavailable
 	}
+
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return nil, errTermsUnavailable
 	}
-	data, err := os.ReadFile(path)
+
+	data, err := os.ReadFile(path) //nolint:gosec // the term list path comes from the environment of the developer running the check
 	if err != nil {
 		return nil, errTermsUnavailable
 	}
+
 	var terms []term
+
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
 		part := false
+
 		if f := strings.Fields(line); len(f) > 1 {
 			flag := strings.ToLower(f[len(f)-1])
 			if flag == "part" || flag == "word" {
@@ -81,15 +91,19 @@ func loadTerms(path string) ([]term, error) {
 				line = strings.TrimSpace(line[:len(line)-len(f[len(f)-1])])
 			}
 		}
+
 		runes, _ := normalize(line)
 		if !hasAlnum(runes) {
 			return nil, errTermsUnavailable
 		}
+
 		terms = append(terms, term{n: len(terms) + 1, text: runes, part: part})
 	}
+
 	if len(terms) == 0 {
 		return nil, errTermsUnavailable
 	}
+
 	return terms, nil
 }
 
@@ -99,6 +113,7 @@ func hasAlnum(rs []rune) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -111,54 +126,70 @@ func isSep(r rune) bool { return r == '.' || r == '-' || r == '_' || r == ' ' }
 // runes and, for each, the one-based column in s of the start of the input
 // segment that produced it.
 func normalize(s string) ([]rune, []int) {
-	var runes []rune
-	var cols []int
-	var it norm.Iter
+	var (
+		runes []rune
+		cols  []int
+		it    norm.Iter
+	)
 	it.InitString(norm.NFKC, s)
+
 	for !it.Done() {
 		start := it.Pos()
 		col := utf8.RuneCountInString(s[:start]) + 1
+
 		for _, r := range string(it.Next()) {
 			runes = append(runes, unicode.ToLower(r))
 			cols = append(cols, col)
 		}
 	}
+
 	n := len(runes)
 	keepR := runes[:0:0]
 	keepC := cols[:0:0]
+
 	for i, r := range runes {
 		if isSep(r) && i > 0 && i+1 < n && isAlnum(runes[i-1]) && isAlnum(runes[i+1]) &&
 			(i < 2 || !isAlnum(runes[i-2])) && (i+2 >= n || !isAlnum(runes[i+2])) {
 			continue
 		}
+
 		keepR = append(keepR, r)
 		keepC = append(keepC, cols[i])
 	}
+
 	return keepR, keepC
 }
 
 // scanLine reports each term at most once for the line, at its first match.
 func scanLine(terms []term, text string) []finding {
 	runes, cols := normalize(text)
+
 	var out []finding
+
 	for _, t := range terms {
 		for i := 0; i+len(t.text) <= len(runes); i++ {
 			if !runesEqual(runes[i:i+len(t.text)], t.text) {
 				continue
 			}
+
 			if !t.part {
 				if i > 0 && isAlnum(runes[i-1]) {
 					continue
 				}
+
 				if j := i + len(t.text); j < len(runes) && isAlnum(runes[j]) {
 					continue
 				}
 			}
+
 			out = append(out, finding{col: cols[i], term: t.n})
+
 			break
 		}
 	}
+
 	sort.SliceStable(out, func(a, b int) bool { return out[a].col < out[b].col })
+
 	return out
 }
 
@@ -168,6 +199,7 @@ func runesEqual(a, b []rune) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -175,6 +207,7 @@ func runesEqual(a, b []rune) bool {
 // with ***, so that no output line can quote a term through a file name.
 func maskPath(terms []term, path string) string {
 	var b strings.Builder
+
 	start := 0
 	flush := func(end int) {
 		comp := path[start:end]
@@ -184,20 +217,24 @@ func maskPath(terms []term, path string) string {
 			b.WriteString(comp)
 		}
 	}
-	for i := 0; i < len(path); i++ {
+
+	for i := range len(path) {
 		if path[i] == '/' || path[i] == filepath.Separator {
 			flush(i)
 			b.WriteByte(path[i])
 			start = i + 1
 		}
 	}
+
 	flush(len(path))
+
 	return b.String()
 }
 
 // scanContent scans a block of text and numbers its lines from firstLine.
 func scanContent(terms []term, content string, firstLine int) []finding {
 	var out []finding
+
 	line := firstLine
 	start := 0
 	emit := func(end int) {
@@ -205,15 +242,19 @@ func scanContent(terms []term, content string, firstLine int) []finding {
 			f.line = line
 			out = append(out, f)
 		}
+
 		line++
 	}
-	for i := 0; i < len(content); i++ {
+
+	for i := range len(content) {
 		if content[i] == '\n' || content[i] == 0 {
 			emit(i)
 			start = i + 1
 		}
 	}
+
 	emit(len(content))
+
 	return out
 }
 
@@ -232,8 +273,10 @@ func (s *scanner) emit(line string) {
 		if s.seen[line] {
 			return
 		}
+
 		s.seen[line] = true
 	}
+
 	s.out(line)
 }
 
@@ -271,6 +314,7 @@ func (s *scanner) pathErr(err error) error {
 	if errors.As(err, &pe) {
 		return fmt.Errorf("%s %s: %w", pe.Op, maskPath(s.terms, pe.Path), pe.Err)
 	}
+
 	return err
 }
 
@@ -278,42 +322,55 @@ func (s *scanner) scanPaths(paths []string) error {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
+
 	for _, root := range paths {
 		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return s.pathErr(err)
 			}
+
 			if d.IsDir() {
 				if d.Name() == ".git" {
 					return filepath.SkipDir
 				}
+
 				return nil
 			}
+
 			if d.Type()&fs.ModeSymlink != 0 {
 				// Scan the link's name and its target text. Never follow it.
 				s.scanName(p)
+
 				target, err := os.Readlink(p)
 				if err != nil {
 					return s.pathErr(err)
 				}
+
 				s.scanBytes(p, []byte(target))
+
 				return nil
 			}
+
 			if !d.Type().IsRegular() {
 				return nil
 			}
+
 			s.scanName(p)
-			b, err := os.ReadFile(p)
+
+			b, err := os.ReadFile(p) //nolint:gosec // the path comes from walking a root the developer named on the command line
 			if err != nil {
 				return s.pathErr(err)
 			}
+
 			s.scanBytes(p, b)
+
 			return nil
 		})
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -321,16 +378,19 @@ func (s *scanner) scanPaths(paths []string) error {
 // and its exit status, because git's own message can quote a path or a
 // revision argument that holds a term.
 func (s *scanner) git(args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"--no-replace-objects"}, args...)...)
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"--no-replace-objects"}, args...)...) //nolint:gosec // the arguments are git revisions and paths from the developer's own flags and from git
 	cmd.Dir = s.dir
+
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return nil, fmt.Errorf("git %s failed with exit status %d", args[0], ee.ExitCode())
 		}
+
 		return nil, fmt.Errorf("git %s failed", args[0])
 	}
+
 	return out, nil
 }
 
@@ -340,6 +400,7 @@ func (s *scanner) scanStaged(paths []string) error {
 		args = append(args, "--")
 		args = append(args, paths...)
 	}
+
 	raw, err := s.git(args...)
 	if err != nil {
 		return err
@@ -349,29 +410,37 @@ func (s *scanner) scanStaged(paths []string) error {
 	toks := strings.Split(string(raw), "\x00")
 	for i := 0; i+1 < len(toks); i += 2 {
 		meta := strings.Fields(toks[i])
+
 		name := toks[i+1]
 		if len(meta) < 2 || name == "" {
 			return errors.New("unreadable index listing")
 		}
+
 		s.scanName(name)
+
 		if meta[1] == "160000" {
 			continue // a submodule entry holds a commit id and no content
 		}
+
 		b, err := s.git("cat-file", "blob", ":0:"+name)
 		if err != nil {
 			return err
 		}
+
 		s.scanBytes(name, b)
 	}
+
 	return nil
 }
 
 func (s *scanner) scanMessageFile(path string) error {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // the path is the message file the developer named on the command line
 	if err != nil {
 		return s.pathErr(err)
 	}
+
 	s.scanBytes(path, b)
+
 	return nil
 }
 
@@ -384,18 +453,22 @@ func (s *scanner) scanLog(revs ...string) error {
 	if err != nil {
 		return err
 	}
+
 	for _, hash := range strings.Fields(string(listing)) {
 		s.seen = map[string]bool{}
+
 		obj, err := s.git("cat-file", "commit", hash)
 		if err != nil {
 			return err
 		}
+
 		s.reportCommit(hash, scanContent(s.terms, commitText(string(obj)), 1))
 
 		nameList, err := s.git("diff-tree", "--ignore-submodules=none", "-r", "-z", "--name-only", "-m", "--root", "--no-commit-id", "-M", hash)
 		if err != nil {
 			return err
 		}
+
 		names := map[string]bool{}
 		for _, n := range strings.Split(string(nameList), "\x00") {
 			if n != "" && !names[n] {
@@ -403,17 +476,21 @@ func (s *scanner) scanLog(revs ...string) error {
 				s.scanName(n)
 			}
 		}
+
 		diff, err := s.git("diff-tree", "--ignore-submodules=none", "-p", "--text", "--no-ext-diff", "--no-textconv",
 			"--src-prefix=a/", "--dst-prefix=b/",
 			"-m", "--root", "--no-commit-id", "-M", "-U0", "--no-color", hash)
 		if err != nil {
 			return err
 		}
+
 		if err := s.scanDiff(string(diff), names); err != nil {
 			return err
 		}
 	}
+
 	s.seen = nil
+
 	return nil
 }
 
@@ -422,7 +499,9 @@ func (s *scanner) scanLog(revs ...string) error {
 // short term could match inside a hash.
 func commitText(obj string) string {
 	head, body, _ := strings.Cut(obj, "\n\n")
+
 	var keep []string
+
 	for _, l := range strings.Split(head, "\n") {
 		if strings.HasPrefix(l, "author ") || strings.HasPrefix(l, "committer ") {
 			// Keep the name and the mail address only. The keyword before
@@ -431,9 +510,11 @@ func commitText(obj string) string {
 			if i := strings.LastIndex(rest, ">"); i >= 0 {
 				rest = rest[:i+1]
 			}
+
 			keep = append(keep, rest)
 		}
 	}
+
 	return strings.Join(keep, "\n") + "\n" + body
 }
 
@@ -451,11 +532,14 @@ func unquoteName(h string) (string, error) {
 		if err != nil {
 			return "", errors.New("unreadable quoted name in patch header")
 		}
+
 		h = u
 	}
+
 	if h == "/dev/null" {
 		return h, nil
 	}
+
 	return strings.TrimPrefix(h, "b/"), nil
 }
 
@@ -468,8 +552,10 @@ func unquoteName(h string) (string, error) {
 // that begins with "++ ".
 func (s *scanner) scanDiff(diff string, names map[string]bool) error {
 	var path string
+
 	inHunk := false
 	line := 0
+
 	for _, l := range strings.Split(diff, "\n") {
 		switch {
 		case strings.HasPrefix(l, "diff --git "):
@@ -480,13 +566,17 @@ func (s *scanner) scanDiff(diff string, names map[string]bool) error {
 			if err != nil {
 				return err
 			}
+
 			if p == "/dev/null" {
 				path = ""
+
 				continue
 			}
+
 			if !names[p] {
 				return errors.New("patch header disagrees with the list of changed names")
 			}
+
 			path = p
 		case strings.HasPrefix(l, "@@"):
 			inHunk = true
@@ -496,9 +586,11 @@ func (s *scanner) scanDiff(diff string, names map[string]bool) error {
 				f.line = line
 				s.report(path, []finding{f})
 			}
+
 			line++
 		}
 	}
+
 	return nil
 }
 
@@ -508,14 +600,18 @@ func newStart(h string) int {
 	if i < 0 {
 		return 0
 	}
+
 	rest := h[i+1:]
+
 	end := strings.IndexAny(rest, ", ")
 	if end < 0 {
 		return 0
 	}
+
 	n, err := strconv.Atoi(rest[:end])
 	if err != nil {
 		return 0
 	}
+
 	return n
 }
