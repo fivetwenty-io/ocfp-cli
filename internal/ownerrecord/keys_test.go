@@ -218,7 +218,7 @@ func TestOpenRefusesAmbiguousKeys(t *testing.T) {
 
 	cases := map[string][]byte{
 		"duplicate mode":          insert(`"generation"`, `"mode":"live",`),
-		"escaped duplicate mode":  insert(`"generation"`, `"mode":"live",`),
+		"escaped duplicate mode":  insert(`"generation"`, `"\u006dode":"live",`),
 		"mode in upper case":      insert(`"generation"`, `"MODE":"live",`),
 		"owner id in other case":  insert(`"generation"`, `"OwnerInstanceID":"instance-other",`),
 		"kelvin sign folds to k":  insert(`"generation"`, `"ownerPublicKey":"AAAA",`),
