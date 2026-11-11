@@ -464,13 +464,20 @@ func (c *Client) prepareSSHConfig() (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("failed to create host key callback: %w", err)
 	}
 
+	knownHostsPath, err := homeKnownHostsFile()
+	if err != nil {
+		return nil, err
+	}
+
+	address := net.JoinHostPort(c.config.Host, strconv.Itoa(c.config.Port))
+
 	config := &ssh.ClientConfig{
 		User:              c.config.User,
 		Auth:              nil,
 		HostKeyCallback:   hostKeyCallback,
 		BannerCallback:    nil,
 		ClientVersion:     "",
-		HostKeyAlgorithms: nil,
+		HostKeyAlgorithms: knownHostKeyAlgorithms(knownHostsPath, address),
 		Timeout:           defaultCommandTimeout,
 		Config: ssh.Config{
 			Rand:           nil,
@@ -892,7 +899,7 @@ func (c *Client) createRelaxedSSHConfig(sshConfig *ssh.ClientConfig) *ssh.Client
 		HostKeyCallback:   c.createFallbackHostKeyCallback(),
 		BannerCallback:    nil,
 		ClientVersion:     "SSH-2.0-OCFP-Go-Client",
-		HostKeyAlgorithms: nil,
+		HostKeyAlgorithms: sshConfig.HostKeyAlgorithms,
 		Timeout:           longTimeout,
 		Config: ssh.Config{
 			Rand:           nil,
