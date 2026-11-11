@@ -64,3 +64,21 @@ func TestAsRefusalUnwraps(t *testing.T) {
 		t.Fatalf("Error() = %q", s)
 	}
 }
+
+func TestAsRefusalTypedNil(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *progress.Refusal
+
+	got, ok := progress.AsRefusal(fmt.Errorf("outer: %w", typedNil))
+	if ok || got != nil {
+		t.Fatalf("AsRefusal = %v, %v; want nil, false for a typed-nil refusal", got, ok)
+	}
+
+	ref := &progress.Refusal{Code: progress.CodeOwnerMismatch, Message: "wrong epoch"}
+
+	got, ok = progress.AsRefusal(fmt.Errorf("outer: %w", ref))
+	if !ok || got != ref {
+		t.Fatalf("AsRefusal = %v, %v; want the wrapped refusal", got, ok)
+	}
+}
