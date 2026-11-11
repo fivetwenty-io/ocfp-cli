@@ -121,10 +121,11 @@ func (c *Client) Connect(ctx context.Context) error {
 
 			client, err := strategy(ctx, sshConfig)
 			if err != nil {
-				// A changed host key is not a connectivity problem.
-				// Retrying or trying another strategy could only end
-				// in trusting the new key, so stop here.
-				if errors.Is(err, ErrHostKeyMismatch) {
+				// A changed or rejected host key is not a
+				// connectivity problem. Retrying or trying another
+				// strategy could only end in the same refusal, or in
+				// trusting the new key, so stop here.
+				if errors.Is(err, ErrHostKeyMismatch) || errors.Is(err, ErrHostKeyRejected) {
 					return fmt.Errorf("failed to connect to %s: %w", c.config.Host, err)
 				}
 
@@ -366,8 +367,9 @@ func (c *Client) wrapHostKeyCallback(knownHostsCallback ssh.HostKeyCallback, kno
 
 // handleHostKeyError decides what a failed known_hosts check means. A host
 // with no entry gets its key recorded. A host whose key differs from every
-// key on record is refused with a HostKeyMismatchError, and any other
-// failure, such as a revoked key, is refused as well.
+// key on record is refused with a HostKeyMismatchError, a key marked
+// @revoked with an error that matches ErrHostKeyMismatch, and any other
+// failure with ErrHostKeyRejected. Every refusal is terminal.
 func (c *Client) handleHostKeyError(err error, knownHostsPath, hostname string, key ssh.PublicKey) error {
 	if mismatch := mismatchFromKeyError(err, knownHostsPath, hostname, key); mismatch != nil {
 		c.log.Errorw("Host key does not match known_hosts; refusing to connect",
@@ -379,8 +381,21 @@ func (c *Client) handleHostKeyError(err error, knownHostsPath, hostname string, 
 		return mismatch
 	}
 
+	var revoked *knownhosts.RevokedError
+	if errors.As(err, &revoked) {
+		c.log.Errorw("Host key is marked @revoked in known_hosts; refusing to connect",
+			"host", knownhosts.Normalize(hostname),
+			"known_hosts", revoked.Revoked.Filename,
+			"line", revoked.Revoked.Line,
+			"presented", ssh.FingerprintSHA256(key))
+
+		return fmt.Errorf("%w: %s presented %s key %s, which %s:%d marks @revoked",
+			ErrHostKeyMismatch, knownhosts.Normalize(hostname), key.Type(), ssh.FingerprintSHA256(key),
+			revoked.Revoked.Filename, revoked.Revoked.Line)
+	}
+
 	if !isUnknownHost(err) {
-		return fmt.Errorf("host key verification failed: %w", err)
+		return fmt.Errorf("%w for %s: %w", ErrHostKeyRejected, knownhosts.Normalize(hostname), err)
 	}
 
 	c.log.Infow("Recording host key on first contact",
@@ -449,7 +464,7 @@ func (c *Client) createFallbackHostKeyCallback() ssh.HostKeyCallback {
 
 		hostKeyCallback, err := knownhosts.New(knownHostsPath)
 		if err != nil {
-			return fmt.Errorf("failed to load known_hosts file: %w", err)
+			return fmt.Errorf("%w: failed to load known_hosts file: %w", ErrHostKeyRejected, err)
 		}
 
 		err = hostKeyCallback(hostname, remote, key)

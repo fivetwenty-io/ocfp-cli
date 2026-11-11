@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,5 +66,39 @@ func TestConnectStopsOnChangedHostKey(t *testing.T) {
 
 	if after := readFile(t, knownHosts); after != before {
 		t.Errorf("known_hosts changed after a mismatch:\nbefore: %q\nafter:  %q", before, after)
+	}
+}
+
+// A revoked host key is as permanent as a changed one. Connect must stop on
+// the first refusal rather than spend a minute retrying both strategies.
+func TestConnectStopsOnRevokedHostKey(t *testing.T) {
+	knownHosts := isolateSSHEnv(t)
+
+	signer := newEd25519Signer(t)
+	srv := startHostKeyTestServer(t, signer)
+	writeKnownHosts(t, knownHosts, srv.address(), signer.PublicKey())
+
+	content := readFile(t, knownHosts) + "@revoked * " + authorizedKey(signer.PublicKey()) + "\n"
+
+	err := os.WriteFile(knownHosts, []byte(content), privateKeyMode)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = connectWithin(t, newLoopbackClient(srv), 5*time.Second)
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("Connect error = %v, want ErrHostKeyMismatch", err)
+	}
+
+	if !strings.Contains(err.Error(), "@revoked") {
+		t.Errorf("error %q does not say the key is revoked", err.Error())
+	}
+
+	if got := srv.conns.Load(); got != 1 {
+		t.Errorf("server saw %d connections, want exactly 1 (no retry, no fallback)", got)
+	}
+
+	if after := readFile(t, knownHosts); after != content {
+		t.Errorf("known_hosts changed after a revoked key:\nbefore: %q\nafter:  %q", content, after)
 	}
 }
