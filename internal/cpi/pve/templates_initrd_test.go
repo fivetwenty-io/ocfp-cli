@@ -224,6 +224,10 @@ func defaultInitrdRun(lsinitrd string) initrdRun {
 // that carries systemd-networkd fails, and an empty list fails rather than
 // passing as "no network modules found".
 func TestInitrdNoNetworkScript_VerifiesModuleList(t *testing.T) {
+	if testing.Short() {
+		t.Skip("covered by TestInitrdNoNetworkScript_VerifiesModuleList_Fast")
+	}
+
 	t.Parallel()
 
 	tests := []struct {
@@ -304,6 +308,10 @@ func TestInitrdNoNetworkScript_FailingUmountKeepsSuccess(t *testing.T) {
 // cache is cleared before dracut runs, since both compete for the template's
 // small root filesystem.
 func TestInitrdNoNetworkScript_CleansAptCacheBeforeRebuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("covered by TestInitrdNoNetworkScript_CleansAptCacheBeforeRebuild_Fast")
+	}
+
 	t.Parallel()
 
 	out, calls, err := runInitrdScript(t, defaultInitrdRun(initrdModules("systemd", "base")))
@@ -324,6 +332,10 @@ func TestInitrdNoNetworkScript_CleansAptCacheBeforeRebuild(t *testing.T) {
 // the largest existing initramfs plus a margin; too little must fail before
 // dracut runs, with a message that says how much is needed.
 func TestInitrdNoNetworkScript_RequiresHeadroomOnBoot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("covered by TestInitrdNoNetworkScript_RequiresHeadroomOnBoot_Fast")
+	}
+
 	t.Parallel()
 
 	const (
@@ -372,4 +384,77 @@ func TestInitrdNoNetworkScript_RequiresHeadroomOnBoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertScriptOrder fails unless every snippet appears in initrdNoNetworkScript
+// and each one comes after the one before it.
+func assertScriptOrder(t *testing.T, snippets ...string) {
+	t.Helper()
+
+	from := 0
+
+	for _, snippet := range snippets {
+		at := strings.Index(initrdNoNetworkScript[from:], snippet)
+		if at < 0 {
+			t.Fatalf("initrdNoNetworkScript has no %q after offset %d", snippet, from)
+		}
+
+		from += at + len(snippet)
+	}
+}
+
+// TestInitrdNoNetworkScript_VerifiesModuleList_Fast pins the lines that the
+// bash run of the module-list test exercises, without starting bash. The
+// script reads the dracut module list, fails when systemd is missing from it,
+// and fails when any network module is present, each with exit status 1 and
+// the message the slow test looks for.
+func TestInitrdNoNetworkScript_VerifiesModuleList_Fast(t *testing.T) {
+	t.Parallel()
+
+	assertScriptOrder(t,
+		"modules=$(lsinitrd -m \"$img\" | sed -n '/^dracut modules:$/,$p')",
+		"if ! grep -qx systemd <<<\"$modules\"; then",
+		"echo \"ocfp-initrd-no-network: cannot read the module list of $img\" >&2\n    exit 1\n  fi",
+		"if grep -xE 'net-lib|systemd-networkd|dyn-netconf|network|network-legacy|network-manager' <<<\"$modules\"; then",
+		"echo \"ocfp-initrd-no-network: $img still carries network modules\" >&2\n    exit 1\n  fi",
+	)
+
+	// The verification runs once per image, after dracut has rebuilt them.
+	assertScriptOrder(t,
+		"dracut --quiet --force --regenerate-all --tmpdir \"$stage\"",
+		"for img in \"${images[@]}\"; do\n  modules=",
+	)
+}
+
+// TestInitrdNoNetworkScript_CleansAptCacheBeforeRebuild_Fast pins that the
+// apt cache is cleared before the free-space check and before dracut runs,
+// without starting bash.
+func TestInitrdNoNetworkScript_CleansAptCacheBeforeRebuild_Fast(t *testing.T) {
+	t.Parallel()
+
+	assertScriptOrder(t,
+		"\napt-get clean\n",
+		"avail_kib=$(df -Pk \"$boot\"",
+		"dracut --quiet --force --regenerate-all --tmpdir \"$stage\"",
+	)
+}
+
+// TestInitrdNoNetworkScript_RequiresHeadroomOnBoot_Fast pins the free-space
+// check without starting bash. The margin is 65536 KiB, the need is the
+// largest image plus the margin, a shortfall fails before dracut with a
+// message that reports the free and needed sizes, and the comparison is
+// strict so exactly enough passes.
+func TestInitrdNoNetworkScript_RequiresHeadroomOnBoot_Fast(t *testing.T) {
+	t.Parallel()
+
+	assertScriptOrder(t,
+		"margin_kib=65536\n",
+		"size_kib=$(( ($(wc -c <\"$img\") + 1023) / 1024 ))",
+		"if (( size_kib > largest_kib )); then\n    largest_kib=$size_kib\n  fi",
+		"need_kib=$(( largest_kib + margin_kib ))",
+		"avail_kib=$(df -Pk \"$boot\" | awk 'NR==2 {print $4}')",
+		"if (( avail_kib < need_kib )); then",
+		"echo \"ocfp-initrd-no-network: only $avail_kib KiB free under $boot, need $need_kib KiB (largest initramfs $largest_kib KiB plus $margin_kib KiB)\" >&2\n  exit 1\nfi",
+		"dracut --quiet --force --regenerate-all --tmpdir \"$stage\"",
+	)
 }
