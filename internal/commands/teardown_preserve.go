@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // shouldPreserveVolume reports whether a recorded volume asked to outlive the

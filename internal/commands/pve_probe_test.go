@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/probes"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/probes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

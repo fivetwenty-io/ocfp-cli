@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/stretchr/testify/assert"
 )
 

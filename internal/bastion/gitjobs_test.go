@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // collectGitJobs runs createGitJobs and returns the commands it enqueued.

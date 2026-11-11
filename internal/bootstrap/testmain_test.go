@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 )
 
 func TestMain(m *testing.M) {

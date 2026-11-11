@@ -19,8 +19,8 @@ cross-platform compatibility, and maintainability.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ocfp/ocfp-cli-go.git
-cd ocfp-cli-go/go
+git clone https://github.com/fivetwenty-io/ocfp-cli.git
+cd ocfp-cli/go
 
 # Build the binary
 make build
@@ -705,8 +705,8 @@ Please report security vulnerabilities to security@ocfp.io
 ## Support
 
 - **Documentation**: [docs.ocfp.io](https://docs.ocfp.io)
-- **Issues**: [GitHub Issues](https://github.com/ocfp/ocfp-cli-go/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ocfp/ocfp-cli-go/discussions)
+- **Issues**: [GitHub Issues](https://github.com/fivetwenty-io/ocfp-cli/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/fivetwenty-io/ocfp-cli/discussions)
 - **Slack**: [#ocfp on Cloud Foundry Slack](https://cloudfoundry.slack.com)
 
 ## Acknowledgments

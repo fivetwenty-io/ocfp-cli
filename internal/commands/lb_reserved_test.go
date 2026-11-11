@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/commands"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/commands"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 const testBloc = "prod"

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // isolateXDGEnv points OCFP_HOME, XDG_CONFIG_HOME, XDG_STATE_HOME, and

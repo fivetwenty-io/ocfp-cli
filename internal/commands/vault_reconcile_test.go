@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
+	"github.com/fivetwenty-io/ocfp-cli/internal/keyfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

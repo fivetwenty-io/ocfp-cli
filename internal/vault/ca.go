@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
 )
 
 // ErrBlocCAMalformed is returned when the persisted bloc CA material cannot be parsed.

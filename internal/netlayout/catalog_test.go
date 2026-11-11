@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
 )
 
 // writeStrategyFile writes a minimal, valid strategy definition (one mgmt

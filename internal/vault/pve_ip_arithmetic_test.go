@@ -3,7 +3,7 @@ package vault
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // pveOffsetIP's own full-32-bit-arithmetic coverage (octet-boundary

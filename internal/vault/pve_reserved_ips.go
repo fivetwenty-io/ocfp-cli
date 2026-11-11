@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"maps"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 	"go.uber.org/zap"
 )
 

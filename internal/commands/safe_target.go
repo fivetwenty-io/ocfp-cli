@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 )
 
 // safeGetForBloc reads one vault path for a bloc, pinning `safe` to that

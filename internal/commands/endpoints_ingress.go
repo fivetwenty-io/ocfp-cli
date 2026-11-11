@@ -3,8 +3,8 @@ package commands
 import (
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/ui"
 )
 
 // collectIngressSection builds Section 3 (Ingress Records): the DNS record

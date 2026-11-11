@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
 )
 
 // Static errors for error classification unit tests.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // NetworkManager implements network operations for AWS.

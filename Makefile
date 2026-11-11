@@ -1,5 +1,5 @@
 # OCFP CLI Go Implementation Makefile
-# github.com/ocfp/ocfp-cli-go
+# github.com/fivetwenty-io/ocfp-cli
 
 # Colors for terminal output
 GREEN  := \033[1;32m
@@ -42,10 +42,10 @@ DEV_CONTAINER := ocfp-dev
 # LDFLAGS for version info and optimization
 LDFLAGS := -ldflags "\
 	-s -w \
-	-X github.com/ocfp/ocfp-cli-go/internal/version.Version=$(VERSION) \
-	-X github.com/ocfp/ocfp-cli-go/internal/version.BuildTime=$(BUILD_TIME) \
-	-X github.com/ocfp/ocfp-cli-go/internal/version.GitCommit=$(GIT_SHA) \
-	-X github.com/ocfp/ocfp-cli-go/internal/version.GoVersion=$(GO_VERSION)"
+	-X github.com/fivetwenty-io/ocfp-cli/internal/version.Version=$(VERSION) \
+	-X github.com/fivetwenty-io/ocfp-cli/internal/version.BuildTime=$(BUILD_TIME) \
+	-X github.com/fivetwenty-io/ocfp-cli/internal/version.GitCommit=$(GIT_SHA) \
+	-X github.com/fivetwenty-io/ocfp-cli/internal/version.GoVersion=$(GO_VERSION)"
 
 ##@ General
 

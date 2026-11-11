@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/hashicorp/vault/api"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"go.uber.org/zap"
 )
 

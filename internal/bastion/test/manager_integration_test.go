@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // TestManagerDryRun tests that Initialize() in dry-run mode fails at the

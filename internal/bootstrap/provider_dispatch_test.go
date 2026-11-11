@@ -3,8 +3,8 @@ package bootstrap_test
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bootstrap"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // makeProviderManager builds the minimal Manager needed to exercise the

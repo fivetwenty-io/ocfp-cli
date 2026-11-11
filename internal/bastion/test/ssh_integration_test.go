@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 )
 
 // TestKeyManagerKeyDiscovery tests FindPrivateKey() with an isolated temp dir.

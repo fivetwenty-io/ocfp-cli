@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	stackitcpi "github.com/ocfp/ocfp-cli-go/internal/cpi/stackit"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	stackitcpi "github.com/fivetwenty-io/ocfp-cli/internal/cpi/stackit"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"go.uber.org/zap"
 )
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	ocfpconfig "github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	ocfpconfig "github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // TestRegister_RegistersProvider verifies Register() installs the "pve" factory

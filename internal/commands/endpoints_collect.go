@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/ocfp/ocfp-cli-go/internal/ui"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/ui"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 )
 
 // serviceFQDN pairs a service name with its derived (or explicit) FQDN for

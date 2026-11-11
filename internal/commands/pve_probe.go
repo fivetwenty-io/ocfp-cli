@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/probes"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/probes"
 	"github.com/spf13/cobra"
 )
 

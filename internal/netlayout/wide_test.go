@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 )
 
 // TestWideWorkloadTable proves wide's WorkloadTable/SchemeVersion are real

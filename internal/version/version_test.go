@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/version"
+	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
 // Build stamps come from two places that disagree about the "v" prefix: the

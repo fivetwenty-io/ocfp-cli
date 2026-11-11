@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/tests/integration/cpirpc"
+	"github.com/fivetwenty-io/ocfp-cli/tests/integration/cpirpc"
 )
 
 // TestPVELifecycle_NetworkModeOff_Default verifies that when

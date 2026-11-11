@@ -1,7 +1,7 @@
 package gcp
 
 import (
-	ocfpconfig "github.com/ocfp/ocfp-cli-go/internal/config"
+	ocfpconfig "github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/stretchr/testify/require"
 	"testing"
 )

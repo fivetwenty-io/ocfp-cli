@@ -15,14 +15,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
-	"github.com/ocfp/ocfp-cli-go/internal/vault"
-	ocfpversion "github.com/ocfp/ocfp-cli-go/internal/version"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
+	ocfpversion "github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
 // Phase execution errors.

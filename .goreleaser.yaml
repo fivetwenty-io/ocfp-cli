@@ -46,9 +46,9 @@ builds:
     # byte-identical across rebuilds (same reason as mod_timestamp).
     ldflags:
       - -s -w
-      - -X github.com/ocfp/ocfp-cli-go/internal/version.Version={{ .Version }}
-      - -X github.com/ocfp/ocfp-cli-go/internal/version.GitCommit={{ .ShortCommit }}
-      - -X github.com/ocfp/ocfp-cli-go/internal/version.BuildTime={{ .CommitDate }}
+      - -X github.com/fivetwenty-io/ocfp-cli/internal/version.Version={{ .Version }}
+      - -X github.com/fivetwenty-io/ocfp-cli/internal/version.GitCommit={{ .ShortCommit }}
+      - -X github.com/fivetwenty-io/ocfp-cli/internal/version.BuildTime={{ .CommitDate }}
     goos:
       - linux
       - darwin

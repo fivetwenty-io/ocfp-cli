@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/stemcell"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/stemcell"
 )
 
 // ---- helpers ----------------------------------------------------------------

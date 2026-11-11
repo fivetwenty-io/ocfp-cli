@@ -5,7 +5,7 @@
 // Default and never construct a Layout directly.
 package netlayout
 
-import "github.com/ocfp/ocfp-cli-go/internal/reservedip"
+import "github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 
 // Tier identifies which reserved-IP tier a Layout operation applies to.
 type Tier string

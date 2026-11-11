@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // Template seeding installs the firstboot + watchdog units into a template VM

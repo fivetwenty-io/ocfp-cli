@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 )
 
 // TestArtifactsDataVolumeRecord asserts the artifacts data disk is recorded as

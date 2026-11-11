@@ -1,4 +1,4 @@
-module github.com/ocfp/ocfp-cli-go
+module github.com/fivetwenty-io/ocfp-cli
 
 go 1.27.3
 

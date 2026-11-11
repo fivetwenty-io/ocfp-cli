@@ -1,8 +1,8 @@
 package bootstrap
 
 import (
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/guestboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/guestboot"
 	"strings"
 )
 

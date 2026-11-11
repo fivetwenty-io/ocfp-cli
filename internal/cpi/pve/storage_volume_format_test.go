@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // TestVolumeNameAndFormat pins the pure decision: file-backed plugin types

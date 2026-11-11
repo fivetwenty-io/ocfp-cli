@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/keyfile"
+	"github.com/fivetwenty-io/ocfp-cli/internal/keyfile"
 )
 
 const (

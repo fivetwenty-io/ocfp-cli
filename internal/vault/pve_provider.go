@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/providers"
-	"github.com/ocfp/ocfp-cli-go/internal/pve/capacity"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/providers"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/capacity"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"go.uber.org/zap"
 )
 

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/security"
 )
 
 func TestErrEmptyPath(t *testing.T) {

@@ -3,7 +3,7 @@ package bastion
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // resolveInputs builds resolver inputs from plain values so each case reads

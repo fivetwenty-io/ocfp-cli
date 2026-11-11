@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
-	"github.com/ocfp/ocfp-cli-go/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

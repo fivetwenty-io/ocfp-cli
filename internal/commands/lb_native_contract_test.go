@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"testing"
 )
 

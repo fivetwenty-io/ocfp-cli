@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/reservedip"
+	"github.com/fivetwenty-io/ocfp-cli/internal/reservedip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

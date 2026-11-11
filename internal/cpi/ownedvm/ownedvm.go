@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/gcp"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi/pve"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/gcp"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi/pve"
 )
 
 // ErrAmbiguous is returned when VMs with different ids match one name.

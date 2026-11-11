@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/tests/integration/cpirpc"
+	"github.com/fivetwenty-io/ocfp-cli/tests/integration/cpirpc"
 )
 
 // mockCPIPath is the compiled mock_cpi binary used across all tests.

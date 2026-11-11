@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 )
 
 func TestNewTreeRenderer(t *testing.T) {

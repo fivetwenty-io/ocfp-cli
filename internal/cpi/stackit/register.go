@@ -3,7 +3,7 @@ package stackit
 import (
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // Register registers the STACKIT provider with the CPI registry.

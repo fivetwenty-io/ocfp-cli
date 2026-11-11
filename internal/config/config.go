@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/netvalidate"
+	"github.com/fivetwenty-io/ocfp-cli/internal/security"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
-	"github.com/ocfp/ocfp-cli-go/internal/pve/netvalidate"
-	"github.com/ocfp/ocfp-cli-go/internal/security"
 	"github.com/spf13/viper"
 )
 

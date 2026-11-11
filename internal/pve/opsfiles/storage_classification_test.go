@@ -3,7 +3,7 @@ package opsfiles_test
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/opsfiles"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/opsfiles"
 )
 
 // T29d TestClassifyStorageType_SharedTypes verifies shared backend classification

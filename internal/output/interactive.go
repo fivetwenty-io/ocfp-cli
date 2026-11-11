@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // InteractiveRenderer implements the Renderer interface for interactive terminal output.

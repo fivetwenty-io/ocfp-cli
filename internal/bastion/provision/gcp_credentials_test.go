@@ -3,8 +3,8 @@ package provision
 import (
 	"context"
 	"encoding/base64"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"os"
 	"os/exec"
 	"path/filepath"

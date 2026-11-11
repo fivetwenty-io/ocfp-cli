@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/pve/probes"
+	"github.com/fivetwenty-io/ocfp-cli/internal/pve/probes"
 )
 
 // mockRunBosh returns a RunBosh func that emits output and optionally an error.

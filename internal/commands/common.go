@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/cpi"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 )
 
 // initializeProvider initializes the cloud provider.

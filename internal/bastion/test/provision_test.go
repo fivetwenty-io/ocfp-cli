@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/deployments"
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/provision"
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/deployments"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // TestProvisioningConfigGeneration tests provisioning configuration generation.

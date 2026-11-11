@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 )
 
 // Initializer defines the interface for bastion initialization.

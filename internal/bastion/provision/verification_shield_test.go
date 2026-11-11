@@ -3,7 +3,7 @@ package provision
 import (
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 )
 
 // The SHIELD CLI is verified, but only in the optional group. A bastion with no

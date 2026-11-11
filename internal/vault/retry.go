@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
 
 // sleepFn is the sleep implementation used by retry logic. Tests override it

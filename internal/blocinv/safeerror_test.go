@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/goccy/go-yaml"
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -3,8 +3,8 @@ package commands
 import (
 	"net/url"
 
-	"github.com/ocfp/ocfp-cli-go/internal/config"
-	"github.com/ocfp/ocfp-cli-go/internal/ui"
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/ui"
 )
 
 // originHost extracts the bare host from a scheme://host[:port] config

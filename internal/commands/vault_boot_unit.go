@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ocfp/ocfp-cli-go/internal/vaultboot"
+	"github.com/fivetwenty-io/ocfp-cli/internal/vaultboot"
 )
 
 // disableVaultBootUnit disables the bloc's ocfp-vault@<bloc>.service, which

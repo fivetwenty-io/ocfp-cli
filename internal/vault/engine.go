@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ocfp/ocfp-cli-go/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"go.uber.org/zap"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/ocfp/ocfp-cli-go/internal/artifacts/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts/provision"
 )
 
 // artifactsDeliverer performs the provider-specific out-of-band step needed

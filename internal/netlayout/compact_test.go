@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocfp/ocfp-cli-go/internal/netlayout"
+	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
 )
 
 // TestCompactWorkloadTable proves compact's WorkloadTable/SchemeVersion are
