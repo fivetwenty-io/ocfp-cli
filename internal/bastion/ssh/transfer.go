@@ -502,12 +502,21 @@ func (tm *TransferManager) checkSCPAvailability() error {
 }
 
 func (tm *TransferManager) buildSCPArgs(local, remote string, isUpload bool) []string {
+	// Check the bastion's host key against the known_hosts file the SSH
+	// client uses. accept-new records a host seen for the first time but
+	// refuses a changed key. These come before the custom options because
+	// ssh keeps the first value it sees for each option.
 	args := []string{
 		"-o", "ConnectTimeout=30",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
+		"-o", "StrictHostKeyChecking=accept-new",
 	}
+
+	knownHostsPath, err := homeKnownHostsFile()
+	if err == nil {
+		args = append(args, "-o", "UserKnownHostsFile="+sshConfigPath(knownHostsPath))
+	}
+
+	args = append(args, "-o", "LogLevel=ERROR")
 
 	args = tm.addPortOptions(args)
 	args = tm.addKeyOptions(args)

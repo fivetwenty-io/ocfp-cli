@@ -343,7 +343,7 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 // getSSHOptions returns SSH options for GCP connections.
 func (g *GCPBastionInit) getSSHOptions() []string {
 	return []string{
-		"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null", "LogLevel=ERROR", "ConnectTimeout=30", "ServerAliveInterval=60", "ServerAliveCountMax=3", "ForwardAgent=yes",
+		"LogLevel=ERROR", "ConnectTimeout=30", "ServerAliveInterval=60", "ServerAliveCountMax=3", "ForwardAgent=yes",
 	}
 }
 

@@ -104,3 +104,23 @@ func TestExternalProbeChecksKnownHosts(t *testing.T) {
 		}
 	}
 }
+
+// File transfers to the bastion must check its host key against the same
+// known_hosts file as the SSH client.
+func TestSCPArgsCheckKnownHosts(t *testing.T) {
+	knownHosts := isolateSSHEnv(t)
+
+	args := newTestTransferManager("").buildSCPArgs("local", "/remote", true)
+
+	for _, want := range []string{"StrictHostKeyChecking=accept-new", "UserKnownHostsFile=" + knownHosts} {
+		if !slices.Contains(args, want) {
+			t.Errorf("scp args %v lack %q", args, want)
+		}
+	}
+
+	for _, banned := range []string{"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null"} {
+		if slices.Contains(args, banned) {
+			t.Errorf("scp args %v contain %q", args, banned)
+		}
+	}
+}
