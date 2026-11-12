@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
@@ -329,5 +330,71 @@ func TestReplaceWritesWhereItChecked(t *testing.T) {
 
 	if !bytes.Equal(readFile(t, recordPath(filepath.Join(second, "owner"))), before) {
 		t.Fatal("the record reached the directory the link was moved to")
+	}
+}
+
+// Release removes the record from the directory it checked and locked, even
+// when a link above the store is moved while it waits for the lock.
+func TestReleaseRemovesWhereItChecked(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+
+	for _, d := range []string{first, second} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := ownerrecord.NewDirStore(filepath.Join(d, "owner")).Replace(t.Context(), nil, liveAt(t, 7)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	link := filepath.Join(base, "current")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+
+	unlock, ok, err := ownerrecord.TryLockExclusive(filepath.Join(first, "owner", ownerrecord.LockFile))
+	if err != nil || !ok {
+		t.Fatalf("hold the lock: %v, %v", ok, err)
+	}
+
+	s := ownerrecord.NewDirStore(filepath.Join(link, "owner"))
+
+	var once sync.Once
+
+	ownerrecord.SetLockWaitHook(s, func() {
+		once.Do(func() {
+			if err := os.Remove(link); err != nil {
+				t.Error(err)
+			}
+
+			if err := os.Symlink(second, link); err != nil {
+				t.Error(err)
+			}
+
+			if err := unlock(); err != nil {
+				t.Error(err)
+			}
+		})
+	})
+
+	owner := liveRecord()
+	owner.Generation = 7
+
+	if err := s.Release(t.Context(), 7, sealRelease(t, owner)); err != nil {
+		t.Fatalf("Release after the link moved: %v", err)
+	}
+
+	if _, err := os.Lstat(recordPath(filepath.Join(first, "owner"))); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the checked store kept its record: %v", err)
+	}
+
+	if got := storedGeneration(t, filepath.Join(second, "owner")); got != 7 {
+		t.Fatalf("the store the link was moved to holds generation %d, want 7", got)
 	}
 }

@@ -483,3 +483,80 @@ func TestEntryRefusesAnotherOwner(t *testing.T) {
 		t.Fatalf("EntryAs refused a directory owned by root: %v", err)
 	}
 }
+
+// A link above the path that is moved between the walk and the second
+// resolution is refused, even when it is moved to another safe directory.
+func TestResolveRefusesALinkMovedWhileItWasChecked(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	mkdirMode(t, first, 0o700)
+	mkdirMode(t, second, 0o700)
+
+	link := filepath.Join(base, "current")
+	symlink(t, first, link)
+
+	moved := func() {
+		if err := os.Remove(link); err != nil {
+			t.Error(err)
+		}
+
+		if err := os.Symlink(second, link); err != nil {
+			t.Error(err)
+		}
+	}
+
+	got, err := safedir.ResolveAsWithHooks(filepath.Join(link, "name"), os.Geteuid(), moved, nil)
+	if err == nil || got != "" {
+		t.Fatalf("ResolveAs with a link moved after the walk = %q, %v; want a refusal", got, err)
+	}
+}
+
+// A directory of the resolved parent that changes after the second
+// resolution is checked again and refused.
+func TestResolveChecksTheResolvedParentAgain(t *testing.T) {
+	t.Parallel()
+
+	t.Run("made writable by others", func(t *testing.T) {
+		t.Parallel()
+
+		dir := filepath.Join(t.TempDir(), "dir")
+		mkdirMode(t, dir, 0o700)
+
+		opened := func() {
+			if err := os.Chmod(dir, 0o777); err != nil {
+				t.Error(err)
+			}
+		}
+
+		got, err := safedir.ResolveAsWithHooks(filepath.Join(dir, "name"), os.Geteuid(), nil, opened)
+		if err == nil || got != "" {
+			t.Fatalf("ResolveAs with a parent opened after resolution = %q, %v; want a refusal", got, err)
+		}
+	})
+
+	t.Run("replaced by a link", func(t *testing.T) {
+		t.Parallel()
+
+		base := t.TempDir()
+		dir := filepath.Join(base, "dir")
+		mkdirMode(t, dir, 0o700)
+
+		swapped := func() {
+			if err := os.Rename(dir, filepath.Join(base, "moved")); err != nil {
+				t.Error(err)
+			}
+
+			if err := os.Symlink(filepath.Join(base, "moved"), dir); err != nil {
+				t.Error(err)
+			}
+		}
+
+		got, err := safedir.ResolveAsWithHooks(filepath.Join(dir, "name"), os.Geteuid(), nil, swapped)
+		if err == nil || got != "" {
+			t.Fatalf("ResolveAs with a parent replaced by a link = %q, %v; want a refusal", got, err)
+		}
+	})
+}

@@ -124,14 +124,14 @@ func TestOwnerRecordRefusesADirThatReachesTheDefault(t *testing.T) {
 		arrange func(t *testing.T, h defaultHost) (string, string)
 	}{
 		{"a link to the default's parent before first use", true, false, func(t *testing.T, h defaultHost) (string, string) {
-			mustSymlink(t, h.data, filepath.Join(h.home, "cosmos-scratch"))
+			mustSymlink(t, h.data, filepath.Join(h.home, "scratch"))
 
-			return filepath.Join(h.home, "cosmos-scratch", "ocfp-owner"), h.def
+			return filepath.Join(h.home, "scratch", "ocfp-owner"), h.def
 		}},
 		{"a link to the default's parent", true, true, func(t *testing.T, h defaultHost) (string, string) {
-			mustSymlink(t, h.data, filepath.Join(h.home, "cosmos-scratch"))
+			mustSymlink(t, h.data, filepath.Join(h.home, "scratch"))
 
-			return filepath.Join(h.home, "cosmos-scratch", "ocfp-owner"), ""
+			return filepath.Join(h.home, "scratch", "ocfp-owner"), ""
 		}},
 		{"a path under the default reached through a link", true, true, func(t *testing.T, h defaultHost) (string, string) {
 			mustSymlink(t, h.def, filepath.Join(h.home, "into"))
@@ -283,10 +283,10 @@ func TestJobExecRefusesAnOwnerDirThatReachesTheDefault(t *testing.T) {
 	t.Parallel()
 
 	h := newDefaultHost(t, true, true)
-	mustSymlink(t, h.data, filepath.Join(h.home, "cosmos-scratch"))
+	mustSymlink(t, h.data, filepath.Join(h.home, "scratch"))
 
 	for _, dir := range []string{
-		filepath.Join(h.home, "cosmos-scratch", "ocfp-owner"),
+		filepath.Join(h.home, "scratch", "ocfp-owner"),
 		filepath.Join(h.def, "sub"),
 	} {
 		spool := filepath.Join(t.TempDir(), "spool")
@@ -368,6 +368,26 @@ func TestJobExecRefusesASpoolRootInTheOwnerDir(t *testing.T) {
 
 			return filepath.Join(h.home, "jobs", "spool"), []string{"--owner-dir", owner}, filepath.Join(owner, "spool")
 		}},
+		{"holding a custom owner dir", true, false, func(t *testing.T, h defaultHost) (string, []string, string) {
+			owner := filepath.Join(h.home, "owner")
+			storeRecord(t, owner)
+
+			return h.home, []string{"--owner-dir", owner}, filepath.Join(h.home, "job-spool")
+		}},
+		{"holding the owner default", true, true, func(_ *testing.T, h defaultHost) (string, []string, string) {
+			return h.data, nil, filepath.Join(h.data, "job-spool")
+		}},
+		{"holding the owner default through a link", true, true, func(t *testing.T, h defaultHost) (string, []string, string) {
+			mustSymlink(t, h.data, filepath.Join(h.home, "up"))
+
+			return filepath.Join(h.home, "up"), nil, filepath.Join(h.data, "job-spool")
+		}},
+		{"under the owner default with a custom owner dir", true, true, func(t *testing.T, h defaultHost) (string, []string, string) {
+			owner := filepath.Join(h.home, "owner")
+			storeRecord(t, owner)
+
+			return filepath.Join(h.def, "jobs"), []string{"--owner-dir", owner}, filepath.Join(h.def, "jobs")
+		}},
 	}
 
 	for _, tc := range cases {
@@ -437,4 +457,271 @@ func TestJobExecAcceptsASpoolRootOutsideTheOwnerDir(t *testing.T) {
 			}
 		})
 	}
+}
+
+// caseInsensitive reports whether the file system that holds dir finds a
+// name whatever its case.
+func caseInsensitive(t *testing.T, dir string) bool {
+	t.Helper()
+
+	probe := filepath.Join(dir, "case-probe")
+	mustMkdir(t, probe)
+
+	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
+
+	return err == nil
+}
+
+// A second name for the default directory that is not a symbolic link, such
+// as a different case on a file system that ignores case, or a firmlink, is
+// refused like a link.
+func TestDirFlagsRefuseAnAliasOfTheDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a case variant before first use", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, false)
+		if !caseInsensitive(t, h.home) {
+			t.Skip("this file system tells names apart by case")
+		}
+
+		wantDefaultRefused(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.base, "DATA", "ocfp-owner")), "--dir")
+		wantNoRecord(t, h.def)
+	})
+
+	t.Run("a link whose target differs only in case", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, false)
+		if !caseInsensitive(t, h.home) {
+			t.Skip("this file system tells names apart by case")
+		}
+
+		mustSymlink(t, filepath.Join(h.base, "DATA"), filepath.Join(h.home, "scratch"))
+
+		wantDefaultRefused(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.home, "scratch", "OCFP-OWNER")), "--dir")
+		wantNoRecord(t, h.def)
+	})
+
+	t.Run("a spool root under a case variant of the default", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+		if !caseInsensitive(t, h.home) {
+			t.Skip("this file system tells names apart by case")
+		}
+
+		res := runJobExec(t, h.def, "--spool-root", filepath.Join(h.base, "Data", "ocfp-owner", "jobs"))
+		if res.code != 1 || !strings.Contains(res.stderr, "--spool-root") {
+			t.Fatalf("job exec = %d, stderr %q; want --spool-root refused with exit 1", res.code, res.stderr)
+		}
+
+		if _, err := os.Lstat(filepath.Join(h.def, "jobs")); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("a refused spool root was made in the owner directory: %v", err)
+		}
+	})
+
+	t.Run("a firmlink spelling", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, false)
+
+		data, err := filepath.EvalSymlinks(h.data)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		alias := filepath.Join("/System/Volumes/Data", data)
+
+		aliasInfo, err := os.Stat(alias)
+		if err != nil {
+			t.Skipf("no firmlink spelling here: %v", err)
+		}
+
+		dataInfo, err := os.Stat(data)
+		if err != nil || !os.SameFile(aliasInfo, dataInfo) {
+			t.Skipf("%s is not the same directory as %s", alias, data)
+		}
+
+		wantDefaultRefused(t, writeWithDefault(t, h.def, "--dir", filepath.Join(alias, "ocfp-owner")), "--dir")
+		wantNoRecord(t, h.def)
+	})
+}
+
+// The directory above the default is not inside it.
+func TestOwnerRecordAcceptsTheDefaultsParent(t *testing.T) {
+	t.Parallel()
+
+	h := newDefaultHost(t, true, true)
+
+	if res := writeWithDefault(t, h.def, "--dir", h.data); res.code != 0 {
+		t.Fatalf("write to the default's parent = %d, %v, stderr %q", res.code, res.err, res.stderr)
+	}
+
+	storedIn(t, h.data)
+}
+
+// A flag value that is, or passes through, a symbolic link to a directory
+// that does not exist yet is refused, wherever the link leads.
+func TestDirFlagsRefuseALinkToAMissingDirectory(t *testing.T) {
+	t.Parallel()
+
+	wantDangling := func(t *testing.T, res cmdResult, flag string) {
+		t.Helper()
+
+		if res.code != 1 || !strings.Contains(res.stderr, flag) || !strings.Contains(res.stderr, "does not exist yet") {
+			t.Fatalf("exit code = %d, stderr %q; want %s refused for a link to a missing directory", res.code, res.stderr, flag)
+		}
+	}
+
+	t.Run("a link to the default's parent", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, false, false)
+		mustSymlink(t, h.data, filepath.Join(h.home, "scratch"))
+
+		wantDangling(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.home, "scratch", "ocfp-owner")), "--dir")
+	})
+
+	t.Run("a link to the default at the last name", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, false)
+		mustSymlink(t, h.def, filepath.Join(h.home, "owner"))
+
+		wantDangling(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.home, "owner")), "--dir")
+	})
+
+	t.Run("a link to an unrelated directory", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+		mustSymlink(t, filepath.Join(h.base, "elsewhere"), filepath.Join(h.home, "owner"))
+
+		wantDangling(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.home, "owner")), "--dir")
+	})
+
+	t.Run("an owner dir", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+		mustSymlink(t, filepath.Join(h.base, "elsewhere"), filepath.Join(h.home, "owner"))
+
+		res := runJobExec(t, h.def, "--spool-root", filepath.Join(t.TempDir(), "spool"),
+			"--owner-dir", filepath.Join(h.home, "owner"))
+		wantDangling(t, res, "--owner-dir")
+	})
+
+	t.Run("a spool root", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, false)
+		mustSymlink(t, filepath.Join(h.def, "jobs"), filepath.Join(h.home, "jobs"))
+
+		wantDangling(t, runJobExec(t, h.def, "--spool-root", filepath.Join(h.home, "jobs")), "--spool-root")
+
+		if _, err := os.Lstat(h.def); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("a refused spool root made the owner directory: %v", err)
+		}
+	})
+}
+
+// When the default or the owner directory in use fails its own check, the
+// command refuses and names that directory, rather than letting every value
+// through.
+func TestDirFlagsRefuseWhenTheOwnerDirectoryFailsItsCheck(t *testing.T) {
+	t.Parallel()
+
+	wantUnchecked := func(t *testing.T, res cmdResult, dir string) {
+		t.Helper()
+
+		if res.code != 1 || !strings.Contains(res.stderr, dir) || !strings.Contains(res.stderr, "cannot be checked") {
+			t.Fatalf("exit code = %d, stderr %q; want a refusal naming %s", res.code, res.stderr, dir)
+		}
+	}
+
+	// open makes dir writable by every user, which the check refuses above a
+	// store.
+	open := func(t *testing.T, dir string) {
+		t.Helper()
+
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("the default, for --dir", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+		open(t, h.data)
+
+		wantUnchecked(t, writeWithDefault(t, h.def, "--dir", filepath.Join(h.home, "owner")), h.def)
+		wantNoRecord(t, filepath.Join(h.home, "owner"))
+	})
+
+	t.Run("the default, for --owner-dir", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+		open(t, h.data)
+
+		owner := filepath.Join(h.home, "owner")
+		storeRecord(t, owner)
+
+		res := runJobExec(t, h.def, "--spool-root", filepath.Join(t.TempDir(), "spool"), "--owner-dir", owner)
+		wantUnchecked(t, res, h.def)
+	})
+
+	// The owner directory in use is checked by the owner store, which
+	// refuses it with its own code before any spool is made. The spool rule
+	// still refuses a spool root inside it.
+	t.Run("a custom owner dir that fails its check", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+
+		parent := filepath.Join(h.home, "shared")
+		mustMkdir(t, parent)
+
+		owner := filepath.Join(parent, "owner")
+		storeRecord(t, owner)
+		open(t, parent)
+
+		res := runJobExec(t, h.def, "--spool-root", filepath.Join(owner, "jobs"), "--owner-dir", owner)
+		if res.code != 1 || !strings.Contains(res.stderr, "resolves into the owner directory") {
+			t.Fatalf("exit code = %d, stderr %q; want --spool-root refused for resolving into the owner directory", res.code, res.stderr)
+		}
+
+		if _, err := os.Lstat(filepath.Join(owner, "jobs")); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("a refused spool root was made in the owner directory: %v", err)
+		}
+
+		spool := filepath.Join(t.TempDir(), "spool")
+
+		res = runJobExec(t, h.def, "--spool-root", spool, "--owner-dir", owner)
+		if res.code != 2 || !strings.Contains(res.stderr, parent) {
+			t.Fatalf("exit code = %d, stderr %q; want the store's refusal naming %s", res.code, res.stderr, parent)
+		}
+
+		if _, err := os.Lstat(spool); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("a refused command made a spool root: %v", err)
+		}
+	})
+
+	t.Run("the default, for --spool-root with a custom owner dir", func(t *testing.T) {
+		t.Parallel()
+
+		h := newDefaultHost(t, true, true)
+
+		owner := filepath.Join(h.home, "owner")
+		storeRecord(t, owner)
+		open(t, h.data)
+
+		// --owner-dir is refused first, because it is compared with the
+		// default too.
+		res := runJobExec(t, h.def, "--spool-root", filepath.Join(t.TempDir(), "spool"), "--owner-dir", owner)
+		wantUnchecked(t, res, h.def)
+	})
 }

@@ -63,6 +63,19 @@ func Resolve(path string) (string, error) {
 // or replace a directory in it, so a link above path that changes after the
 // check cannot move what the caller uses.
 func ResolveAs(path string, euid int) (string, error) {
+	return resolveAs(path, euid, resolveHooks{})
+}
+
+// resolveHooks lets a test act between the steps of resolveAs.
+type resolveHooks struct {
+	// afterWalk, when set, is called once the walk has checked the parents.
+	afterWalk func()
+	// afterEval, when set, is called once the parents have been resolved
+	// again.
+	afterEval func()
+}
+
+func resolveAs(path string, euid int, hooks resolveHooks) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
@@ -77,9 +90,17 @@ func ResolveAs(path string, euid int) (string, error) {
 		return abs, nil
 	}
 
+	if hooks.afterWalk != nil {
+		hooks.afterWalk()
+	}
+
 	resolved, err := filepath.EvalSymlinks(filepath.Dir(abs))
 	if err != nil {
 		return "", fmt.Errorf("check parents of %s: %w", path, err)
+	}
+
+	if hooks.afterEval != nil {
+		hooks.afterEval()
 	}
 
 	if resolved != walked {
