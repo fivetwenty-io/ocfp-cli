@@ -908,23 +908,7 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 		result, err := m.sshClient.ExecuteCommand(ctx, cmd)
 		if err != nil {
-			m.log.Errorw("Script execution failed",
-				"script", scriptName,
-				"exit_code", result.ExitCode,
-				"stdout", logger.RedactSecrets(result.Stdout),
-				"stderr", logger.RedactSecrets(result.Stderr))
-
-			// Include meaningful script output in the error so users can diagnose failures
-			output := extractTail(result.Stderr)
-			if output == "" {
-				output = extractTail(result.Stdout)
-			}
-
-			if output != "" {
-				return fmt.Errorf("script %s failed: %w\n--- script output ---\n%s", scriptName, err, output)
-			}
-
-			return fmt.Errorf("script %s failed: %w", scriptName, err)
+			return m.scriptFailure(scriptName, result, err)
 		}
 
 		m.log.Debugw("Script executed successfully", "script", scriptName, "stdout", logger.RedactSecrets(result.Stdout))
@@ -934,6 +918,36 @@ func (m *Manager) executeScript(ctx context.Context, script, scriptName string) 
 
 	// For local execution, we would use os/exec
 	return ErrLocalScriptExecutionNotImplemented
+}
+
+// scriptFailure logs a failed script and returns its error, carrying the
+// tail of the script's output so the operator can see why it failed. A
+// command that fails can return no result at all, as an unconnected client
+// does, and then there is no exit code or output to report.
+func (m *Manager) scriptFailure(scriptName string, result *ssh.CommandResult, err error) error {
+	if result == nil {
+		m.log.Errorw("Script execution failed", "script", scriptName, "error", err)
+
+		return fmt.Errorf("script %s failed: %w", scriptName, err)
+	}
+
+	m.log.Errorw("Script execution failed",
+		"script", scriptName,
+		"exit_code", result.ExitCode,
+		"stdout", logger.RedactSecrets(result.Stdout),
+		"stderr", logger.RedactSecrets(result.Stderr))
+
+	// Include meaningful script output in the error so users can diagnose failures
+	output := extractTail(result.Stderr)
+	if output == "" {
+		output = extractTail(result.Stdout)
+	}
+
+	if output != "" {
+		return fmt.Errorf("script %s failed: %w\n--- script output ---\n%s", scriptName, err, output)
+	}
+
+	return fmt.Errorf("script %s failed: %w", scriptName, err)
 }
 
 // remoteOutputTailLines is how many trailing lines of a failed remote

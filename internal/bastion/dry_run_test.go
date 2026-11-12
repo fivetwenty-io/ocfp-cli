@@ -688,3 +688,20 @@ func TestDryRunNeverClaimsTheWorkIsDone(t *testing.T) {
 		})
 	}
 }
+
+// A client that fails without a result, as an unconnected one does, fails the
+// script with the client's error instead of panicking on the missing result.
+func TestScriptFailsCleanlyWithoutAResult(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, &unconnectedSSHClient{})
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = m.executeScript(context.Background(), "echo hello", "greeting")
+	})
+	require.ErrorIs(t, err, ssh.ErrSSHClientNotConnected)
+	assert.Equal(t, "script greeting failed: "+ssh.ErrSSHClientNotConnected.Error(), err.Error())
+}
