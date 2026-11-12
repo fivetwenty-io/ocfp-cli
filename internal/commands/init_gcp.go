@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 )
 
-func initializeGCP(cmd *cobra.Command) error {
+// runInitGCP runs `ocfp init gcp` in either form. A dry run makes the same
+// checks, including the one that refuses a bloc whose env files exist, and
+// logs each write instead of making it.
+func runInitGCP(cmd *cobra.Command, r *initRun) error {
 	params, err := resolveInitAWSParams(cmd)
 	if err != nil {
 		return err
@@ -43,14 +46,20 @@ func initializeGCP(cmd *cobra.Command) error {
 		}
 
 		opts := vault.WriteEnvFileV32Opts{Path: filepath.Join(dir, "deployments", slot, params.bloc+"-"+slot+".yml"), EnvName: slot, UseCreateEnv: slot == "mgmt", Bloc: params.bloc, IAAS: "gcp", Kit: kit}
-		if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
-			return fmt.Errorf("write GCP %s environment: %w", slot, err)
+		if err := r.change("write the "+slot+" Genesis env file", func() error {
+			if err := vault.WriteEnvFileV32Opts_Write(opts); err != nil {
+				return fmt.Errorf("write GCP %s environment: %w", slot, err)
+			}
+
+			return nil
+		}, "path", opts.Path); err != nil {
+			return err
 		}
 	}
 
-	if err := writeMonitoringEnvFile(params.bloc, "gcp"); err != nil {
+	if err := r.writeMonitoringEnvFile(params.bloc, "gcp"); err != nil {
 		return err
 	}
 
-	return persistBlocToState(params.bloc)
+	return r.persistCurrentBloc(params.bloc)
 }

@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -113,12 +115,14 @@ func TestBastionInitDoneLine(t *testing.T) {
 	}
 }
 
-// treeOf lists every path under each root with its size, so a test can
-// tell whether a run wrote, removed, or changed anything there.
-func treeOf(t *testing.T, roots ...string) map[string]int64 {
+// treeOf records every path under each root with a digest of what it
+// holds, which is the mode and a SHA-256 of the contents for a file and the
+// mode for anything else, so a test can tell whether a run wrote, removed,
+// or changed anything there, even when a file keeps its size.
+func treeOf(t *testing.T, roots ...string) map[string]string {
 	t.Helper()
 
-	tree := map[string]int64{}
+	tree := map[string]string{}
 
 	for _, root := range roots {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -131,7 +135,18 @@ func treeOf(t *testing.T, roots ...string) map[string]int64 {
 				return err
 			}
 
-			tree[path] = info.Size()
+			if !info.Mode().IsRegular() {
+				tree[path] = info.Mode().String()
+
+				return nil
+			}
+
+			data, err := os.ReadFile(path) // #nosec G304 -- path is under a test temp dir
+			if err != nil {
+				return err
+			}
+
+			tree[path] = fmt.Sprintf("%s %x", info.Mode(), sha256.Sum256(data))
 
 			return nil
 		})
@@ -147,12 +162,20 @@ func fakeDeployTools(t *testing.T, logPath string) {
 	t.Helper()
 
 	bin := t.TempDir()
-	for _, tool := range []string{"bosh", "cf"} {
+	writeFakeDeployTools(t, bin, logPath, "bosh", "cf")
+
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// writeFakeDeployTools writes into bin a fake of each of tools that records
+// its arguments in logPath.
+func writeFakeDeployTools(t *testing.T, bin, logPath string, tools ...string) {
+	t.Helper()
+
+	for _, tool := range tools {
 		writeFakeExecutableFile(t, filepath.Join(bin, tool),
 			"#!/bin/sh\necho "+tool+" \"$@\" >> '"+logPath+"'\n")
 	}
-
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // stubBastionInit replaces the full bastion init that init all runs first,
@@ -174,60 +197,6 @@ func stubBastionInit(t *testing.T) *[]bool {
 	t.Cleanup(func() { runBastionInitFn = saved })
 
 	return &calls
-}
-
-// A dry run of an init component other than bastion changes nothing. It
-// doesn't deploy with bosh or log in with cf, which can reach the bastion
-// through a proxy, and it doesn't write env files, manifests, or the
-// current bloc on the workstation. Init all still runs the bastion dry run.
-func TestInitDryRunRunsNoComponent(t *testing.T) {
-	cases := []struct {
-		component string
-		bloc      string
-	}{
-		{"aws", "ocfp-aws-dry"},
-		{"gcp", "ocfp-gcp-dry"},
-		{"pve", "ocfp-pve-dc1"},
-		{"pg", ""},
-		{"bosh", ""},
-		{"cf", ""},
-		{KeywordAll, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.component, func(t *testing.T) {
-			cfg, sshLog, home := connectivityCheckFixture(t, "", 0)
-			t.Setenv("OCFP_BLOC", tc.bloc)
-
-			ocfpHome, stateHome, configHome := t.TempDir(), t.TempDir(), t.TempDir()
-			t.Setenv("OCFP_HOME", ocfpHome)
-			t.Setenv("XDG_STATE_HOME", stateHome)
-			t.Setenv("XDG_CONFIG_HOME", configHome)
-
-			toolLog := filepath.Join(t.TempDir(), "tools.log")
-			fakeDeployTools(t, toolLog)
-
-			bastionCalls := stubBastionInit(t)
-			roots := []string{home, ocfpHome, config.DataHome(), stateHome, configHome}
-			before := treeOf(t, roots...)
-
-			f := &initFlags{dryRun: true}
-			require.NoError(t, f.executeInitialization(context.Background(), makeCmdNoBloc(t), cfg, tc.component))
-
-			for _, log := range []string{sshLog, toolLog} {
-				_, err := os.Stat(log)
-				assert.True(t, os.IsNotExist(err), "a dry run must not run ssh, bosh, or cf")
-			}
-
-			assert.Equal(t, before, treeOf(t, roots...), "a dry run must not write anything")
-
-			if tc.component == KeywordAll {
-				assert.Equal(t, []bool{true}, *bastionCalls, "init all runs the bastion dry run")
-			} else {
-				assert.Empty(t, *bastionCalls)
-			}
-		})
-	}
 }
 
 // A dry run still refuses a bloc name that the real run would refuse.

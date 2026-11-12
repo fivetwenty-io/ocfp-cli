@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
@@ -84,20 +86,13 @@ func GetStateDir(blocName string) (string, error) {
 // ~/.ocfp/state/ directory when only that exists. For bloc-specific
 // operations, use GetStateDir(blocName) to get the proper path.
 func NewManager(stateDir string) (*Manager, error) {
-	if stateDir == "" {
-		stateHome := config.StateHome()
-		if stateHome == "" {
-			return nil, config.ErrOcfpHomeNotFound
-		}
-
-		newPath := filepath.Join(stateHome, "state")
-		legacyPath := filepath.Join(config.OcfpHome(), "state")
-
-		stateDir, _ = config.ResolveExisting(newPath, legacyPath)
+	stateDir, err := resolveStateDir(stateDir)
+	if err != nil {
+		return nil, err
 	}
 
 	// Ensure state directory exists
-	err := os.MkdirAll(stateDir, stateDirMode)
+	err = os.MkdirAll(stateDir, stateDirMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
@@ -107,6 +102,97 @@ func NewManager(stateDir string) (*Manager, error) {
 		current:  nil,
 		mu:       sync.RWMutex{},
 	}, nil
+}
+
+// PreviewManager is the read-only form of NewManager, for a caller that
+// must not write, such as a dry run. It returns the error that NewManager
+// would return for stateDir, and otherwise a manager for it, but it never
+// creates the directory. A directory that NewManager would create counts as
+// present, and Load reads it as empty. It checks what MkdirAll checks
+// before it creates anything, which is that no part of the path is a file.
+// It leaves to the real run what only creating the directory checks, such
+// as permission to write its parent.
+func PreviewManager(stateDir string) (*Manager, error) {
+	stateDir, err := resolveStateDir(stateDir)
+	if err != nil {
+		return nil, err
+	}
+
+	err = mkdirAllError(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	return &Manager{
+		stateDir: stateDir,
+		current:  nil,
+		mu:       sync.RWMutex{},
+	}, nil
+}
+
+// resolveStateDir returns stateDir, or the default state directory when it
+// is empty, as NewManager describes.
+func resolveStateDir(stateDir string) (string, error) {
+	if stateDir != "" {
+		return stateDir, nil
+	}
+
+	stateHome := config.StateHome()
+	if stateHome == "" {
+		return "", config.ErrOcfpHomeNotFound
+	}
+
+	newPath := filepath.Join(stateHome, "state")
+	legacyPath := filepath.Join(config.OcfpHome(), "state")
+
+	resolved, _ := config.ResolveExisting(newPath, legacyPath)
+
+	return resolved, nil
+}
+
+// mkdirAllError returns the error that os.MkdirAll(path) returns because
+// path, or the nearest part of it that exists, isn't a directory. It walks
+// the path the way MkdirAll does and creates nothing. It returns nil where
+// MkdirAll would go on to create the missing directories.
+func mkdirAllError(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if info.IsDir() {
+			return nil
+		}
+
+		return &fs.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+	}
+
+	// An entry that Stat can't follow, such as a dangling symbolic link or
+	// a loop, still exists, so MkdirAll's Mkdir fails on it with EEXIST,
+	// and Lstat then shows it isn't a directory.
+	_, lstatErr := os.Lstat(path)
+	if lstatErr == nil {
+		return &fs.PathError{Op: "mkdir", Path: path, Err: syscall.EEXIST}
+	}
+
+	// MkdirAll strips trailing separators and the last element to find the
+	// parent, and it stops at the volume name.
+	i := len(path) - 1
+	for i >= 0 && os.IsPathSeparator(path[i]) {
+		i--
+	}
+
+	for i >= 0 && !os.IsPathSeparator(path[i]) {
+		i--
+	}
+
+	if i < 0 {
+		i = 0
+	}
+
+	parent := path[:i]
+	if len(parent) > len(filepath.VolumeName(path)) {
+		return mkdirAllError(parent)
+	}
+
+	return nil
 }
 
 // Load loads state for a specific bloc.

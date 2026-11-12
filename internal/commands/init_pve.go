@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
-	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/pve/opsfiles"
 	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/spf13/cobra"
@@ -94,8 +93,12 @@ func resolveInitPVEParams(cmd *cobra.Command) (*initPVEParams, error) {
 // Config is persisted via config.SetCurrentBloc so that subsequent `ocfp`
 // invocations can resolve the bloc without re-supplying the flag.
 func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
-	log := logger.Get()
+	return runInitPVE(cmd, cfg, newInitRun(false))
+}
 
+// runInitPVE runs `ocfp init pve` in either form. A dry run makes the same
+// checks and logs each write instead of making it.
+func runInitPVE(cmd *cobra.Command, cfg *config.Config, r *initRun) error {
 	params, err := resolveInitPVEParams(cmd)
 	if err != nil {
 		return err
@@ -103,23 +106,27 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 
 	datacenter := resolvePVEDatacenter(params.bloc, cfg)
 
-	log.Infow("Initializing PVE environment", "bloc", params.bloc, "datacenter", datacenter)
+	r.say("Initializing PVE environment", "bloc", params.bloc, "datacenter", datacenter)
 
-	if err := persistBlocToState(params.bloc); err != nil {
+	if err := r.persistCurrentBloc(params.bloc); err != nil {
 		return err
 	}
 
-	if err := writePVEDeploymentEnvFile(params.bloc, "mgmt", "bosh", true, datacenter); err != nil {
+	if err := r.writeBlocEnvFile(params.bloc, "mgmt", "mgmt", "mgmt Genesis env file", func() error {
+		return writePVEDeploymentEnvFile(params.bloc, "mgmt", "bosh", true, datacenter)
+	}); err != nil {
 		return err
 	}
 
-	if err := writePVEDeploymentEnvFile(params.bloc, "ocf", "cf", false, datacenter); err != nil {
+	if err := r.writeBlocEnvFile(params.bloc, "ocf", "ocf", "ocf Genesis env file", func() error {
+		return writePVEDeploymentEnvFile(params.bloc, "ocf", "cf", false, datacenter)
+	}); err != nil {
 		return err
 	}
 
 	// Co-locate a prometheus monitoring stack on the ocf director with
 	// monitor-cf enabled so Cloud Foundry metrics flow into Grafana.
-	if err := writeMonitoringEnvFile(params.bloc, "pve"); err != nil {
+	if err := r.writeMonitoringEnvFile(params.bloc, "pve"); err != nil {
 		return err
 	}
 
@@ -133,13 +140,15 @@ func initializePVE(cmd *cobra.Command, cfg *config.Config) error {
 	}
 
 	for _, deployment := range []string{"mgmt", "ocf"} {
-		err := writePVEOpsFiles(blocDir, params.bloc, deployment)
+		err := r.change("write the PVE ops files and runtime config for "+deployment, func() error {
+			return writePVEOpsFiles(blocDir, params.bloc, deployment)
+		}, "dir", filepath.Join(blocDir, "deployments", deployment))
 		if err != nil {
 			return err
 		}
 	}
 
-	log.Infow("PVE environment initialized", "bloc", params.bloc)
+	r.say("PVE environment initialized", "bloc", params.bloc)
 
 	return nil
 }
@@ -190,18 +199,10 @@ func pveDatacenterFromBloc(bloc string) string {
 // supplied datacenter. The mgmt env file carries no params block, matching the
 // create-env pattern used by the AWS bosh kit.
 func writePVEDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool, datacenter string) error {
-	if config.DataHome() == "" {
-		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
-	}
-
-	envFileName := bloc + "-" + deployment + ".yml"
-
-	blocDir, err := config.OcfpBlocDir(bloc)
+	envFilePath, err := blocDeploymentFile(bloc, deployment, bloc+"-"+deployment+".yml")
 	if err != nil {
-		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+		return err
 	}
-
-	envFilePath := filepath.Join(blocDir, "deployments", deployment, envFileName)
 
 	const iaas = "pve"
 
