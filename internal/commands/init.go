@@ -109,7 +109,7 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 		"answer yes to the confirmation prompt and change nothing else (needed when stdin is not a terminal)")
 	cmd.Flags().BoolVar(&f.skipChecks, "skip-checks", false, "skip prerequisite validation")
 	cmd.Flags().BoolVar(&f.parallel, "parallel", false, "run independent tasks in parallel")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print actions without executing")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "log each change instead of making it and change nothing; never connects to the bastion")
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "resume from last successful checkpoint")
 	cmd.Flags().BoolVar(&f.verbose, "verbose", false, "enable verbose logging")
 	cmd.Flags().BoolVar(&f.ocfpOnly, "ocfp", false, "only install/update OCFP CLI binary (for bastion init)")
@@ -517,6 +517,19 @@ and does the same work. The config-only mode is on "ocfp init bastion" alone.
 
 A mode runs on an already provisioned bastion too, and every mode except
 --config does the same work from a workstation as on the bastion itself.
+
+Dry Run:
+  --dry-run, or init.dry_run: true in the config file, previews any
+  component and changes nothing. An explicit --dry-run=false wins over the
+  config file. A dry run makes every check that reads only this
+  workstation, in the order the real run makes it, so it refuses wherever
+  the real run would refuse. It logs each change instead of making it, so
+  it runs no bosh or cf command, writes no file, and leaves the current
+  bloc and the resume checkpoints alone. It never connects to the bastion,
+  so it logs each check it could not make, such as the SSH connection and
+  the bastion's host key, instead of passing it. A bastion dry run still
+  asks the provider for the bastion's address when neither the config
+  nor the bloc's state names it, because that lookup only reads.
 
 The init command prepares and initializes the core components required
 for a Cloud Foundry deployment. It ensures proper ordering of component

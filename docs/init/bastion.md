@@ -22,7 +22,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 
 | Flag | What it does |
 |------|--------------|
-| `--dry-run` | Logs what each phase would do and changes nothing. A dry run never connects to the bastion. It skips the SSH connectivity check that a real run makes before it starts, and the steps that every init runs first, such as the SSH agent forwarding and the `authorized_keys` sync, log what they would do instead of reading or writing anything there. |
+| `--dry-run` | Logs what each phase would do and changes nothing. A dry run never connects to the bastion. Of the SSH connectivity check that a real run makes before it starts, it makes only the parts that read our own files, and it logs that it didn't check the connection or the host key. The steps that every init runs first, such as the SSH agent forwarding and the `authorized_keys` sync, log what they would do instead of reading or writing anything there. |
 | `--force` | Skips the confirmation prompt and reinstalls the ocfp CLI even when the bastion already has the wanted version. A full init run from a workstation still skips a bastion that has the provisioned marker. |
 | `--yes`, `-y` | Answers yes to the confirmation prompt and changes nothing else, so unlike `--force` it never reinstalls the ocfp CLI. Without a terminal on stdin, such as in a script or over a non-interactive ssh session, init can't ask, so it stops with an error that names this flag unless `--yes` or `--force` is set. |
 | `--resume` | Skips the phases that an earlier run finished. |
@@ -630,9 +630,7 @@ A dry run also leaves the resume checkpoints on our workstation as it found them
 
 A dry run still makes the checks that two phases make on our own workstation before they reach the bastion. The `config_files` phase reads our ocfp config and narrows it to the bloc, and the `ocfp_cli_setup` phase settles where the ocfp CLI comes from and looks for a local build when we ask for one. So a dry run stops with the error the real run would give when the config is missing, when it doesn't hold the bloc, or when `OCFP_CLI_SOURCE` names a source that doesn't exist. When the local build is missing, a real run keeps the ocfp already on the bastion and fails when there is none, and a dry run logs that it couldn't look. A dry run never connects, so it doesn't check whether the bastion is already provisioned or whether its host key matches, and it logs each check it skipped. A phase that a resumed run skips is skipped by its dry run too, along with its checks.
 
-The other `ocfp init` components check the bastion before they start as well. In a real run, `ocfp init all`, `aws`, `gcp`, `pve`, `pg`, `cf`, and `bosh` each run the same SSH check, and they stop when the bastion can't be reached. With `--dry-run`, each of them makes the parts of the check that only read, so it still refuses an SSH user, bastion IP, key path, or `known_hosts` path that the real run would refuse. It stops short of the connection itself, so a dry run never writes the bastion's host key to our `~/.ssh/known_hosts` and never logs in to the bastion, and it logs that it didn't check the connection or the host key. When our config doesn't name the bastion's IP, a dry run doesn't ask the provider for it, and it logs that it checked none of the connection. Their prerequisite step also logs the deployment directory it would create under `~/deployments` instead of creating it.
-
-The work of those components is left undone in a dry run too. Each one logs what a real run would do, such as writing the bloc's Genesis env files or running `bosh create-env`, and it doesn't run `bosh` or `cf`, write any file, or change the current bloc. `aws`, `gcp`, and `pve` still refuse a missing or malformed bloc name, as a real run does. `ocfp init all --dry-run` runs the bastion dry run first and then logs the PostgreSQL, BOSH, and Cloud Foundry work that it would do.
+The other `ocfp init` components have dry runs of their own, which make the same read-only part of the SSH check and refuse wherever their real runs would refuse. [Component Initialization](components.md#dry-run) describes them, along with `ocfp init all --dry-run`.
 
 ### Force Re-initialization
 ```bash
@@ -756,6 +754,7 @@ genesis update
 
 ## See Also
 
+- [Component Initialization](components.md) for `ocfp init aws`, `gcp`, `pve`, `pg`, `bosh`, `cf`, and `all`
 - [Bastion Tailscale](bastion-tailscale.md) for joining the bastion to a tailnet at first boot (PVE and other no-public-IP providers)
 - [Security Groups](../networking/security-groups.md) for the 7 default security groups created during bootstrap
 - [Networking Overview](../networking/README.md) for the full networking bootstrap flow
