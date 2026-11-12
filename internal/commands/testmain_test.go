@@ -6,6 +6,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// A test that needs job exec in a process of its own runs this binary
+	// again with jobExecHelperEnv set, and that run is job exec alone.
+	if os.Getenv(jobExecHelperEnv) == "1" {
+		os.Exit(runJobExecHelper())
+	}
+
 	os.Setenv("OCFP_TEST_SAFETY_GUARD", "1")
 
 	// No test may probe the machine's real ports or tmux sessions for a

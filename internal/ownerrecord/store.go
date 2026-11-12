@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
+	"github.com/fivetwenty-io/ocfp-cli/internal/safedir"
 )
 
 // The owner record's place on a bastion.
@@ -54,6 +55,13 @@ var (
 	// owner record or does not pass Open. It wraps the refusal that says
 	// why, so it tells a bad stored record apart from a bad replacement.
 	ErrStoredRecordInvalid = errors.New("stored owner record is not valid")
+
+	// ErrUnsafeStore reports that a user other than this one or root could
+	// change the record, its directory, or a directory above it. A record
+	// names its own owner key, so a record that another user could replace
+	// proves nothing. It wraps an OWNER_RECORD_INVALID refusal that says
+	// what is unsafe.
+	ErrUnsafeStore = errors.New("owner record store is not private")
 )
 
 // Store keeps one signed owner record.
@@ -82,8 +90,19 @@ type Store interface {
 //
 // The store sets the mode of the directory and files it creates, and it
 // never changes a file's owner or group.
+//
+// Every use of the store first checks that no other user can change the
+// record. The directory and the record must not be symbolic links, must be
+// owned by this process's effective user or by root, and must not be
+// writable by group or other. Every directory above them must pass
+// safedir.Ancestors. A store that fails any of these is refused with
+// ErrUnsafeStore, and nothing in it is read or changed.
 type DirStore struct {
 	dir string
+
+	// euid, when set, is the user the store checks ownership against in
+	// place of os.Geteuid.
+	euid func() int
 
 	// onWait, when set, is called each time a lock is taken elsewhere and
 	// the store is about to wait for it.
@@ -114,7 +133,8 @@ const (
 
 // Read takes the shared lock, reads the record, and verifies it with Open.
 // A stored record that is not a signed record, or that does not open, is
-// reported with ErrStoredRecordInvalid wrapping the refusal.
+// reported with ErrStoredRecordInvalid wrapping the refusal. A store that
+// another user could change is refused with ErrUnsafeStore.
 func (s *DirStore) Read(ctx context.Context) (Signed, Record, error) {
 	sf, err := s.readShared(ctx)
 	if err != nil {
@@ -147,7 +167,8 @@ func (s *DirStore) readShared(ctx context.Context) (sf Signed, err error) {
 }
 
 // RLock takes the shared lock. It never creates the directory, and it
-// returns ErrNoRecord when the directory does not exist. The release it
+// returns ErrNoRecord when the directory does not exist. It refuses a store
+// that another user could change with ErrUnsafeStore. The release it
 // returns may be called more than once, and only the first call acts.
 func (s *DirStore) RLock(ctx context.Context) (func() error, error) {
 	f, err := s.lock(ctx, lockShared)
@@ -184,6 +205,9 @@ func (s *DirStore) RLock(ctx context.Context) (func() error, error) {
 // refused with JOB_REQUEST_INVALID before anything is written. A stored
 // record that cannot be read as a signed record, or that does not open, is
 // reported with ErrStoredRecordInvalid, which wraps the refusal beneath it.
+// A store that another user could change is refused with ErrUnsafeStore,
+// and Replace never creates a directory under a parent that fails
+// safedir.Ancestors.
 //
 // While it holds the exclusive lock, Replace also removes temporary files
 // that an earlier writer left behind when it stopped before its rename.
@@ -283,7 +307,20 @@ func (s *DirStore) checkReplace(expect *uint64, next Record) error {
 // readSigned reads and parses the stored record. It returns ErrNoRecord when
 // there is none.
 func (s *DirStore) readSigned() (Signed, error) {
-	f, err := os.Open(filepath.Join(s.dir, RecordFile))
+	path := filepath.Join(s.dir, RecordFile)
+
+	err := safedir.EntryAs(path, false, s.uid())
+	if errors.Is(err, fs.ErrNotExist) {
+		return Signed{}, ErrNoRecord
+	}
+
+	if err != nil {
+		return Signed{}, unsafeStore(err)
+	}
+
+	// The directory is private, so only this user or root can swap the
+	// record between the check and the open.
+	f, err := os.Open(path) //nolint:gosec // the store's own record file
 	if errors.Is(err, fs.ErrNotExist) {
 		return Signed{}, ErrNoRecord
 	}
@@ -428,15 +465,25 @@ func (s *DirStore) fillTemp(tmp *os.File, data []byte) error {
 	return nil
 }
 
-// makeDir creates the directory with dirMode when it does not exist, and
-// then syncs its parent so that the new directory's entry survives a crash.
-// It leaves an existing directory's mode alone.
+// makeDir checks the directories above the store, creates the directory
+// with dirMode when it does not exist, and then syncs its parent so that the
+// new directory's entry survives a crash. It leaves an existing directory's
+// mode alone.
 func (s *DirStore) makeDir() error {
 	if s.dir == "" {
 		return errNoDir
 	}
 
-	err := os.Mkdir(s.dir, dirMode)
+	err := safedir.AncestorsAs(s.dir, s.uid())
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("create owner record directory: %w", err)
+	}
+
+	if err != nil {
+		return unsafeStore(err)
+	}
+
+	err = os.Mkdir(s.dir, dirMode)
 	if err == nil {
 		// Mkdir's mode passes through the umask, so set it outright.
 		if err := os.Chmod(s.dir, dirMode); err != nil {
@@ -466,13 +513,66 @@ func (s *DirStore) makeDir() error {
 // working directory.
 var errNoDir = errors.New("owner record store has no directory")
 
+// uid is the user the store checks ownership against.
+func (s *DirStore) uid() int {
+	if s.euid != nil {
+		return s.euid()
+	}
+
+	return os.Geteuid()
+}
+
+// unsafeStore reports err, which says how another user could change the
+// store, as ErrUnsafeStore and an OWNER_RECORD_INVALID refusal.
+func unsafeStore(err error) error {
+	return fmt.Errorf("%w: %w", ErrUnsafeStore,
+		&progress.Refusal{Code: progress.CodeOwnerRecordInvalid, Message: err.Error()})
+}
+
+// checkPrivate checks that no user but this one and root can change the
+// directory, the record, or a directory above them. A missing directory, or
+// a missing directory above it, is ErrNoRecord. A missing record is left
+// for the caller to find.
+func (s *DirStore) checkPrivate() error {
+	if s.dir == "" {
+		return errNoDir
+	}
+
+	uid := s.uid()
+
+	err := safedir.AncestorsAs(s.dir, uid)
+	if err == nil {
+		err = safedir.EntryAs(s.dir, true, uid)
+	}
+
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("owner record directory %s does not exist: %w", s.dir, ErrNoRecord)
+	}
+
+	if err != nil {
+		return unsafeStore(err)
+	}
+
+	err = safedir.EntryAs(filepath.Join(s.dir, RecordFile), false, uid)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return unsafeStore(err)
+	}
+
+	return nil
+}
+
 // lock opens LockFile, creating it when it does not exist, and takes a lock
 // of the given kind on it. When the lock is taken elsewhere it waits until
 // the lock is granted or ctx is done. It returns ErrNoRecord when the
-// directory does not exist.
+// directory does not exist, and refuses with checkPrivate's error a store
+// that another user could change.
 func (s *DirStore) lock(ctx context.Context, kind lockKind) (*os.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("lock owner record: %w", err)
+	}
+
+	if err := s.checkPrivate(); err != nil {
+		return nil, err
 	}
 
 	f, err := s.openLock(ctx)

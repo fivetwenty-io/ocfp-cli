@@ -72,3 +72,8 @@ func SetDirSyncer(s *DirStore, f func(dir string) error) {
 func SyncDir(dir string) error {
 	return syncDir(dir)
 }
+
+// SetEUID makes s check ownership as if it ran as the user euid.
+func SetEUID(s *DirStore, euid int) {
+	s.euid = func() int { return euid }
+}

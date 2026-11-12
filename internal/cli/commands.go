@@ -56,6 +56,10 @@ func RegisterCommands(root *cobra.Command) {
 
 	// Version reporting
 	root.AddCommand(commands.NewVersionCmd())
+
+	// Signed jobs and the owner record they are checked against
+	root.AddCommand(commands.NewJobCmd())
+	root.AddCommand(commands.NewOwnerRecordCmd())
 }
 
 // Placeholder implementations for commands not yet created
