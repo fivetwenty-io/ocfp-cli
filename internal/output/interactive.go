@@ -260,14 +260,14 @@ func (r *InteractiveRenderer) Finalize(summary Summary) error {
 		return err
 	}
 
-	r.log.Infow("Operation finalized",
+	r.log.Infow("Operation finalized", summary.withDryRun(
 		"success", summary.Success,
 		"duration_ms", summary.Duration.Milliseconds(),
 		"total_phases", summary.TotalPhases,
-		"completed_phases", summary.CompletedPhases,
+		completedPhasesKey, summary.CompletedPhases,
 		"failed_phases", summary.FailedPhases,
 		"skipped_phases", summary.SkippedPhases,
-	)
+	)...)
 
 	return nil
 }
@@ -320,18 +320,18 @@ func (r *InteractiveRenderer) writeSummaryErrors(errors []string) error {
 
 // writeSummaryStatus writes the status, duration, and phase count lines.
 func (r *InteractiveRenderer) writeSummaryStatus(summary Summary) error {
-	statusText := "Success"
-	if !summary.Success {
-		statusText = "Failed"
-	}
-
-	statusLine := fmt.Sprintf("Status: %s\n", statusText)
+	statusLine := fmt.Sprintf("Status: %s\n", summary.statusText())
 
 	if r.config.UseColor {
-		if summary.Success {
-			statusLine = Green(statusLine)
-		} else {
+		switch {
+		case !summary.Success:
 			statusLine = Red(statusLine)
+		case summary.DryRun:
+			// A finished dry run did nothing, so it isn't shown in the
+			// color of success.
+			statusLine = Yellow(statusLine)
+		default:
+			statusLine = Green(statusLine)
 		}
 	}
 
@@ -345,7 +345,7 @@ func (r *InteractiveRenderer) writeSummaryStatus(summary Summary) error {
 		return err
 	}
 
-	err = r.writeLinef(fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases))
+	err = r.writeLinef(summary.countLine())
 	if err != nil {
 		return err
 	}

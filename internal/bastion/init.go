@@ -1096,9 +1096,13 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 
 	m.clearCheckpoints()
 
-	// Report final success
+	// Report the final summary. A dry run's says that nothing changed.
 	if m.reporter != nil {
-		m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
+		if m.isDryRun() {
+			m.reporter.ReportDryRunSummary(true, duration, len(phases), len(m.progress.Errors))
+		} else {
+			m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
+		}
 	}
 
 	m.logFinished("Bastion initialization completed successfully",
