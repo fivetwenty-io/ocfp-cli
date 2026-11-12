@@ -83,9 +83,9 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) ([]string, err
 // known_hosts, which `-o ProxyJump=…` would leave to the user's ssh config
 // (see artifactsSSHArgs). A bastion seen for the first time is recorded, and
 // one whose key has changed is refused. The jump hop authenticates with the
-// same key and login user as the final hop, and keyPath, user, and
-// bastionHost are interpolated into a string ssh runs through a shell, so
-// callers must pass validated values. The inner ssh reads the user's ssh
+// same key and login user as the final hop. ssh runs the ProxyCommand
+// through a shell, so keyPath, user, and bastionHost are shell-quoted like
+// every other value in it. The inner ssh reads the user's ssh
 // config as usual, so settings such as a port for the bastion still apply.
 //
 // An empty keyPath leaves authentication to the operator's own ssh setup.
@@ -104,28 +104,33 @@ func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) (str
 		return "", err
 	}
 
-	// The outer ssh expands %-tokens in a ProxyCommand before the shell sees
-	// it, and the inner ssh expands them again in the known_hosts path. The
-	// options already double each literal % for the inner ssh, and doubling
-	// again here leaves that for the inner ssh once the outer is done.
-	hostKey := strings.ReplaceAll(ssh.ShellJoin(hostKeyOptions), "%", "%%")
+	args := []string{"ssh"}
 
-	if keyPath == "" {
-		batch := ""
-		if batchMode {
-			batch = "-o BatchMode=yes "
-		}
-
-		return fmt.Sprintf(
-			"ssh %s%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-			batch, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
-		), nil
+	switch {
+	case keyPath != "":
+		args = append(args, "-i", keyPath, "-o", "BatchMode=yes")
+	case batchMode:
+		args = append(args, "-o", "BatchMode=yes")
 	}
 
-	return fmt.Sprintf(
-		"ssh -i %s -o BatchMode=yes %s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-		keyPath, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
-	), nil
+	args = append(args, hostKeyOptions...)
+
+	if keyPath != "" {
+		args = append(args, "-o", "IdentitiesOnly=yes")
+	}
+
+	args = append(args, "-o", "LogLevel=ERROR", "-o", "ConnectTimeout="+artifactsSSHConnectTimeout)
+
+	return proxyCommandWords(args) + " -W %h:%p " + proxyCommandWords([]string{user + "@" + bastionHost}), nil
+}
+
+// proxyCommandWords shell-quotes words for a ProxyCommand. The outer ssh
+// expands %-tokens in a ProxyCommand before the shell sees it, so each
+// literal % is doubled. The known_hosts path in the host key options is
+// already escaped once for the inner ssh, which expands it again, so it
+// ends up escaped for both.
+func proxyCommandWords(words []string) string {
+	return strings.ReplaceAll(ssh.ShellJoin(words), "%", "%%")
 }
 
 // buildArtifactsProvisionSSHArgs returns the ssh args that run the provision
