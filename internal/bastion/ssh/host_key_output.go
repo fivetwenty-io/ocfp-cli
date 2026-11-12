@@ -67,16 +67,17 @@ func (e *SystemSSHHostKeyError) Unwrap() error {
 // SystemSSHHostKeyFailure returns a *SystemSSHHostKeyError when output, the
 // captured stderr of a system ssh, scp, or rsync run, shows that the local
 // ssh refused the bastion's host key. bastionHost names the bastion as ssh
-// dialled it, and cause is the error the command exited with. It returns
-// nil when the output does not prove such a refusal.
+// dialled it, as a bare host on port 22 or as "[host]:port" on any other,
+// and cause is the error the command exited with. It returns nil when the
+// output does not prove such a refusal.
 //
 // The banner and "Host key verification failed." prove nothing on their
 // own, because a command the bastion runs, such as an ssh to another host,
 // prints them too and its exit status comes back as ssh's. The proof is
 // ssh's line saying the key for a host has changed or was revoked, where
-// that host is the bastion, or is a name rather than an address and the
-// refused entry sits in our own known_hosts, as with a HostKeyAlias. The
-// hint names the host the way that line spells it.
+// that host on that port is the bastion, or is a name rather than an
+// address and the refused entry sits in our own known_hosts, as with a
+// HostKeyAlias. The hint names the host the way that line spells it.
 func SystemSSHHostKeyFailure(output, bastionHost string, cause error) error {
 	if bastionHost == "" {
 		return nil
@@ -134,21 +135,41 @@ func SystemSSHHostKeyFailure(output, bastionHost string, cause error) error {
 // knownHostsHostName returns the host in a known_hosts name, dropping the
 // brackets and port of "[host]:port", in lower case.
 func knownHostsHostName(name string) string {
-	name = strings.TrimSpace(name)
-	if strings.HasPrefix(name, "[") {
-		if end := strings.Index(name, "]"); end > 0 {
-			name = name[1:end]
+	host, _ := knownHostsHostPort(name)
+
+	return host
+}
+
+// knownHostsHostPort splits a known_hosts name, or a host as dialled, into
+// its host, in lower case, and its port. ssh writes a host on port 22
+// bare and any other port as "[host]:port", so a bare host, or one in
+// brackets with no port, is on port 22.
+func knownHostsHostPort(name string) (string, string) {
+	host, port := strings.TrimSpace(name), "22"
+
+	if strings.HasPrefix(host, "[") {
+		if end := strings.Index(host, "]"); end > 0 {
+			if rest, ok := strings.CutPrefix(host[end+1:], ":"); ok && rest != "" {
+				port = rest
+			}
+
+			host = host[1:end]
 		}
 	}
 
-	return strings.ToLower(strings.TrimSuffix(name, "."))
+	return strings.ToLower(strings.TrimSuffix(host, ".")), port
 }
 
 // sameKnownHostsHost reports whether a known_hosts name and a host as
-// dialled name the same host, comparing addresses as IPs so that different
-// spellings of one IPv6 address match.
+// dialled name the same host on the same port, comparing addresses as IPs
+// so that different spellings of one IPv6 address match.
 func sameKnownHostsHost(name, dialled string) bool {
-	a, b := knownHostsHostName(name), knownHostsHostName(dialled)
+	a, portA := knownHostsHostPort(name)
+	b, portB := knownHostsHostPort(dialled)
+
+	if portA != portB {
+		return false
+	}
 
 	ipA, ipB := net.ParseIP(a), net.ParseIP(b)
 	if ipA != nil && ipB != nil {
