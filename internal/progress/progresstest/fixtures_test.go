@@ -68,11 +68,13 @@ func TestFixturesMatchEncoder(t *testing.T) {
 
 		var buf bytes.Buffer
 
+		// A request is refused before its payload is read, so the header
+		// names no job.
 		enc := progress.NewEncoder(&buf, fixedClock{})
-		header(t, enc)
+		must(t, enc.Header(progress.Header{Producer: "ocfp", Version: "0.0.0-fixture"}))
 		must(t, enc.Encode(progress.KindError, progress.ErrorBody{
 			Code:    progress.CodeOwnerRecordMissing,
-			Message: "no owner record is present",
+			Message: "no owner record on this host",
 		}))
 		must(t, enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: 2}))
 
@@ -230,8 +232,11 @@ func TestQuestionFixturesMatchPrompter(t *testing.T) {
 	})
 }
 
-// The jobexec package writes these two files. Its types are mirrored here so
-// the fixtures are held to the exact field set and spelling it must produce.
+// statusShape and exitShape restate the field set of the two spool files that
+// the jobexec package writes, so that this package holds the fixtures to the
+// same names. TestStatusAndExitFixturesDecode checks the fixtures against
+// these copies, and the jobexec tests load the same fixtures into the real
+// types.
 type statusShape struct {
 	State     string    `json:"state"`
 	PID       int       `json:"pid"`
@@ -307,4 +312,40 @@ func TestStatusAndExitFixturesDecode(t *testing.T) {
 			t.Errorf("exit fixture is not what the shape marshals to\ngot:\n%s\nwant:\n%s", out, raw)
 		}
 	})
+}
+
+// A record with no body to carry has "body":null, which Encode writes for a
+// nil body. The reader accepts it for any record after the header, and hands
+// the body back as the JSON null, so the caller sees a body that holds
+// nothing. A header with a null body decodes to a zero header, which the
+// caller must refuse for its wire contract of 0.
+func TestNullBodyIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	enc := progress.NewEncoder(&buf, fixedClock{})
+	header(t, enc)
+	must(t, enc.Encode(progress.KindResult, nil))
+
+	if !strings.Contains(buf.String(), `"body":null`) {
+		t.Fatalf("a nil body was written as %s, want \"body\":null", buf.String())
+	}
+
+	dec := progress.NewDecoder(&buf)
+
+	rec, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("a record with a null body was refused: %v", err)
+	}
+
+	if string(rec.Body) != "null" {
+		t.Errorf("body = %q, want null", rec.Body)
+	}
+
+	h, err := progress.NewDecoder(strings.NewReader(
+		`{"kind":"header","seq":0,"time":"2026-11-10T09:00:00Z","body":null}` + "\n")).Header()
+	if err != nil || h.WireContract != 0 {
+		t.Errorf("null header = %+v, %v; want a zero header", h, err)
+	}
 }
