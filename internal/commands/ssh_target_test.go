@@ -91,6 +91,9 @@ func TestResolveSSHRoute(t *testing.T) {
 	resolver := sshRouteResolver{
 		bastionIP:   func(context.Context) (string, error) { return "100.109.226.53", nil },
 		artifactsIP: func(context.Context) (string, error) { return "10.64.64.11", nil },
+		isBastion: func(_ context.Context, address string) bool {
+			return address == "100.109.226.53" || address == "b-bastion.tail1234.ts.net"
+		},
 	}
 
 	tests := []struct {
@@ -131,6 +134,18 @@ func TestResolveSSHRoute(t *testing.T) {
 			target:   "jump.lab.example.org",
 			expected: sshRoute{Host: "jump.lab.example.org"},
 		},
+		{
+			name:     "BastionIPAddressIsTheBastion",
+			kind:     sshTargetAddress,
+			target:   "100.109.226.53",
+			expected: sshRoute{Host: "100.109.226.53", HostIsBastion: true},
+		},
+		{
+			name:     "BastionHostnameIsTheBastion",
+			kind:     sshTargetAddress,
+			target:   "b-bastion.tail1234.ts.net",
+			expected: sshRoute{Host: "b-bastion.tail1234.ts.net", HostIsBastion: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -144,8 +159,8 @@ func TestResolveSSHRoute(t *testing.T) {
 	}
 }
 
-// An address target never consults the bloc: no bastion discovery and no
-// artifacts lookup run, so it behaves exactly as it did before named targets.
+// An address target only asks whether it is the bastion. It never needs the
+// bastion's address or the artifacts VM for its route.
 func TestResolveSSHRouteAddressSkipsLookups(t *testing.T) {
 	t.Parallel()
 
@@ -155,8 +170,10 @@ func TestResolveSSHRouteAddressSkipsLookups(t *testing.T) {
 		return "", nil
 	}
 
+	notBastion := func(context.Context, string) bool { return false }
+
 	route, err := resolveSSHRoute(context.Background(), sshTargetAddress, "10.64.64.20", false,
-		sshRouteResolver{bastionIP: fail, artifactsIP: fail})
+		sshRouteResolver{bastionIP: fail, artifactsIP: fail, isBastion: notBastion})
 	require.NoError(t, err)
 	assert.Equal(t, sshRoute{Host: "10.64.64.20"}, route)
 }
@@ -169,12 +186,14 @@ func TestResolveSSHRouteArtifactsErrors(t *testing.T) {
 	_, err := resolveSSHRoute(context.Background(), sshTargetArtifacts, "artifacts", false, sshRouteResolver{
 		bastionIP:   func(context.Context) (string, error) { return "100.109.226.53", nil },
 		artifactsIP: func(context.Context) (string, error) { return "", errLookup },
+		isBastion:   func(context.Context, string) bool { return false },
 	})
 	require.ErrorIs(t, err, errLookup)
 
 	_, err = resolveSSHRoute(context.Background(), sshTargetArtifacts, "artifacts", false, sshRouteResolver{
 		bastionIP:   func(context.Context) (string, error) { return "", errLookup },
 		artifactsIP: func(context.Context) (string, error) { return "10.64.64.11", nil },
+		isBastion:   func(context.Context, string) bool { return false },
 	})
 	require.ErrorIs(t, err, errLookup)
 	assert.Contains(t, err.Error(), "bastion")
