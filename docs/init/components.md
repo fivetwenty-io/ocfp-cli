@@ -39,7 +39,7 @@ ocfp --bloc 520-aws-wayne init bosh --dry-run
 
 We ask for a dry run with `--dry-run`, or with `dry_run: true` under `init:` in our config file. An explicit `--dry-run=false` on the command line wins over the config file, so we can still make a real run from a config that asks for dry runs. `ocfp bastion init` reads the same setting, with the same rule.
 
-A dry run makes every check that the real run makes before it changes anything, in the same order, and it stops with the same error wherever the real run would stop. It logs each change as a `DRY RUN: Would ...` line instead of making it, so it doesn't run `bosh` or `cf`, write any file, or change the current bloc. It ends with a line that says the dry run of the component finished without changing anything.
+A dry run makes every check that the real run makes before it changes anything, in the same order, and it stops with the same error wherever the real run would stop. It logs each change as a `DRY RUN: Would ...` line instead of making it, so it doesn't run `bosh` or `cf`, write any file, or change the current bloc. Some failures show up only when a write happens, such as a directory that can't be created or written, or a lock on the CLI state file that can't be taken. A dry run can't meet those, so it logs a `DRY RUN: Did not ...` line for each directory it would write in and for the state file it would lock. It ends with a line that says the dry run of the component finished without changing anything.
 
 Here are some of the refusals that a dry run repeats:
 

@@ -996,6 +996,8 @@ func runInitBOSH(ctx context.Context, cfg *config.Config, r *initRun) error {
 	// Set BOSH environment
 	r.say("Configuring BOSH environment")
 
+	r.writesIn(deploymentDir)
+
 	err = r.change("write bosh-env.sh", func() error { return configureBOSHEnvironment(cfg, deploymentDir) },
 		"path", filepath.Join(deploymentDir, "bosh-env.sh"))
 	if err != nil {
@@ -1143,6 +1145,8 @@ func (r *initRun) createBOSHManifest(cfg *config.Config, path string, stateMgr *
 			return fmt.Errorf("failed to write manifest file: %w", err)
 		}
 	}
+
+	r.writesIn(filepath.Dir(path))
 
 	return r.change("write the BOSH manifest", func() error {
 		err := os.WriteFile(path, []byte(manifest), ManifestFilePerm) // #nosec -- path is from trusted config

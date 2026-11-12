@@ -130,14 +130,12 @@ func runInitPVE(cmd *cobra.Command, cfg *config.Config, r *initRun) error {
 		return err
 	}
 
-	if config.DataHome() == "" {
-		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
+	blocDir, err := resolveBlocDir(params.bloc)
+	if err != nil {
+		return err
 	}
 
-	blocDir, err := config.OcfpBlocDir(params.bloc)
-	if err != nil {
-		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", params.bloc, err)
-	}
+	r.writesIn(blocDir)
 
 	for _, deployment := range []string{"mgmt", "ocf"} {
 		err := r.change("write the PVE ops files and runtime config for "+deployment, func() error {

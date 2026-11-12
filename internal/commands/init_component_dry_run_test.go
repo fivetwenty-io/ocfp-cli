@@ -132,21 +132,36 @@ type componentCase struct {
 	realTools []string
 }
 
+// The lines a dry run logs for the checks it leaves to the real run's
+// writes.
+const (
+	uncheckedLockLine = "DRY RUN: Did not take the lock on the CLI state file or check that it can be written, " +
+		"so a real run can still fail when it makes the bloc current"
+	uncheckedDirLine = "DRY RUN: Did not check that this directory can be created and written, " +
+		"so a real run can still fail when it writes there"
+)
+
 var componentCases = []componentCase{
 	{"aws", "ocfp-aws-dry", []string{
+		uncheckedLockLine,
 		"DRY RUN: Would make ocfp-aws-dry the current bloc",
+		uncheckedDirLine,
 		"DRY RUN: Would write the mgmt Genesis env file",
 		"DRY RUN: Would write the ocf Genesis env file",
 		"DRY RUN: Would write the prometheus monitoring Genesis env file",
 	}, nil},
 	{"gcp", "ocfp-gcp-dry", []string{
+		uncheckedDirLine,
 		"DRY RUN: Would write the mgmt Genesis env file",
 		"DRY RUN: Would write the ocf Genesis env file",
 		"DRY RUN: Would write the prometheus monitoring Genesis env file",
+		uncheckedLockLine,
 		"DRY RUN: Would make ocfp-gcp-dry the current bloc",
 	}, nil},
 	{"pve", "ocfp-pve-dc1", []string{
+		uncheckedLockLine,
 		"DRY RUN: Would make ocfp-pve-dc1 the current bloc",
+		uncheckedDirLine,
 		"DRY RUN: Would write the mgmt Genesis env file",
 		"DRY RUN: Would write the ocf Genesis env file",
 		"DRY RUN: Would write the prometheus monitoring Genesis env file",
@@ -157,6 +172,7 @@ var componentCases = []componentCase{
 		"DRY RUN: Would log the PostgreSQL databases it plans; it creates none of them yet",
 	}, nil},
 	{"bosh", "", []string{
+		uncheckedDirLine,
 		"DRY RUN: Would write the BOSH manifest",
 		"DRY RUN: Would create the director with bosh create-env",
 		"DRY RUN: Would write bosh-env.sh",
@@ -190,6 +206,53 @@ func TestInitDryRunRunsNoComponent(t *testing.T) {
 			assert.Zero(t, logs.FilterMessage("Creating database").Len(), "a dry run lists no database as created")
 			assert.Equal(t, 1,
 				logs.FilterMessage("Dry run of init "+tc.component+" finished without changing anything").Len())
+		})
+	}
+}
+
+// Only a write finds out whether its directory can be created and written,
+// and only SetCurrentBloc takes the lock on the CLI state file. A dry run
+// makes neither, so it names the directory and the state file it didn't
+// check, once each.
+func TestInitDryRunNamesWhatItDidNotCheck(t *testing.T) {
+	cases := []struct {
+		component, bloc string
+		lock            bool
+	}{
+		{"aws", "ocfp-aws-dry", true},
+		{"gcp", "ocfp-gcp-dry", true},
+		{"pve", "ocfp-pve-dc1", true},
+		{"bosh", "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.component, func(t *testing.T) {
+			fx := newComponentFixture(t, tc.bloc)
+			logs := captureInitLog(t)
+
+			require.NoError(t, fx.runComponentInit(t, tc.component, true))
+
+			want := fx.deploymentDir()
+			if tc.bloc != "" {
+				dir, err := config.OcfpBlocDir(tc.bloc)
+				require.NoError(t, err)
+
+				want = dir
+			}
+
+			dirs := logs.FilterMessage(uncheckedDirLine).All()
+			require.Len(t, dirs, 1)
+			assert.Equal(t, want, dirs[0].ContextMap()["dir"])
+
+			locks := logs.FilterMessage(uncheckedLockLine).All()
+			if !tc.lock {
+				assert.Empty(t, locks)
+
+				return
+			}
+
+			require.Len(t, locks, 1)
+			assert.Equal(t, config.StateFilePath(), locks[0].ContextMap()["path"])
 		})
 	}
 }
