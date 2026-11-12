@@ -418,10 +418,17 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 		cmd = append(cmd, "--include", pattern)
 	}
 
-	// Add extra options if provided
-	if config.rsyncOptions != "" {
-		cmd = append(cmd, strings.Fields(config.rsyncOptions)...)
+	// Add extra options if provided. One that names a remote shell would
+	// replace the ssh command above, so it is refused.
+	extra := strings.Fields(config.rsyncOptions)
+
+	for _, args := range [][]string{extra, config.passthrough} {
+		if option := findShortOrLongOption(args, 'e', "rsh", rsyncShortOptionsWithValues); option != "" {
+			return nil, fmt.Errorf("%w: %q; leave it out and ocfp passes its own", ErrRSyncShellOption, option)
+		}
 	}
+
+	cmd = append(cmd, extra...)
 
 	// Hand everything after the -- separator to rsync unchanged, keeping the
 	// order the caller wrote it in.
@@ -512,3 +519,46 @@ func rsyncJoin(words []string) string {
 // rsyncSafeChars are the characters a word for rsync's -e may hold without
 // quotes.
 const rsyncSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
+
+// rsyncShortOptionsWithValues are rsync's short options that take a value,
+// either attached or as the next argument.
+const rsyncShortOptionsWithValues = "BefTM@"
+
+// findShortOrLongOption returns the first argument in args that sets the
+// short option short or the long option long, or "" when none does. A
+// short option may be bundled with others, as in -avze, or carry its value
+// attached, as in -essh. Letters in withValues take a value, so whatever
+// follows one in the same argument is that value and not more options, and
+// a bundle that ends with one takes the next argument as its value. The
+// long option, unless empty, matches as --long or --long=value. Scanning
+// stops at --.
+func findShortOrLongOption(args []string, short byte, long, withValues string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch {
+		case arg == "--":
+			return ""
+		case long != "" && (arg == "--"+long || strings.HasPrefix(arg, "--"+long+"=")):
+			return arg
+		case strings.HasPrefix(arg, "--") || !strings.HasPrefix(arg, "-"):
+			continue
+		}
+
+		for j := 1; j < len(arg); j++ {
+			if arg[j] == short {
+				return arg
+			}
+
+			if strings.IndexByte(withValues, arg[j]) >= 0 {
+				if j == len(arg)-1 {
+					i++ // The next argument is this option's value.
+				}
+
+				break
+			}
+		}
+	}
+
+	return ""
+}

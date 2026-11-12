@@ -50,6 +50,8 @@ var (
 	ErrNoLoadBalancersFound                    = errors.New("no load balancers found")
 	ErrDatabaseScalingNotImplemented           = errors.New("database scaling not yet implemented")
 	ErrInvalidSCPCommand                       = errors.New("invalid SCP command")
+	ErrSCPProgramOption                        = errors.New("scp option -S would replace the ssh that checks the bastion's host key")
+	ErrRSyncShellOption                        = errors.New("rsync option -e or --rsh would replace the ssh command that checks the bastion's host key")
 	ErrInvalidSSHCommand                       = errors.New("invalid SSH command")
 	ErrUnknownSSHTarget                        = errors.New("unknown ssh target")
 	ErrArtifactsNoPrivateIP                    = errors.New("artifacts VM has no recorded private IP")
