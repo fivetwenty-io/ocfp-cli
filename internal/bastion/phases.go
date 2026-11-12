@@ -338,8 +338,9 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 
 	m.log.Infow("Setting up OCFP binary", "local", localBinaryPath, "remote", remoteFinalPath)
 
-	// Step 1: Check if remote binary exists and compare checksums
-	if m.reporter != nil {
+	// Step 1: Check if remote binary exists and compare checksums. A dry
+	// run never checks, so it doesn't report the check.
+	if m.reporter != nil && !m.isDryRun() {
 		m.reporter.ReportSubtaskProgress("ocfp_cli_setup", 1, 4, "Checking remote binary") //nolint:mnd
 	}
 
