@@ -261,8 +261,8 @@ func TestJobExecExitCodes(t *testing.T) {
 		{"unsigned", ownerDirWith, otherKey, progress.CodeRequestUnsigned, nil},
 		{"no owner record", func(t *testing.T) string { return filepath.Join(t.TempDir(), "owner") }, ownerrecordtest.TestKey(), progress.CodeOwnerRecordMissing, nil},
 		{"owner record does not open", badOwnerDir, ownerrecordtest.TestKey(), progress.CodeOwnerRecordInvalid, nil},
-		{"another org", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeTenantMismatch, func(r *jobexec.Request) { r.Org = "org-other" }},
-		{"another bloc", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeTenantMismatch, func(r *jobexec.Request) { r.Bloc = "bloc-other" }},
+		{"another org", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeOrgBlocMismatch, func(r *jobexec.Request) { r.Org = "org-other" }},
+		{"another bloc", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeOrgBlocMismatch, func(r *jobexec.Request) { r.Bloc = "bloc-other" }},
 		{"older wire contract", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeWireContractUnsupported, func(r *jobexec.Request) {
 			r.WireContract, r.Org, r.Bloc = 1, "", ""
 		}},

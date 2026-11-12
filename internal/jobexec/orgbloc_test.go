@@ -104,9 +104,9 @@ func TestCheckOwnerOrgAndBloc(t *testing.T) {
 	}
 }
 
-// TestCheckOwnerRefusesAnotherTenant checks that a request signed by the owner
+// TestCheckOwnerRefusesAnotherOrgOrBloc checks that a request signed by the owner
 // for another org or bloc is refused, and names both values in its message.
-func TestCheckOwnerRefusesAnotherTenant(t *testing.T) {
+func TestCheckOwnerRefusesAnotherOrgOrBloc(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -126,7 +126,7 @@ func TestCheckOwnerRefusesAnotherTenant(t *testing.T) {
 
 			st, _, req, release, err := s.check(t)
 
-			r := wantRefusal(t, err, progress.CodeTenantMismatch)
+			r := wantRefusal(t, err, progress.CodeOrgBlocMismatch)
 			for _, w := range tc.want {
 				if !strings.Contains(r.Message, w) {
 					t.Errorf("message %q does not hold %q", r.Message, w)
@@ -201,10 +201,10 @@ func TestCheckOwnerRefusesAnOldFormatRequest(t *testing.T) {
 	wantUnlocked(t, st)
 }
 
-// TestRunRefusesAnotherTenantBeforeTheSpool checks that a request for another
+// TestRunRefusesAnotherOrgOrBlocBeforeTheSpool checks that a request for another
 // org or bloc, or in the old format, is refused before anything is made under
 // the spool root.
-func TestRunRefusesAnotherTenantBeforeTheSpool(t *testing.T) {
+func TestRunRefusesAnotherOrgOrBlocBeforeTheSpool(t *testing.T) {
 	t.Parallel()
 
 	other := func(apply func(*Request)) SignedRequest {
@@ -219,8 +219,8 @@ func TestRunRefusesAnotherTenantBeforeTheSpool(t *testing.T) {
 		sr   SignedRequest
 		code progress.Code
 	}{
-		{"other org", other(func(r *Request) { r.Org = "org-other" }), progress.CodeTenantMismatch},
-		{"other bloc", other(func(r *Request) { r.Bloc = "bloc-other" }), progress.CodeTenantMismatch},
+		{"other org", other(func(r *Request) { r.Org = "org-other" }), progress.CodeOrgBlocMismatch},
+		{"other bloc", other(func(r *Request) { r.Bloc = "bloc-other" }), progress.CodeOrgBlocMismatch},
 		{"no bloc", other(func(r *Request) { r.Bloc = "" }), progress.CodeJobRequestInvalid},
 		{"old format", signPayload(payloadWithout(t, goodRequest(), 1, "org", "bloc"), ownerKey()), progress.CodeWireContractUnsupported},
 	} {

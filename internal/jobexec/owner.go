@@ -49,7 +49,7 @@ var jobIDPattern = ownerrecord.NamePattern
 //     first contract, whose requests name no org or bloc;
 //   - an org or a bloc that is missing or that does not match
 //     ownerrecord.NamePattern (JOB_REQUEST_INVALID);
-//   - an org or a bloc other than the record's (TENANT_MISMATCH);
+//   - an org or a bloc other than the record's (ORG_BLOC_MISMATCH);
 //   - a key that names no field, an issue time outside the window from ten
 //     minutes before the bastion's clock to one minute after it, a job id that
 //     does not match ^[a-z0-9][a-z0-9-]{0,63}$, and a format other than
@@ -157,7 +157,7 @@ func verify(ctx context.Context, sr SignedRequest, store ownerrecord.Store, cloc
 		return Request{}, err
 	}
 
-	err = checkTenant(req, rec)
+	err = checkOrgBloc(req, rec)
 	if err != nil {
 		return Request{}, err
 	}
@@ -234,9 +234,9 @@ func checkOwnerFields(req Request, rec ownerrecord.Record) error {
 	return nil
 }
 
-// tenantWireContract is the first wire contract whose requests name an org
+// orgBlocWireContract is the first wire contract whose requests name an org
 // and a bloc.
-const tenantWireContract = 2
+const orgBlocWireContract = 2
 
 // checkContract refuses a request of any wire contract but this CLI's. It runs
 // before any field that a contract added is read, so a request of an older
@@ -247,18 +247,18 @@ func checkContract(req Request) error {
 	}
 
 	msg := fmt.Sprintf("job request wire contract is %d, this CLI reads %d", req.WireContract, progress.WireContract)
-	if req.WireContract > 0 && req.WireContract < tenantWireContract {
+	if req.WireContract > 0 && req.WireContract < orgBlocWireContract {
 		msg += ", and a request of that contract names no org or bloc"
 	}
 
 	return refuse(progress.CodeWireContractUnsupported, msg)
 }
 
-// checkTenant refuses a request whose org or bloc is missing or not of the
+// checkOrgBloc refuses a request whose org or bloc is missing or not of the
 // name form, and then one whose org or bloc is not the record's. The form is
 // checked first, so a request that names nothing is never read as one for
 // another host.
-func checkTenant(req Request, rec ownerrecord.Record) error {
+func checkOrgBloc(req Request, rec ownerrecord.Record) error {
 	for _, f := range []struct{ name, value string }{{"org", req.Org}, {"bloc", req.Bloc}} {
 		switch {
 		case f.value == "":
@@ -270,9 +270,9 @@ func checkTenant(req Request, rec ownerrecord.Record) error {
 
 	switch {
 	case req.Org != rec.Org:
-		return refuse(progress.CodeTenantMismatch, fmt.Sprintf("job request names org %s, this host serves org %q", quote(req.Org), rec.Org))
+		return refuse(progress.CodeOrgBlocMismatch, fmt.Sprintf("job request names org %s, this host serves org %q", quote(req.Org), rec.Org))
 	case req.Bloc != rec.Bloc:
-		return refuse(progress.CodeTenantMismatch, fmt.Sprintf("job request names bloc %s, this host serves bloc %q", quote(req.Bloc), rec.Bloc))
+		return refuse(progress.CodeOrgBlocMismatch, fmt.Sprintf("job request names bloc %s, this host serves bloc %q", quote(req.Bloc), rec.Bloc))
 	}
 
 	return nil

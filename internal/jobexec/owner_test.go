@@ -230,8 +230,8 @@ func faults() []fault {
 		{"older contract", progress.CodeWireContractUnsupported, "names no org or bloc", func(s *scenario) {
 			s.request.WireContract = progress.WireContract - 1
 		}},
-		{"other org", progress.CodeTenantMismatch, "names org", func(s *scenario) { s.request.Org = "org-other" }},
-		{"other bloc", progress.CodeTenantMismatch, "names bloc", func(s *scenario) { s.request.Bloc = "bloc-other" }},
+		{"other org", progress.CodeOrgBlocMismatch, "names org", func(s *scenario) { s.request.Org = "org-other" }},
+		{"other bloc", progress.CodeOrgBlocMismatch, "names bloc", func(s *scenario) { s.request.Bloc = "bloc-other" }},
 		{"stale request", progress.CodeJobRequestInvalid, "issued", func(s *scenario) {
 			s.request.IssuedAt = s.now.Add(-11 * time.Minute)
 		}},
