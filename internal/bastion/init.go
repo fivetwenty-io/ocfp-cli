@@ -545,6 +545,8 @@ log_success "Genesis upgraded successfully"`, override.URL, override.URL)
 // Returns true if already provisioned (should skip), false to continue.
 func (m *Manager) checkAndSkipIfProvisioned(ctx context.Context) bool {
 	if m.options.DryRun {
+		m.log.Info("DRY RUN: Did not check whether the bastion is already provisioned, because that reads the bastion")
+
 		return false
 	}
 
@@ -668,7 +670,8 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 	m.sshClient = m.createSSHClient(connDetails)
 
 	if m.options.DryRun {
-		m.log.Info("DRY RUN: skipping SSH connection")
+		m.log.Infow("DRY RUN: Did not wait for the bastion's SSH port or connect to it, so its host key was not checked",
+			"host", connDetails.Host, "port", connDetails.Port, "user", connDetails.User)
 
 		m.provConfig = m.loadProvisioningConfig()
 
@@ -1005,12 +1008,56 @@ func (m *Manager) executePhase(ctx context.Context, phase struct {
 	m.updatePhaseProgress(phase.name, index, total, reporter)
 
 	if m.options.DryRun {
-		m.log.Infow("DRY RUN: Would execute phase", "phase", phase.name)
+		err := m.previewStep(ctx, phase.name)
+		if err != nil {
+			m.progress.addError(err)
+
+			if reporter != nil {
+				reporter.ReportError(phase.name, err, m.errorHandler.maxRetries, m.errorHandler.maxRetries, index+1, total)
+			}
+
+			return fmt.Errorf("phase %s failed: %w", phase.name, err)
+		}
 
 		return nil
 	}
 
 	return m.executePhaseWithErrorHandling(ctx, phase, index, total, reporter)
+}
+
+// previewStep is the dry-run form of running the init step name. It logs
+// the step, and when the step is one that dryRunStep returns, it runs the
+// step through the retry handler as a real run does, so the dry run fails
+// with the error the real run would give before it reached the bastion.
+// The caller handles the error as the real run does, except that a dry run
+// saves no checkpoint.
+func (m *Manager) previewStep(ctx context.Context, name string) error {
+	m.log.Infow("DRY RUN: Would execute phase", "phase", name)
+
+	step := m.dryRunStep(name)
+	if step == nil {
+		return nil
+	}
+
+	return m.errorHandler.ExecuteWithRetry(ctx, name, func() error { return step(ctx) })
+}
+
+// dryRunStep returns the function that a dry run runs for the init step
+// name, or nil for a step it only logs. The steps it returns check our own
+// files before they reach the bastion, and every change they make checks
+// skipForDryRun first, so a dry run can run them for their checks alone.
+// config_files reads and filters our ocfp config, and ocfp_cli_setup
+// settles where the ocfp CLI comes from and finds a local build when it
+// is asked for one.
+func (m *Manager) dryRunStep(name string) func(context.Context) error {
+	switch name {
+	case "config_files":
+		return m.copyConfigFiles
+	case "ocfp_cli_setup":
+		return m.setupOCFPCLI
+	default:
+		return nil
+	}
 }
 
 // updatePhaseProgress updates progress tracking and logging for a phase.
@@ -1440,7 +1487,12 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 		}
 
 		if m.options.DryRun {
-			m.log.Infow("DRY RUN: Would execute phase", "phase", phase.name)
+			err := m.previewStep(ctx, phase.name)
+			if err != nil {
+				m.progress.addError(err)
+
+				return fmt.Errorf("phase %s failed: %w", phase.name, err)
+			}
 
 			continue
 		}
@@ -1514,12 +1566,15 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 			m.reporter.ReportPhaseStart(task.name, task.index, task.total)
 		}
 
-		// A dry run only logs each step, as the sequential runner does, and
+		// A dry run previews each step, as the sequential runner does, and
 		// it records nothing in the checkpoint.
 		if m.options.DryRun {
-			m.log.Infow("DRY RUN: Would execute phase", "phase", task.name)
+			err := m.previewStep(ctx, task.name)
+			if err != nil {
+				m.progress.addError(err)
+			}
 
-			errs <- nil
+			errs <- err
 
 			continue
 		}
