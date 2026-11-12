@@ -81,7 +81,9 @@ type Summary struct {
 	// TotalPhases is the total number of phases in the operation.
 	TotalPhases int
 
-	// CompletedPhases is the number of successfully completed phases.
+	// CompletedPhases is the number of successfully completed phases. In a
+	// dry run it counts the phases the run previewed, and the renderers
+	// report it as previewed, because a dry run completes nothing.
 	CompletedPhases int
 
 	// FailedPhases is the number of failed phases.
@@ -98,6 +100,10 @@ type Summary struct {
 
 	// Errors contains error messages from failed phases.
 	Errors []string
+
+	// DryRun marks a summary of a dry run, which changed nothing. The
+	// renderers then say so instead of reporting completed work.
+	DryRun bool
 }
 
 // Status represents the state of a phase or progress item.

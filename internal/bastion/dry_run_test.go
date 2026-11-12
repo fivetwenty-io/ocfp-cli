@@ -705,3 +705,91 @@ func TestScriptFailsCleanlyWithoutAResult(t *testing.T) {
 	require.ErrorIs(t, err, ssh.ErrSSHClientNotConnected)
 	assert.Equal(t, "script greeting failed: "+ssh.ErrSSHClientNotConnected.Error(), err.Error())
 }
+
+// summaryEvent returns the summary event a JSON reporter wrote to out.
+func summaryEvent(t *testing.T, out string) map[string]any {
+	t.Helper()
+
+	for _, line := range strings.Split(out, "\n") {
+		var event map[string]any
+		if json.Unmarshal([]byte(line), &event) == nil && event["event"] == "summary" {
+			return event
+		}
+	}
+
+	t.Fatalf("no summary event in %q", out)
+
+	return nil
+}
+
+// A full dry run's final summary says that it was a dry run and that
+// nothing changed, in the text renderers and in JSON alike. It never
+// reports success or completed phases for work it skipped.
+func TestDryRunFinalSummarySaysNothingChanged(t *testing.T) {
+	for _, parallel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+
+			var out bytes.Buffer
+
+			m, _, _ := dryRunManager(t, cfg,
+				&ProvisioningOptions{DryRun: true, Parallel: parallel, ProgressOut: &out}, &unconnectedSSHClient{})
+			require.NoError(t, m.syncAndRun(context.Background()))
+
+			text := out.String()
+			assert.Contains(t, text, "Status: Dry run finished without changing anything")
+			assert.Contains(t, text, "Phases previewed:")
+			assert.NotContains(t, text, "Status: Success")
+			assert.NotContains(t, text, "Phases completed")
+		})
+	}
+
+	t.Run("json", func(t *testing.T) {
+		cfg := dryRunBloc(t)
+		dryRunWorkstation(t, cfg)
+
+		var out bytes.Buffer
+
+		m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, &unconnectedSSHClient{})
+		m.progress.StartTime = time.Now()
+		m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+		m.finalizeInitialization(context.Background(), make([]struct {
+			name string
+			fn   func(context.Context) error
+		}, 3))
+
+		event := summaryEvent(t, out.String())
+		assert.Equal(t, true, event["dry_run"])
+		assert.Equal(t, false, event["changed"])
+		assert.Equal(t, "Dry run finished without changing anything", event["message"])
+		assert.InDelta(t, 0, event["completed_phases"], 0)
+		assert.InDelta(t, 3, event["previewed_phases"], 0)
+	})
+}
+
+// A real run's final summary is the one it has always been.
+func TestRealRunFinalSummaryIsUnchanged(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+
+	var out bytes.Buffer
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, &unconnectedSSHClient{})
+	m.progress.StartTime = time.Now()
+	m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+	m.finalizeInitialization(context.Background(), make([]struct {
+		name string
+		fn   func(context.Context) error
+	}, 3))
+
+	event := summaryEvent(t, out.String())
+	assert.Equal(t, true, event["success"])
+	assert.InDelta(t, 3, event["completed_phases"], 0)
+
+	for _, key := range []string{"dry_run", "changed", "message", "previewed_phases"} {
+		assert.NotContains(t, event, key, "a real run's summary has no %s field", key)
+	}
+}

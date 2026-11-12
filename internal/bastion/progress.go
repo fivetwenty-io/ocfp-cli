@@ -326,22 +326,41 @@ func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAtt
 
 // ReportFinalSummary reports the final summary.
 func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Duration, phases int, errors int) {
-	if pr.renderer == nil {
-		return
-	}
+	pr.finalize(finalSummary(success, duration, phases, errors))
+}
 
-	summary := output.Summary{
+// ReportDryRunSummary reports the final summary of a dry run. The renderers
+// say that it was a dry run and that nothing changed, and count the phases
+// as previewed rather than completed.
+func (pr *ProgressReporter) ReportDryRunSummary(success bool, duration time.Duration, phases int, errors int) {
+	summary := finalSummary(success, duration, phases, errors)
+	summary.DryRun = true
+
+	pr.finalize(summary)
+}
+
+// finalSummary builds the summary of a run with the given phase and error
+// counts.
+func finalSummary(success bool, duration time.Duration, phases int, errors int) output.Summary {
+	return output.Summary{
 		TotalPhases:     phases,
 		CompletedPhases: phases - errors,
 		FailedPhases:    errors,
 		Duration:        duration,
 		Success:         success,
 	}
+}
+
+// finalize renders the summary and closes the renderer.
+func (pr *ProgressReporter) finalize(summary output.Summary) {
+	if pr.renderer == nil {
+		return
+	}
 
 	err := pr.renderer.Finalize(summary)
 	if err != nil {
 		pr.log.Warnw("Failed to report final summary",
-			"success", success,
+			"success", summary.Success,
 			"error", err,
 		)
 	}

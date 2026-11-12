@@ -212,12 +212,7 @@ func (r *ConciseRenderer) Finalize(summary Summary) error {
 	}
 
 	// Status
-	status := "Success"
-	if !summary.Success {
-		status = "Failed"
-	}
-
-	line := fmt.Sprintf("Status: %s\n", status)
+	line := fmt.Sprintf("Status: %s\n", summary.statusText())
 
 	_, err = r.writer.Write([]byte(line))
 	if err != nil {
@@ -233,7 +228,7 @@ func (r *ConciseRenderer) Finalize(summary Summary) error {
 	}
 
 	// Phase counts
-	line = fmt.Sprintf("Phases completed: %d\n", summary.CompletedPhases)
+	line = summary.countLine()
 
 	_, err = r.writer.Write([]byte(line))
 	if err != nil {
@@ -275,14 +270,14 @@ func (r *ConciseRenderer) Finalize(summary Summary) error {
 		}
 	}
 
-	r.log.Infow("Operation finalized",
+	r.log.Infow("Operation finalized", summary.withDryRun(
 		"success", summary.Success,
 		"duration_ms", summary.Duration.Milliseconds(),
 		"total_phases", summary.TotalPhases,
-		"completed_phases", summary.CompletedPhases,
+		completedPhasesKey, summary.CompletedPhases,
 		"failed_phases", summary.FailedPhases,
 		"skipped_phases", summary.SkippedPhases,
-	)
+	)...)
 
 	return nil
 }

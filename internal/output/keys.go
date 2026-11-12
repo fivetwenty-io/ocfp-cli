@@ -6,4 +6,9 @@ const (
 	eventKeyPhaseID     = "phase_id"
 	eventKeyTotalPhases = "total_phases"
 	eventKeyDurationMs  = "duration_ms"
+
+	// completedPhasesKey and previewedPhasesKey count a summary's phases,
+	// in the summary event and in the finalize log line alike.
+	completedPhasesKey = "completed_phases"
+	previewedPhasesKey = "previewed_phases"
 )

@@ -121,26 +121,12 @@ func (r *YAMLRenderer) PhaseSkipped(info PhaseInfo, reason string) error {
 
 // Finalize completes the rendering process with summary information.
 func (r *YAMLRenderer) Finalize(summary Summary) error {
-	r.log.Infow("Operation finalized",
+	r.log.Infow("Operation finalized", summary.withDryRun(
 		"success", summary.Success,
 		eventKeyDurationMs, summary.Duration.Milliseconds(),
-	)
+	)...)
 
-	data := map[string]interface{}{
-		eventKeyTotalPhases: summary.TotalPhases,
-		"completed_phases":  summary.CompletedPhases,
-		"failed_phases":     summary.FailedPhases,
-		"skipped_phases":    summary.SkippedPhases,
-		eventKeyDurationMs:  summary.Duration.Milliseconds(),
-		"success":           summary.Success,
-	}
-
-	// Add errors if present
-	if len(summary.Errors) > 0 {
-		data["errors"] = summary.Errors
-	}
-
-	return r.emitEvent("summary", data)
+	return r.emitEvent("summary", summary.eventData())
 }
 
 // Close releases any resources held by the renderer.
