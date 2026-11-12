@@ -575,7 +575,11 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 
 	// The host key options go first, because ssh keeps the first value it
 	// sees for an option.
-	args := bastionssh.BastionHostKeyOptions()
+	args, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
 	args = append(args,
 		"-i", keyPath,
 		"-o", "ConnectTimeout=30",

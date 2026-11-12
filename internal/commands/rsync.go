@@ -343,7 +343,10 @@ func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config 
 	processedSource := processRSyncPath(config.source, env.bastionIP, config.user)
 	processedDest := processRSyncPath(config.destination, env.bastionIP, config.user)
 
-	rsyncCmd := buildRSyncCommand(config, processedSource, processedDest, env.keyPath)
+	rsyncCmd, err := buildRSyncCommand(config, processedSource, processedDest, env.keyPath)
+	if err != nil {
+		return err
+	}
 
 	if config.dryRun {
 		log.Infof("Performing dry run: %s -> %s", config.source, config.destination)
@@ -379,7 +382,7 @@ func processRSyncPath(path, bastionIP, user string) string {
 }
 
 // buildRSyncCommand constructs the rsync command with all options.
-func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string) []string {
+func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string) ([]string, error) {
 	cmd := []string{"rsync"}
 
 	cmd = append(cmd, rsyncModelledFlags(config)...)
@@ -390,7 +393,12 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 	// The remote end is the bastion, so ssh checks its host key against the
 	// known_hosts file the Go client uses. rsync splits the -e command into
 	// words itself and honours quotes, so a path with a space is quoted.
-	sshArgs := append([]string{"ssh"}, bastionssh.BastionHostKeyOptions()...)
+	hostKey, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
+	sshArgs := append([]string{"ssh"}, hostKey...)
 	sshArgs = append(sshArgs, "-o", "LogLevel=ERROR")
 
 	if keyPath != "" {
@@ -421,7 +429,7 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 	// Add source and destination
 	cmd = append(cmd, source, destination)
 
-	return cmd
+	return cmd, nil
 }
 
 // rsyncModelledFlags renders the rsync flags that ocfp models as its own.

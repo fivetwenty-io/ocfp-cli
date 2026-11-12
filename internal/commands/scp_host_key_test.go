@@ -70,7 +70,7 @@ func TestPrepareSCPCommandChecksTheBastionHostKey(t *testing.T) {
 		Destination: "bastion:/tmp/file.txt",
 	}
 
-	got := prepareSCPCommand(cfg, "10.61.148.10", "/tmp/id_ed25519")
+	got := mustSCPCommand(t, cfg, "10.61.148.10", "/tmp/id_ed25519")
 
 	require.GreaterOrEqual(t, len(got), 5)
 	assert.Equal(t, append([]string{"scp"}, strictBastionOptions(home)...), got[:5])

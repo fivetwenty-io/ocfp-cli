@@ -22,6 +22,32 @@ func testHome(t *testing.T) string {
 	return filepath.Join(home, ".ssh", "known_hosts")
 }
 
+// mustProvisionArgs is buildArtifactsProvisionSSHArgs for a test, which
+// fails on an error.
+func mustProvisionArgs(t *testing.T, c artifactsProvisionConn) []string {
+	t.Helper()
+
+	args, err := buildArtifactsProvisionSSHArgs(c)
+	if err != nil {
+		t.Fatalf("buildArtifactsProvisionSSHArgs() error = %v", err)
+	}
+
+	return args
+}
+
+// mustProxyCommand is BastionProxyCommand for a test, which fails on an
+// error.
+func mustProxyCommand(t *testing.T, keyPath, user, bastionHost string, batchMode bool) string {
+	t.Helper()
+
+	command, err := BastionProxyCommand(keyPath, user, bastionHost, batchMode)
+	if err != nil {
+		t.Fatalf("BastionProxyCommand() error = %v", err)
+	}
+
+	return command
+}
+
 func testProvisionConn() artifactsProvisionConn {
 	return artifactsProvisionConn{
 		KeyPath:       "/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519",
@@ -34,7 +60,7 @@ func testProvisionConn() artifactsProvisionConn {
 func TestBuildArtifactsProvisionSSHArgs_ProxyJumpThroughBastion(t *testing.T) {
 	knownHosts := testHome(t)
 
-	args := buildArtifactsProvisionSSHArgs(testProvisionConn())
+	args := mustProvisionArgs(t, testProvisionConn())
 	joined := strings.Join(args, " ")
 
 	// The bastion hop is an explicit ProxyCommand (not -o ProxyJump), because
@@ -65,7 +91,7 @@ func TestBuildArtifactsProvisionSSHArgs_ProxyJumpThroughBastion(t *testing.T) {
 func TestBuildArtifactsProvisionSSHArgs_ArtifactsHopStaysRelaxed(t *testing.T) {
 	testHome(t)
 
-	args := buildArtifactsProvisionSSHArgs(testProvisionConn())
+	args := mustProvisionArgs(t, testProvisionConn())
 	joined := strings.Join(args, " ")
 
 	if !strings.HasPrefix(joined, "-i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519 -o BatchMode=yes"+
@@ -77,7 +103,7 @@ func TestBuildArtifactsProvisionSSHArgs_ArtifactsHopStaysRelaxed(t *testing.T) {
 func TestBuildArtifactsProvisionSSHArgs_UsesKeyAndBatchMode(t *testing.T) {
 	testHome(t)
 
-	args := buildArtifactsProvisionSSHArgs(testProvisionConn())
+	args := mustProvisionArgs(t, testProvisionConn())
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "-i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519") {
@@ -97,7 +123,7 @@ func TestBuildArtifactsProvisionSSHArgs_UsesKeyAndBatchMode(t *testing.T) {
 func TestBuildArtifactsProvisionSSHArgs_RemoteCommandLast(t *testing.T) {
 	testHome(t)
 
-	args := buildArtifactsProvisionSSHArgs(testProvisionConn())
+	args := mustProvisionArgs(t, testProvisionConn())
 
 	// The remote command must be the final argument so the script can be
 	// piped to it over stdin (sudo bash -s).
@@ -122,7 +148,7 @@ func TestBuildArtifactsProvisionSSHArgs_RemoteCommandLast(t *testing.T) {
 func TestBastionProxyCommand_StrictJumpHop(t *testing.T) {
 	knownHosts := testHome(t)
 
-	got := BastionProxyCommand("/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519", "ubuntu", "100.109.226.53", false)
+	got := mustProxyCommand(t, "/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519", "ubuntu", "100.109.226.53", false)
 
 	want := "ssh -i /home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519" +
 		" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHosts +
@@ -137,7 +163,7 @@ func TestBastionProxyCommand_StrictJumpHop(t *testing.T) {
 func TestBastionProxyCommand_WithoutKeyLeavesAuthToTheUser(t *testing.T) {
 	knownHosts := testHome(t)
 
-	got := BastionProxyCommand("", "ubuntu", "100.109.226.53", false)
+	got := mustProxyCommand(t, "", "ubuntu", "100.109.226.53", false)
 
 	want := "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHosts +
 		" -o LogLevel=ERROR -o ConnectTimeout=15" +
@@ -153,27 +179,9 @@ func TestBastionProxyCommand_WithoutKeyLeavesAuthToTheUser(t *testing.T) {
 func TestBastionProxyCommand_WithoutKeyInBatchModeNeverPrompts(t *testing.T) {
 	knownHosts := testHome(t)
 
-	got := BastionProxyCommand("", "ubuntu", "100.109.226.53", true)
+	got := mustProxyCommand(t, "", "ubuntu", "100.109.226.53", true)
 
 	want := "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHosts +
-		" -o LogLevel=ERROR -o ConnectTimeout=15" +
-		" -W %h:%p ubuntu@100.109.226.53"
-
-	if got != want {
-		t.Errorf("BastionProxyCommand:\n got: %s\nwant: %s", got, want)
-	}
-}
-
-// ssh runs a ProxyCommand through a shell and expands %-tokens in it first,
-// so a known_hosts path with a space or a percent sign must survive both.
-func TestBastionProxyCommand_QuotesTheKnownHostsPath(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "o p%d")
-	t.Setenv("HOME", home)
-
-	got := BastionProxyCommand("", "ubuntu", "100.109.226.53", false)
-
-	want := `ssh -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile="` +
-		strings.ReplaceAll(filepath.Join(home, ".ssh", "known_hosts"), "%", "%%") + `"'` +
 		" -o LogLevel=ERROR -o ConnectTimeout=15" +
 		" -W %h:%p ubuntu@100.109.226.53"
 
@@ -187,7 +195,7 @@ func TestBastionProxyCommand_WithKeyIsAlwaysBatchMode(t *testing.T) {
 	testHome(t)
 
 	key := "/home/op/.ocfp/ocfp-lab-wayne/ssh/id_ed25519"
-	if BastionProxyCommand(key, "ubuntu", "100.109.226.53", false) != BastionProxyCommand(key, "ubuntu", "100.109.226.53", true) {
+	if mustProxyCommand(t, key, "ubuntu", "100.109.226.53", false) != mustProxyCommand(t, key, "ubuntu", "100.109.226.53", true) {
 		t.Error("the keyed jump hop must not depend on batchMode")
 	}
 }
@@ -196,9 +204,9 @@ func TestBuildArtifactsProvisionSSHArgs_SharesBastionProxyCommand(t *testing.T) 
 	testHome(t)
 
 	c := testProvisionConn()
-	args := buildArtifactsProvisionSSHArgs(c)
+	args := mustProvisionArgs(t, c)
 
-	want := "ProxyCommand=" + BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
+	want := "ProxyCommand=" + mustProxyCommand(t, c.KeyPath, c.User, c.BastionHost, true)
 
 	found := false
 

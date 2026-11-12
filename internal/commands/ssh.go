@@ -208,7 +208,10 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	sshCmd := buildSSHCommandForRoute(route, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
+	sshCmd, err := buildSSHCommandForRoute(route, sshConfig.User, keyPath, sshConfig.Options, sshConfig.SSHArgs, sshConfig.Command)
+	if err != nil {
+		return err
+	}
 
 	where := route.Host
 	if route.Bastion != "" {
@@ -757,8 +760,13 @@ func filterSSHArgs(sshArgs []string) []string {
 // destination is the bastion itself. The bastion's host key is checked
 // against the real known_hosts: a first contact is recorded and a changed
 // key is refused.
-func buildBastionSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
-	return buildSSHCommand(host, user, keyPath, bastionssh.BastionHostKeyOptions(), extraOptions, sshArgs, command)
+func buildBastionSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) ([]string, error) {
+	hostKey, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
+	return buildSSHCommand(host, user, keyPath, hostKey, extraOptions, sshArgs, command), nil
 }
 
 // buildInternalSSHCommand constructs the SSH command for a host other than
@@ -781,7 +789,7 @@ func buildSSHCommand(host, user, keyPath string, hostKey []string, extraOptions 
 
 // buildSSHCommandForRoute is buildSSHCommandForRouteWith for this process,
 // which is interactive when stdin is a terminal.
-func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+func buildSSHCommandForRoute(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string) ([]string, error) {
 	return buildSSHCommandForRouteWith(route, user, keyPath, extraOptions, sshArgs, command, stdinIsTerminal())
 }
 
@@ -803,30 +811,31 @@ func stdinIsTerminal() bool {
 // passphrase or password. It gets BatchMode=yes when the outer options turn
 // batch mode on or when stdinTerminal is false, so it prompts only in an
 // interactive run.
-func buildSSHCommandForRouteWith(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string, stdinTerminal bool) []string {
+func buildSSHCommandForRouteWith(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string, stdinTerminal bool) ([]string, error) {
 	if route.Bastion == "" {
 		if route.HostIsBastion {
 			return buildBastionSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
 		}
 
-		return buildInternalSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
+		return buildInternalSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command), nil
 	}
 
 	// The ProxyCommand string runs through a shell, so the bastion address,
 	// user, and key path must all pass validation before they reach it.
-	err := validateSSHInputs(route.Host, user, keyPath)
-	if err == nil {
-		err = validateSSHInputs(route.Bastion, user, keyPath)
-	}
-
-	if err != nil {
-		return []string{"ssh", "--help"} // Return safe command
+	if validateSSHInputs(route.Host, user, keyPath) != nil || validateSSHInputs(route.Bastion, user, keyPath) != nil {
+		return []string{"ssh", "--help"}, nil //nolint:nilerr // an invalid address gets the inert command, as in buildSSHCommand
 	}
 
 	batchMode := !stdinTerminal || sshOptionsSetBatchMode(filterSSHOptions(extraOptions), filterSSHArgs(sshArgs))
-	hop := []string{"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(keyPath, user, route.Bastion, batchMode)}
 
-	return assembleSSHCommand(route.Host, user, keyPath, bastionssh.InternalHostKeyOptions(), hop, extraOptions, sshArgs, command)
+	proxyCommand, err := bootstrap.BastionProxyCommand(keyPath, user, route.Bastion, batchMode)
+	if err != nil {
+		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
+	hop := []string{"-o", "ProxyCommand=" + proxyCommand}
+
+	return assembleSSHCommand(route.Host, user, keyPath, bastionssh.InternalHostKeyOptions(), hop, extraOptions, sshArgs, command), nil
 }
 
 // sshOptionsSetBatchMode reports whether the first BatchMode in the given

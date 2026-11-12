@@ -72,12 +72,33 @@ func isUnknownHost(err error) bool {
 	return errors.As(err, &keyErr) && len(keyErr.Want) == 0
 }
 
-// sshConfigPath quotes path for an ssh -o option when it holds whitespace,
-// which ssh would otherwise read as a list of several files.
+// sshConfigPath writes path as the value of an ssh -o file option such as
+// UserKnownHostsFile, so that ssh reads back exactly path. ssh expands
+// %-tokens in the value, so each % is doubled. It splits the value on
+// whitespace and gives quotes and backslashes their own meaning, so a path
+// holding any of those is double-quoted, with " and \ escaped inside.
+//
+// ssh also expands ${NAME} in these values and has no escape for it; a
+// caller that cannot accept that checks the path with
+// checkSSHConfigPath first.
 func sshConfigPath(path string) string {
-	if !strings.ContainsAny(path, " \t") {
+	path = strings.ReplaceAll(path, "%", "%%")
+
+	if !strings.ContainsAny(path, " \t'\"\\") {
 		return path
 	}
 
-	return `"` + path + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path) + `"`
+}
+
+// checkSSHConfigPath reports a path that sshConfigPath cannot pass to ssh
+// intact: one holding "${", which ssh expands as an environment variable.
+func checkSSHConfigPath(path string) error {
+	if strings.Contains(path, "${") {
+		return fmt.Errorf("%w: %q holds \"${\", which system ssh expands as an environment variable, "+
+			"so it would check a different file than ocfp does; run ocfp with a HOME that does not hold \"${\"",
+			ErrKnownHostsPathUnusable, path)
+	}
+
+	return nil
 }

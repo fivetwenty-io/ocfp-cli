@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,7 +186,7 @@ func TestBuildSSHCommandForRouteArtifactsViaBastion(t *testing.T) { //nolint:par
 	key := "/home/op/.local/share/ocfp/ocfp-cf1-lab/ssh/id_ed25519"
 	route := sshRoute{Host: "10.64.64.11", Bastion: "100.109.226.53"}
 
-	got := buildSSHCommandForRoute(route, "ubuntu", key, "", []string{}, []string{"chronyc tracking"})
+	got := mustRouteSSHCommand(t, route, "ubuntu", key, "", []string{}, []string{"chronyc tracking"})
 
 	expected := []string{
 		"ssh",
@@ -197,7 +196,7 @@ func TestBuildSSHCommandForRouteArtifactsViaBastion(t *testing.T) { //nolint:par
 		"-o", "IdentitiesOnly=yes",
 		"-i", key,
 		"-A",
-		"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(key, "ubuntu", "100.109.226.53", true),
+		"-o", "ProxyCommand=" + mustProxyCommand(t, key, "ubuntu", "100.109.226.53", true),
 		"-o", "ServerAliveInterval=30",
 		"-o", "ServerAliveCountMax=6",
 		"ubuntu@10.64.64.11",
@@ -220,7 +219,7 @@ func TestBuildSSHCommandForRouteArtifactsKeepsFlagsAndOptions(t *testing.T) { //
 	key := "/home/op/.local/share/ocfp/ocfp-cf1-lab/ssh/id_ed25519"
 	route := sshRoute{Host: "10.64.64.11", Bastion: "100.109.226.53"}
 
-	got := buildSSHCommandForRoute(route, "admin", key, "-o ServerAliveInterval=30",
+	got := mustRouteSSHCommand(t, route, "admin", key, "-o ServerAliveInterval=30",
 		[]string{"-t", "-L", "9001:localhost:9001", "-D", "1080", "-X"}, []string{})
 
 	expected := []string{
@@ -230,7 +229,7 @@ func TestBuildSSHCommandForRouteArtifactsKeepsFlagsAndOptions(t *testing.T) { //
 		"-o", "LogLevel=ERROR",
 		"-o", "IdentitiesOnly=yes",
 		"-i", key,
-		"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(key, "admin", "100.109.226.53", true),
+		"-o", "ProxyCommand=" + mustProxyCommand(t, key, "admin", "100.109.226.53", true),
 		"-o", "ServerAliveInterval=30",
 		"-t", "-L", "9001:localhost:9001", "-D", "1080",
 		"-o", "ServerAliveInterval=30",
@@ -245,7 +244,7 @@ func TestBuildSSHCommandForRouteArtifactsKeepsFlagsAndOptions(t *testing.T) { //
 func TestBuildSSHCommandSendsKeepalives(t *testing.T) { //nolint:paralleltest // t.Setenv
 	t.Setenv("SSH_AUTH_SOCK", "")
 
-	got := buildSSHCommandForRoute(sshRoute{Host: "100.109.226.53"}, "ubuntu", "", "", []string{}, []string{})
+	got := mustRouteSSHCommand(t, sshRoute{Host: "100.109.226.53"}, "ubuntu", "", "", []string{}, []string{})
 
 	assert.Equal(t, []string{
 		"-o", "ServerAliveInterval=30",
@@ -259,7 +258,7 @@ func TestBuildSSHCommandSendsKeepalives(t *testing.T) { //nolint:paralleltest //
 func TestBuildSSHCommandLetsOperatorKeepaliveWin(t *testing.T) { //nolint:paralleltest // t.Setenv
 	t.Setenv("SSH_AUTH_SOCK", "")
 
-	got := buildSSHCommandForRoute(sshRoute{Host: "100.109.226.53"}, "ubuntu", "",
+	got := mustRouteSSHCommand(t, sshRoute{Host: "100.109.226.53"}, "ubuntu", "",
 		"-o ServerAliveInterval=120", []string{}, []string{})
 
 	operator := indexOf(got, "ServerAliveInterval=120")
@@ -276,7 +275,7 @@ func TestBuildSSHCommandForRouteRejectsInvalidBastion(t *testing.T) {
 
 	route := sshRoute{Host: "10.64.64.11", Bastion: "1.2.3.4;touch /tmp/x"}
 
-	got := buildSSHCommandForRoute(route, "ubuntu", "/tmp/key", "", []string{}, []string{})
+	got := mustRouteSSHCommand(t, route, "ubuntu", "/tmp/key", "", []string{}, []string{})
 	assert.Equal(t, []string{"ssh", "--help"}, got)
 }
 
@@ -290,7 +289,7 @@ func TestBuildSSHCommandForRouteDirectMatchesBuildInternalSSHCommand(t *testing.
 		sshArgs := []string{"-L", "8080:localhost:80"}
 		command := []string{"hostname"}
 
-		got := buildSSHCommandForRoute(sshRoute{Host: host}, "ubuntu", "/tmp/key", "-v", sshArgs, command)
+		got := mustRouteSSHCommand(t, sshRoute{Host: host}, "ubuntu", "/tmp/key", "-v", sshArgs, command)
 		assert.Equal(t, buildInternalSSHCommand(host, "ubuntu", "/tmp/key", "-v", sshArgs, command), got)
 		assert.NotContains(t, got, "ProxyCommand")
 	}
@@ -306,7 +305,7 @@ func TestBuildSSHCommandForRouteBastionChecksHostKey(t *testing.T) { //nolint:pa
 	key := "/home/op/.local/share/ocfp/ocfp-cf1-lab/ssh/id_ed25519"
 	route := sshRoute{Host: "100.109.226.53", HostIsBastion: true}
 
-	got := buildSSHCommandForRoute(route, "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{})
+	got := mustRouteSSHCommand(t, route, "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{})
 
 	expected := []string{
 		"ssh",
@@ -321,5 +320,5 @@ func TestBuildSSHCommandForRouteBastionChecksHostKey(t *testing.T) { //nolint:pa
 		"ubuntu@100.109.226.53",
 	}
 	assert.Equal(t, expected, got)
-	assert.Equal(t, buildBastionSSHCommand("100.109.226.53", "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{}), got)
+	assert.Equal(t, mustBastionSSHCommand(t, "100.109.226.53", "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{}), got)
 }

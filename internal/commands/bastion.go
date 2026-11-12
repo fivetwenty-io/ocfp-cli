@@ -459,7 +459,12 @@ func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, l
 	dest := fmt.Sprintf("%s@%s:%s", ctx.User, ctx.IP, remoteScript)
 
 	// Reuse SCP builder/executor
-	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, bastionssh.BastionHostKeyOptions(), false, "")
+	hostKey, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
+	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, hostKey, false, "")
 	log.Debugf("Copying script via: %s", strings.Join(scpCmd, " "))
 
 	execCtx := context.Background()
@@ -492,7 +497,11 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 		envB64, remoteScript, logPath,
 	)
 
-	sshCmd := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd, err := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	if err != nil {
+		return err
+	}
+
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Executing %s on bastion", operationName)
@@ -506,7 +515,11 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 }
 
 func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
-	sshCmd := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd, err := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	if err != nil {
+		return // best effort
+	}
+
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }

@@ -116,7 +116,10 @@ func runSCP(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scpCmd := prepareSCPCommand(scpConfig, bastionIP, keyPath)
+	scpCmd, err := prepareSCPCommand(scpConfig, bastionIP, keyPath)
+	if err != nil {
+		return err
+	}
 
 	log.Infof("Copying files: %s -> %s", scpConfig.Source, scpConfig.Destination)
 	logResolvedSSHKey(log, keyPath)
@@ -176,12 +179,17 @@ func setupSCPProvider(ctx context.Context, scpCfg *scpConfig) (*config.Config, c
 	return cfg, provider, nil
 }
 
-func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) []string {
+func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) ([]string, error) {
 	processedSource := processSCPPath(scpCfg.Source, bastionIP, scpCfg.User)
 	processedDest := processSCPPath(scpCfg.Destination, bastionIP, scpCfg.User)
 
+	hostKey, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
 	return buildSCPCommand(processedSource, processedDest, keyPath,
-		bastionssh.BastionHostKeyOptions(), scpCfg.Recursive, scpCfg.Options)
+		hostKey, scpCfg.Recursive, scpCfg.Options), nil
 }
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).

@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"errors"
 	"os"
 	"strings"
 )
@@ -15,21 +16,34 @@ import (
 // ~/.ssh/known_hosts, which ssh expands from the password database, so a
 // UserKnownHostsFile in the user's ssh config still cannot replace it.
 //
+// The path is escaped so ssh reads it back unchanged, %-tokens and quotes
+// included. A path holding "${" returns ErrKnownHostsPathUnusable, because
+// ssh would expand it and check a different file than the Go client.
+//
 // ssh keeps the first value it sees for an option, so callers put these
 // before any options the operator supplies.
-func BastionHostKeyOptions() []string {
+func BastionHostKeyOptions() ([]string, error) {
 	knownHosts := defaultKnownHostsFile
 
 	knownHostsPath, err := KnownHostsFile()
 	if err == nil {
+		err = checkSSHConfigPath(knownHostsPath)
+		if err != nil {
+			return nil, err
+		}
+
 		knownHosts = sshConfigPath(knownHostsPath)
 	}
 
 	return []string{
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=" + knownHosts,
-	}
+	}, nil
 }
+
+// ErrKnownHostsPathUnusable reports a known_hosts path that cannot be handed
+// to system ssh without ssh reading it as a different file.
+var ErrKnownHostsPathUnusable = errors.New("known_hosts path cannot be passed to system ssh")
 
 // defaultKnownHostsFile names the user's known_hosts file in the form ssh
 // expands itself, for when the home directory cannot be found here.
