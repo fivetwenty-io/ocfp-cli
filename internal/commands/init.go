@@ -490,7 +490,7 @@ func getInitLongDescription() string {
 	return `Initialize OCFP components including PostgreSQL, Cloud Foundry, and BOSH.
 
 Components:
-  aws     - Initialize AWS environment (requires --bloc ocfp-aws-<region>, or OCFP_BLOC)
+  aws     - Initialize AWS environment (requires --bloc <name>, or OCFP_BLOC)
   gcp     - Initialize Google Cloud environment
   pve     - Initialize Proxmox VE environment (requires --bloc <name>, or OCFP_BLOC; datacenter from config region)
   pg      - Initialize PostgreSQL database
@@ -498,6 +498,9 @@ Components:
   bosh    - Initialize BOSH Director
   bastion - Initialize bastion host
   all     - Initialize all components (default)
+
+A bloc name for aws, gcp, and pve is lowercase letters, digits, and dashes,
+at least two characters long, and neither starts nor ends with a dash.
 
 Bastion Initialization Modes (at most one, and only with the bastion component):
   --genesis  - Install/update only Genesis and related components

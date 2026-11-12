@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The help must not promise that every mode works on the bastion, because
@@ -35,4 +36,24 @@ func TestInitLongDescription_DescribesTheDryRun(t *testing.T) {
 	usage := NewInitCmd().Flags().Lookup("dry-run").Usage
 	assert.NotEqual(t, "print actions without executing", usage)
 	assert.Contains(t, usage, "change nothing")
+}
+
+// The help states the bloc-name rule the code enforces for aws, gcp, and
+// pve, and does not claim a naming scheme that nothing checks.
+func TestInitLongDescription_StatesTheBlocNameRule(t *testing.T) {
+	long := strings.Join(strings.Fields(getInitLongDescription()), " ")
+
+	assert.NotContains(t, long, "requires --bloc ocfp-aws-<region>")
+	assert.Contains(t, long, "aws - Initialize AWS environment (requires --bloc <name>, or OCFP_BLOC)")
+	assert.Contains(t, long, "A bloc name for aws, gcp, and pve is lowercase letters, digits, and dashes,")
+	assert.Contains(t, long, "at least two characters long, and neither starts nor ends with a dash.")
+
+	// The rule in the help is the rule the code enforces.
+	for _, name := range []string{"ocfp-aws-us-east-1", "my-bloc", "prod", "b2"} {
+		require.NoError(t, validateBlocName(name), name)
+	}
+
+	for _, name := range []string{"Foo", "-bar", "bar-", "a", "bad name!"} {
+		require.ErrorIs(t, validateBlocName(name), ErrBlocFormatInvalid, name)
+	}
 }
