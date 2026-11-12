@@ -630,6 +630,8 @@ A dry run also leaves the resume checkpoints on our workstation as it found them
 
 The other `ocfp init` components check the bastion before they start as well. In a real run, `ocfp init all`, `aws`, `gcp`, `pve`, `pg`, `cf`, and `bosh` each run the same SSH check, and they stop when the bastion can't be reached. With `--dry-run`, each of them logs the check it would make instead of running it, so a dry run never writes the bastion's host key to our `~/.ssh/known_hosts` and never logs in to the bastion. Their prerequisite step also logs the deployment directory it would create under `~/deployments` instead of creating it.
 
+The work of those components is left undone in a dry run too. Each one logs what a real run would do, such as writing the bloc's Genesis env files or running `bosh create-env`, and it doesn't run `bosh` or `cf`, write any file, or change the current bloc. `aws`, `gcp`, and `pve` still refuse a missing or malformed bloc name, as a real run does. `ocfp init all --dry-run` runs the bastion dry run first and then logs the PostgreSQL, BOSH, and Cloud Foundry work that it would do.
+
 ### Force Re-initialization
 ```bash
 # Completely re-provision bastion

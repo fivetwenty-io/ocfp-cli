@@ -335,6 +335,13 @@ func (f *initFlags) stdinIsTerminal() bool {
 
 // executeInitialization performs the actual initialization based on component.
 func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Command, cfg *config.Config, component string) error {
+	// Bastion init and init all carry the dry run on themselves. Every
+	// other component would deploy or write files, so a dry run only
+	// checks its bloc name and logs the work.
+	if f.dryRun && component != RoleBastion && component != KeywordAll {
+		return previewComponent(cmd, cfg, component)
+	}
+
 	switch component {
 	case "aws":
 		return initializeAWS(cmd)
@@ -370,8 +377,12 @@ func (f *initFlags) initializeBastionFromFlags(ctx context.Context, cfg *config.
 // initializeBastionFull runs the full bastion init. "init all" refuses the
 // mode flags before it gets here, so it never has a narrow mode to pick.
 func (f *initFlags) initializeBastionFull(ctx context.Context, cfg *config.Config) error {
-	return runBastionInit(ctx, cfg, bastionModeFull, f.bastionRunParams())
+	return runBastionInitFn(ctx, cfg, bastionModeFull, f.bastionRunParams())
 }
+
+// runBastionInitFn runs the full bastion init for init all. Tests replace
+// it to exercise the components that follow without a bastion.
+var runBastionInitFn = runBastionInit //nolint:gochecknoglobals // intentional seam for testing
 
 // bastionRunParams collects the settings every bastion init mode shares.
 func (f *initFlags) bastionRunParams() bastionRunParams {
@@ -387,27 +398,99 @@ func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Con
 	log.Info("Initializing all components")
 
 	components := []struct {
-		name string
-		fn   func() error
+		name      string
+		component string
+		fn        func() error
 	}{
-		{"bastion", func() error {
+		{"bastion", RoleBastion, func() error {
 			return f.initializeBastionFull(ctx, cfg)
 		}},
-		{"PostgreSQL", initializePostgreSQL},
-		{"BOSH", func() error { return initializeBOSH(ctx, cfg) }},
-		{"Cloud Foundry", func() error { return initializeCloudFoundry(ctx, cfg) }},
+		{"PostgreSQL", "pg", initializePostgreSQL},
+		{"BOSH", "bosh", func() error { return initializeBOSH(ctx, cfg) }},
+		{"Cloud Foundry", "cf", func() error { return initializeCloudFoundry(ctx, cfg) }},
 	}
 
 	for _, comp := range components {
-		err := comp.fn()
+		run := comp.fn
+		if f.dryRun && comp.component != RoleBastion {
+			component := comp.component
+			run = func() error { return previewComponent(nil, cfg, component) }
+		}
+
+		err := run()
 		if err != nil {
 			return fmt.Errorf("%s initialization failed: %w", comp.name, err)
 		}
 	}
 
+	if f.dryRun {
+		log.Info("Dry run of all components finished without changing anything")
+
+		return nil
+	}
+
 	log.Info("All components initialized successfully")
 
 	return nil
+}
+
+// previewComponent is the dry run of an init component other than bastion.
+// It checks the bloc name the way the real run does for the components that
+// take one, and then logs the work the real run would do instead of doing
+// it. The real runs deploy with bosh, log in with cf, and write env files
+// and the current bloc on the workstation, and bosh and cf can reach the
+// bastion through a proxy, so a dry run does none of that. cmd is the
+// running command, which the aws, gcp, and pve bloc lookups read.
+func previewComponent(cmd *cobra.Command, cfg *config.Config, component string) error {
+	bloc := cfg.Name
+
+	switch component {
+	case "aws", "gcp":
+		params, err := resolveInitAWSParams(cmd)
+		if err != nil {
+			return err
+		}
+
+		bloc = params.bloc
+	case "pve":
+		params, err := resolveInitPVEParams(cmd)
+		if err != nil {
+			return err
+		}
+
+		bloc = params.bloc
+	}
+
+	work, err := componentDryRunWork(component)
+	if err != nil {
+		return err
+	}
+
+	logger.Get().Infow("DRY RUN: Would "+work, "component", component, "bloc", bloc)
+
+	return nil
+}
+
+// componentDryRunWork describes what a real run of an init component other
+// than bastion does, for its dry run to log.
+func componentDryRunWork(component string) (string, error) {
+	switch component {
+	case "aws":
+		return "write the bloc's AWS Genesis env files and make it the current bloc", nil
+	case "gcp":
+		return "write the bloc's GCP Genesis env files and make it the current bloc", nil
+	case "pve":
+		return "write the bloc's PVE Genesis env files and ops files and make it the current bloc", nil
+	case "pg":
+		return "create the BOSH and Cloud Foundry databases", nil
+	case "bosh":
+		return "write the BOSH manifest if it is missing, create the director with bosh create-env, " +
+			"and write bosh-env.sh", nil
+	case "cf":
+		return "upload and deploy Cloud Foundry with bosh, then log in with cf and create the default org and space", nil
+	default:
+		return "", ErrUnknownComponent(component)
+	}
 }
 
 // getInitLongDescription returns the long description for the init command.
