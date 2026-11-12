@@ -1,6 +1,9 @@
 package commands
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -314,4 +317,32 @@ func sshConfigHostBlocks(t *testing.T, result string) string {
 	require.True(t, strings.HasPrefix(header, "# "), "the output does not open with a comment")
 
 	return rest
+}
+
+// ssh splits a config value on spaces and expands % in IdentityFile, so a
+// key path holding either is written so that ssh reads back exactly that
+// path.
+func TestGenerateSSHConfigQuotesTheKeyPath(t *testing.T) {
+	t.Parallel()
+
+	result := generateSSHConfig("203.0.113.10", "prod", "ubuntu", `/Users/o p/100%/"k"`, map[string]string{"bosh": "10.0.0.5"})
+
+	assert.Equal(t, 2, strings.Count(result, `    IdentityFile "/Users/o p/100%%/\"k\""`+"\n"), result)
+}
+
+func TestGenerateSSHConfigKeyPathSurvivesSSHParsing(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("ssh is not installed")
+	}
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "o p", "id_ed25519")
+	configPath := filepath.Join(dir, "config")
+
+	result := generateSSHConfig("203.0.113.10", "prod", "ubuntu", keyPath, map[string]string{})
+	require.NoError(t, os.WriteFile(configPath, []byte(result), 0o600))
+
+	out, err := exec.Command("ssh", "-F", configPath, "-G", "prod-bastion").CombinedOutput() //nolint:gosec // test-owned path
+	require.NoError(t, err, string(out))
+	assert.Contains(t, string(out), "\nidentityfile "+keyPath+"\n")
 }
