@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	bastionproviders "github.com/fivetwenty-io/ocfp-cli/internal/bastion/providers"
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -462,7 +463,7 @@ func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, l
 	dest := fmt.Sprintf("%s@%s:%s", ctx.User, ctx.IP, remoteScript)
 
 	// Reuse SCP builder/executor
-	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, false, "")
+	scpCmd := buildSCPCommand(scriptPath, dest, ctx.SSHKeyOption, bastionssh.BastionHostKeyOptions(), false, "")
 	log.Debugf("Copying script via: %s", strings.Join(scpCmd, " "))
 
 	execCtx := context.Background()
@@ -495,7 +496,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 		envB64, remoteScript, logPath,
 	)
 
-	sshCmd := buildInternalSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Executing %s on bastion", operationName)
@@ -509,7 +510,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 }
 
 func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
-	sshCmd := buildInternalSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd := buildBastionSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }

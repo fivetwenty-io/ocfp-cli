@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -179,7 +180,8 @@ func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) []string {
 	processedSource := processSCPPath(scpCfg.Source, bastionIP, scpCfg.User)
 	processedDest := processSCPPath(scpCfg.Destination, bastionIP, scpCfg.User)
 
-	return buildSCPCommand(processedSource, processedDest, keyPath, scpCfg.Recursive, scpCfg.Options)
+	return buildSCPCommand(processedSource, processedDest, keyPath,
+		bastionssh.BastionHostKeyOptions(), scpCfg.Recursive, scpCfg.Options)
 }
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).
@@ -207,13 +209,15 @@ func processSCPPath(path, bastionIP, user string) string {
 // in seconds. Matches the value the provider SSH helpers use.
 const scpConnectTimeout = "30"
 
-// buildSCPCommand constructs the SCP command with all options.
-func buildSCPCommand(source, destination, keyPath string, recursive bool, extraOptions string) []string {
+// buildSCPCommand constructs the SCP command with all options. hostKey
+// holds the host key options for the remote end: BastionHostKeyOptions when
+// it is the bastion, InternalHostKeyOptions when it is a host behind it.
+// They go first, because ssh keeps the first value it sees for an option and
+// extraOptions must not be able to weaken them.
+func buildSCPCommand(source, destination, keyPath string, hostKey []string, recursive bool, extraOptions string) []string {
 	cmd := []string{"scp"}
 
-	// Standard options
-	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
-	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
+	cmd = append(cmd, hostKey...)
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
 
 	// Add key if specified
