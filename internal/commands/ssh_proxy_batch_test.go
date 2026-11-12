@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,8 +45,8 @@ func TestBuildSSHCommandForRouteProxyBatchMode(t *testing.T) { //nolint:parallel
 	t.Setenv("SSH_AUTH_SOCK", "")
 
 	route := sshRoute{Host: "10.64.64.11", Bastion: "100.109.226.53"}
-	quiet := bootstrap.BastionProxyCommand("", "ubuntu", route.Bastion, true)
-	prompting := bootstrap.BastionProxyCommand("", "ubuntu", route.Bastion, false)
+	quiet := mustProxyCommand(t, "", "ubuntu", route.Bastion, true)
+	prompting := mustProxyCommand(t, "", "ubuntu", route.Bastion, false)
 
 	cases := []struct {
 		name         string
@@ -74,7 +73,7 @@ func TestBuildSSHCommandForRouteProxyBatchMode(t *testing.T) { //nolint:parallel
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildSSHCommandForRouteWith(route, "ubuntu", "", tc.extraOptions, tc.sshArgs, nil, tc.terminal)
+			got := mustRouteSSHCommandWith(t, route, "ubuntu", "", tc.extraOptions, tc.sshArgs, nil, tc.terminal)
 
 			assert.Equal(t, tc.wantProxy, proxyCommandOf(t, got))
 			assert.Equal(t, tc.wantOuter, batchModeOptions(got),
@@ -93,7 +92,7 @@ func TestBuildSSHCommandForRouteKeyedProxyIsAlwaysBatch(t *testing.T) { //nolint
 	key := "/home/op/.local/share/ocfp/ocfp-cf1-lab/ssh/id_ed25519"
 
 	for _, terminal := range []bool{true, false} {
-		got := buildSSHCommandForRouteWith(route, "ubuntu", key, "", nil, nil, terminal)
+		got := mustRouteSSHCommandWith(t, route, "ubuntu", key, "", nil, nil, terminal)
 		assert.Contains(t, proxyCommandOf(t, got), "-o BatchMode=yes")
 	}
 }

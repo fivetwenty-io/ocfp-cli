@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +35,7 @@ func TestArtifactsRemoteScriptChecksTheBastionHop(t *testing.T) {
 	runs := recordedRuns(t, logPath)
 	require.Len(t, runs, 3)
 
-	hop := bootstrap.BastionProxyCommand("/tmp/id_ed25519", "ubuntu", "10.61.148.10", true)
+	hop := mustProxyCommand(t, "/tmp/id_ed25519", "ubuntu", "10.61.148.10", true)
 	require.Contains(t, hop, "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="+
 		filepath.Join(home, ".ssh", "known_hosts"))
 

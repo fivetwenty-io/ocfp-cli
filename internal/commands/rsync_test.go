@@ -47,7 +47,7 @@ func parseRSyncLine(t *testing.T, args []string) []string {
 	source := processRSyncPath(config.source, "10.61.148.10", config.user)
 	destination := processRSyncPath(config.destination, "10.61.148.10", config.user)
 
-	return buildRSyncCommand(config, source, destination, "/tmp/id_ed25519")
+	return mustRSyncCommand(t, config, source, destination, "/tmp/id_ed25519")
 }
 
 // indexOf reports where value first appears in argv, or -1 when it is absent.
@@ -200,7 +200,7 @@ func TestRSyncQuotesPathsInTheSSHCommand(t *testing.T) {
 
 	config := &rsyncConfig{} //nolint:exhaustruct // Only the fields the builder reads are set.
 
-	argv := buildRSyncCommand(config, "/local/dir/", "ubuntu@10.61.148.10:/remote/dir/", "/keys/my key")
+	argv := mustRSyncCommand(t, config, "/local/dir/", "ubuntu@10.61.148.10:/remote/dir/", "/keys/my key")
 
 	dashE := indexOf(argv, "-e")
 	require.NotEqual(t, -1, dashE)

@@ -472,7 +472,12 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 			return fmt.Errorf("invalid bastion jump host: %w", err)
 		}
 
-		scpOptions = append(scpOptions, "-o", "ProxyCommand="+bootstrap.BastionProxyCommand(keyOpt, user, bastion, true))
+		proxyCommand, err := bootstrap.BastionProxyCommand(keyOpt, user, bastion, true)
+		if err != nil {
+			return fmt.Errorf("cannot check the bastion's host key: %w", err)
+		}
+
+		scpOptions = append(scpOptions, "-o", "ProxyCommand="+proxyCommand)
 	}
 
 	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, scpOptions, false, "")
@@ -494,7 +499,11 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 		envB64, artifactsRemoteScript, artifactsRemoteLog,
 	)
 
-	sshCmd := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
+	sshCmd, err := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
+	if err != nil {
+		return err
+	}
+
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Running artifacts provision on %s (RustFS install + bucket creation)", host)
@@ -505,9 +514,11 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 	}
 
 	// Best-effort cleanup of the remote script.
-	cleanup := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
-	cleanup = append(cleanup, "rm -f "+artifactsRemoteScript)
-	_ = executeSSH(context.Background(), cleanup)
+	cleanup, err := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
+	if err == nil {
+		cleanup = append(cleanup, "rm -f "+artifactsRemoteScript)
+		_ = executeSSH(context.Background(), cleanup)
+	}
 
 	return nil
 }

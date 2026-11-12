@@ -11,7 +11,10 @@ func TestBastionHostKeyOptionsCheckTheRealKnownHosts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	got := BastionHostKeyOptions()
+	got, err := BastionHostKeyOptions()
+	if err != nil {
+		t.Fatalf("BastionHostKeyOptions() error = %v", err)
+	}
 	want := []string{
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=" + filepath.Join(home, ".ssh", "known_hosts"),
@@ -26,7 +29,10 @@ func TestBastionHostKeyOptionsQuoteAPathWithSpaces(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "with space")
 	t.Setenv("HOME", home)
 
-	got := BastionHostKeyOptions()
+	got, err := BastionHostKeyOptions()
+	if err != nil {
+		t.Fatalf("BastionHostKeyOptions() error = %v", err)
+	}
 	want := `UserKnownHostsFile="` + filepath.Join(home, ".ssh", "known_hosts") + `"`
 
 	if len(got) != 4 || got[3] != want {
@@ -40,7 +46,10 @@ func TestBastionHostKeyOptionsQuoteAPathWithSpaces(t *testing.T) {
 func TestBastionHostKeyOptionsWithoutAHomeStillNameTheFile(t *testing.T) {
 	t.Setenv("HOME", "")
 
-	got := BastionHostKeyOptions()
+	got, err := BastionHostKeyOptions()
+	if err != nil {
+		t.Fatalf("BastionHostKeyOptions() error = %v", err)
+	}
 	want := []string{
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=~/.ssh/known_hosts",

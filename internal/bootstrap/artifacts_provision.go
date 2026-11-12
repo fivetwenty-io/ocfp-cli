@@ -59,8 +59,11 @@ type artifactsProvisionConn struct {
 // from the user's ssh config instead. The ProxyCommand states the bastion's
 // checking itself, so the bastion's key is always checked against the real
 // known_hosts however the user's ssh config is set up.
-func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
-	proxyCommand := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
+func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) ([]string, error) {
+	proxyCommand, err := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
+	if err != nil {
+		return nil, err
+	}
 
 	args := []string{"-i", c.KeyPath, "-o", "BatchMode=yes"}
 	args = append(args, ssh.InternalHostKeyOptions()...)
@@ -71,7 +74,7 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 		"-o", "ProxyCommand="+proxyCommand,
 		c.User+"@"+c.ArtifactsHost,
 		remoteCmd,
-	)
+	), nil
 }
 
 // BastionProxyCommand returns the ssh ProxyCommand that reaches a host behind
@@ -92,10 +95,20 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 // which callers do for any run that is not interactive, so a passphrase or
 // password prompt can reach a person but never stalls a script. With a key
 // the jump hop is always in batch mode and batchMode is ignored.
-func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) string {
-	// ssh expands %-tokens in a ProxyCommand before the shell sees it, so a
-	// literal percent sign in the known_hosts path is doubled.
-	hostKey := strings.ReplaceAll(ssh.ShellJoin(ssh.BastionHostKeyOptions()), "%", "%%")
+//
+// It returns an error only when the bastion's host key options cannot be
+// built (see ssh.BastionHostKeyOptions).
+func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) (string, error) {
+	hostKeyOptions, err := ssh.BastionHostKeyOptions()
+	if err != nil {
+		return "", err
+	}
+
+	// The outer ssh expands %-tokens in a ProxyCommand before the shell sees
+	// it, and the inner ssh expands them again in the known_hosts path. The
+	// options already double each literal % for the inner ssh, and doubling
+	// again here leaves that for the inner ssh once the outer is done.
+	hostKey := strings.ReplaceAll(ssh.ShellJoin(hostKeyOptions), "%", "%%")
 
 	if keyPath == "" {
 		batch := ""
@@ -106,18 +119,18 @@ func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) stri
 		return fmt.Sprintf(
 			"ssh %s%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
 			batch, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
-		)
+		), nil
 	}
 
 	return fmt.Sprintf(
 		"ssh -i %s -o BatchMode=yes %s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
 		keyPath, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
-	)
+	), nil
 }
 
 // buildArtifactsProvisionSSHArgs returns the ssh args that run the provision
 // script piped over stdin (`sudo bash -s`).
-func buildArtifactsProvisionSSHArgs(c artifactsProvisionConn) []string {
+func buildArtifactsProvisionSSHArgs(c artifactsProvisionConn) ([]string, error) {
 	return artifactsSSHArgs(c, "sudo bash -s")
 }
 
@@ -157,10 +170,15 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 		return fmt.Errorf("artifacts ssh not reachable: %w", err)
 	}
 
+	args, err := buildArtifactsProvisionSSHArgs(conn)
+	if err != nil {
+		return fmt.Errorf("provision script did not run: %w", err)
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, artifactsProvisionRunTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, "ssh", buildArtifactsProvisionSSHArgs(conn)...) // #nosec G204 -- args are CLI/config-constructed, not user-tainted
+	cmd := exec.CommandContext(runCtx, "ssh", args...) // #nosec G204 -- args are CLI/config-constructed, not user-tainted
 	cmd.Stdin = strings.NewReader(script)
 
 	var stdout, stderr bytes.Buffer
@@ -186,11 +204,16 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 // waitArtifactsSSHReady polls a trivial remote command until the artifacts VM
 // accepts SSH through the bastion or the deadline elapses.
 func (m *Manager) waitArtifactsSSHReady(ctx context.Context, conn artifactsProvisionConn) error {
+	args, err := artifactsSSHArgs(conn, "true")
+	if err != nil {
+		return err
+	}
+
 	deadline := time.Now().Add(artifactsSSHReadyTimeout)
 
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		probe := exec.CommandContext(probeCtx, "ssh", artifactsSSHArgs(conn, "true")...) // #nosec G204 -- args are CLI/config-constructed, not user-tainted
+		probe := exec.CommandContext(probeCtx, "ssh", args...) // #nosec G204 -- args are CLI/config-constructed, not user-tainted
 
 		var stderr bytes.Buffer
 

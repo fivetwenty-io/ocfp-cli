@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,7 +95,7 @@ func TestBuildSSHCommandWithoutKeyLeavesAuthToTheUser(t *testing.T) { //nolint:p
 	t.Setenv("HOME", home)
 	t.Setenv("SSH_AUTH_SOCK", "")
 
-	got := buildBastionSSHCommand("100.109.226.53", "ubuntu", "", "", []string{}, nil)
+	got := mustBastionSSHCommand(t, "100.109.226.53", "ubuntu", "", "", []string{}, nil)
 	joined := strings.Join(got, " ")
 
 	assert.NotContains(t, got, "-i")
@@ -111,13 +110,13 @@ func TestBuildSSHCommandForRouteWithoutKeyLeavesBothHopsToTheUser(t *testing.T) 
 	t.Setenv("SSH_AUTH_SOCK", "")
 
 	route := sshRoute{Host: "10.64.64.11", Bastion: "100.109.226.53"}
-	got := buildSSHCommandForRouteWith(route, "ubuntu", "", "", []string{}, nil, true)
+	got := mustRouteSSHCommandWith(t, route, "ubuntu", "", "", []string{}, nil, true)
 	joined := strings.Join(got, " ")
 
 	require.NotEqual(t, []string{"ssh", "--help"}, got)
 	assert.NotContains(t, got, "-i")
 	assert.NotContains(t, joined, "IdentitiesOnly")
-	assert.Contains(t, got, "ProxyCommand="+bootstrap.BastionProxyCommand("", "ubuntu", "100.109.226.53", false))
+	assert.Contains(t, got, "ProxyCommand="+mustProxyCommand(t, "", "ubuntu", "100.109.226.53", false))
 	assert.Equal(t, "ubuntu@10.64.64.11", got[len(got)-1])
 }
 
