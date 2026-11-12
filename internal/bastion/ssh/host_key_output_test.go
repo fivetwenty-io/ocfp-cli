@@ -82,6 +82,21 @@ func TestSystemSSHHostKeyFailureNamesTheEntrySSHPrinted(t *testing.T) {
 	}
 }
 
+// When the refused entry for the bastion sits in another file, such as the
+// system-wide known_hosts, the hint names the file ssh printed.
+func TestSystemSSHHostKeyFailureNamesTheFileSSHPrinted(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	err := SystemSSHHostKeyFailure(changedKeyOutput("/etc/ssh/ssh_known_hosts", "10.0.0.4"), "10.0.0.4", nil)
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("got %v, want an error matching ErrHostKeyMismatch", err)
+	}
+
+	if want := "ssh-keygen -R 10.0.0.4 -f /etc/ssh/ssh_known_hosts"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not contain %q", err, want)
+	}
+}
+
 func TestSystemSSHHostKeyFailureReportsARevokedKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -121,6 +136,7 @@ func TestSystemSSHHostKeyFailureIgnoresOtherFailures(t *testing.T) {
 		"BareMarkers":        "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\nHost key verification failed.\n",
 		"RemoteNestedSSH":    changedKeyOutput("/home/ubuntu/.ssh/known_hosts", "10.64.64.20"),
 		"RemoteSameHomePath": changedKeyOutput(ourKnownHosts, "10.64.64.20"),
+		"RemoteNestedName":   changedKeyOutput("/home/ubuntu/.ssh/known_hosts", "db-host"),
 		"RemoteRevoked":      "ED25519 host key for 10.64.64.20 was revoked and you have requested strict checking.\n",
 	} {
 		err := SystemSSHHostKeyFailure(output, "10.0.0.4", nil)
