@@ -31,11 +31,20 @@ type initRun struct {
 	// pendingDirs holds the directories that a dry run's earlier steps
 	// would have created, so a later check counts them as present.
 	pendingDirs map[string]bool
+
+	// uncheckedDirs holds the directories that a dry run has logged as
+	// ones it would write in without checking that it could.
+	uncheckedDirs map[string]bool
 }
 
 // newInitRun returns a run that logs to the init logger.
 func newInitRun(dryRun bool) *initRun {
-	return &initRun{dryRun: dryRun, log: initLogger(), pendingDirs: map[string]bool{}}
+	return &initRun{
+		dryRun:        dryRun,
+		log:           initLogger(),
+		pendingDirs:   map[string]bool{},
+		uncheckedDirs: map[string]bool{},
+	}
 }
 
 // say logs a progress line of the real run. A dry run does none of the
@@ -62,6 +71,22 @@ func (r *initRun) change(would string, apply func() error, keysAndValues ...any)
 	}
 
 	return apply()
+}
+
+// writesIn notes that the next change writes files in dir. Only the write
+// itself finds out whether dir can be created and written, so a real run
+// can fail there after a dry run passed. A dry run says that it didn't
+// check, once for each directory.
+func (r *initRun) writesIn(dir string) {
+	dir = filepath.Clean(dir)
+	if !r.dryRun || r.uncheckedDirs[dir] {
+		return
+	}
+
+	r.uncheckedDirs[dir] = true
+
+	r.log.Infow("DRY RUN: Did not check that this directory can be created and written, "+
+		"so a real run can still fail when it writes there", "dir", dir)
 }
 
 // createsDir records that a dry run would have created dir, so the checks
@@ -164,21 +189,27 @@ func checkCurrentBlocState() error {
 }
 
 // persistCurrentBloc checks the CLI state and then makes bloc the current
-// bloc.
+// bloc. The real run takes a lock on the CLI state file and writes it, and
+// either can fail. A dry run does neither, so it says that it didn't
+// check them.
 func (r *initRun) persistCurrentBloc(bloc string) error {
 	err := checkCurrentBlocState()
 	if err != nil {
 		return err
 	}
 
+	if r.dryRun {
+		r.log.Infow("DRY RUN: Did not take the lock on the CLI state file or check that it can be written, "+
+			"so a real run can still fail when it makes the bloc current", "path", config.StateFilePath())
+	}
+
 	return r.change("make "+bloc+" the current bloc", func() error { return persistBlocToState(bloc) }, "bloc", bloc)
 }
 
-// blocDeploymentFile resolves the path of a file in one of the bloc's
-// deployment slots, under the bloc's resolved directory. It fails when the
-// OCFP home can't be found or the bloc's directory can't be settled, such
-// as when both data directories hold a vault for the bloc.
-func blocDeploymentFile(bloc, slot, name string) (string, error) {
+// resolveBlocDir resolves the bloc's directory. It fails when the OCFP
+// home can't be found or the bloc's directory can't be settled, such as
+// when both data directories hold a vault for the bloc.
+func resolveBlocDir(bloc string) (string, error) {
 	if config.DataHome() == "" {
 		return "", fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
 	}
@@ -188,16 +219,32 @@ func blocDeploymentFile(bloc, slot, name string) (string, error) {
 		return "", fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
 	}
 
+	return blocDir, nil
+}
+
+// blocDeploymentFile resolves the path of a file in one of the bloc's
+// deployment slots, under the bloc's resolved directory, and fails as
+// resolveBlocDir does.
+func blocDeploymentFile(bloc, slot, name string) (string, error) {
+	blocDir, err := resolveBlocDir(bloc)
+	if err != nil {
+		return "", err
+	}
+
 	return filepath.Join(blocDir, "deployments", slot, name), nil
 }
 
 // writeBlocEnvFile resolves an env file's path, which checks the bloc's
 // directory, and then writes the file with write.
 func (r *initRun) writeBlocEnvFile(bloc, slot, envName, what string, write func() error) error {
-	path, err := blocDeploymentFile(bloc, slot, bloc+"-"+envName+".yml")
+	blocDir, err := resolveBlocDir(bloc)
 	if err != nil {
 		return err
 	}
+
+	r.writesIn(blocDir)
+
+	path := filepath.Join(blocDir, "deployments", slot, bloc+"-"+envName+".yml")
 
 	return r.change("write the "+what, write, "path", path)
 }

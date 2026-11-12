@@ -39,6 +39,8 @@ func runInitGCP(cmd *cobra.Command, r *initRun) error {
 		}
 	}
 
+	r.writesIn(dir)
+
 	for _, slot := range []string{"mgmt", "ocf"} {
 		kit := "cf"
 		if slot == "mgmt" {
