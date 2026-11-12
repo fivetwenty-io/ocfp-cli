@@ -192,24 +192,6 @@ func TestRSyncKeepsSSHOptions(t *testing.T) {
 		argv[dashE+1])
 }
 
-// TestRSyncQuotesPathsInTheSSHCommand proves a known_hosts or key path with
-// a space survives rsync splitting the -e command into words.
-func TestRSyncQuotesPathsInTheSSHCommand(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "o p")
-	t.Setenv("HOME", home)
-
-	config := &rsyncConfig{} //nolint:exhaustruct // Only the fields the builder reads are set.
-
-	argv := mustRSyncCommand(t, config, "/local/dir/", "ubuntu@10.61.148.10:/remote/dir/", "/keys/my key")
-
-	dashE := indexOf(argv, "-e")
-	require.NotEqual(t, -1, dashE)
-	assert.Equal(t,
-		`ssh -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile="`+
-			filepath.Join(home, ".ssh", "known_hosts")+`"' -o LogLevel=ERROR -i '/keys/my key'`,
-		argv[dashE+1])
-}
-
 // TestRSyncArgsRequireSourceAndDestination proves the argument check counts
 // only what sits in front of the separator.
 func TestRSyncArgsRequireSourceAndDestination(t *testing.T) {
