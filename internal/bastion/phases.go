@@ -357,12 +357,19 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 	// Check if remote binary exists and get its checksum
 	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
 
+	// A probe that fails can return no result at all. It counts as an
+	// unknown checksum, so the upload goes ahead and reports any real
+	// problem with the connection.
+	remoteChecksum := ""
+
 	remoteResult, err := m.sshClient.ExecuteCommand(ctx, remoteChecksumCmd)
 	if err != nil {
 		m.log.Debugw("Could not check remote binary checksum", "error", err)
 	}
 
-	remoteChecksum := strings.TrimSpace(remoteResult.Stdout)
+	if remoteResult != nil {
+		remoteChecksum = strings.TrimSpace(remoteResult.Stdout)
+	}
 
 	// If checksums match, skip upload
 	if remoteChecksum != "" && remoteChecksum == localChecksum {
