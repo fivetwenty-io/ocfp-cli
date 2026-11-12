@@ -62,8 +62,9 @@ func TestSystemSSHHostKeyFailureNamesTheEntrySSHPrinted(t *testing.T) {
 		bastion string
 		want    string
 	}{
-		{"NonDefaultPort", "[bastion.example]:2222", "bastion.example", "ssh-keygen -R '[bastion.example]:2222' -f " + knownHosts},
-		{"IPv6", "[fd00::10]:2222", "[FD00::0:10]", "ssh-keygen -R '[fd00::10]:2222' -f " + knownHosts},
+		{"NonDefaultPort", "[10.0.0.4]:2222", "[10.0.0.4]:2222", "ssh-keygen -R '[10.0.0.4]:2222' -f " + knownHosts},
+		{"IPv6", "[fd00::10]:2222", "[FD00::0:10]:2222", "ssh-keygen -R '[fd00::10]:2222' -f " + knownHosts},
+		{"IPv6OnPort22", "fd00::10", "fd00:0::10", "ssh-keygen -R fd00::10 -f " + knownHosts},
 		{"Alias", "lab-jump", "100.109.226.53", "ssh-keygen -R lab-jump -f " + knownHosts},
 	}
 
@@ -125,6 +126,40 @@ func TestSystemSSHHostKeyFailureIgnoresOtherFailures(t *testing.T) {
 		err := SystemSSHHostKeyFailure(output, "10.0.0.4", nil)
 		if err != nil {
 			t.Errorf("%s: SystemSSHHostKeyFailure() = %v, want nil", name, err)
+		}
+	}
+}
+
+// A known_hosts entry is for a host and a port. ssh prints a host on port
+// 22 bare and any other port as "[host]:port", and a bastion spelled
+// without a port is on 22, so a refusal of the bastion's address on
+// another port is not the bastion's.
+func TestSystemSSHHostKeyFailureComparesThePort(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	knownHosts := filepath.Join(home, ".ssh", "known_hosts")
+
+	tests := []struct {
+		name    string
+		printed string
+		bastion string
+		want    bool
+	}{
+		{"BarePrintedBareDialled", "127.0.0.1", "127.0.0.1", true},
+		{"BracketedDialledOn22", "127.0.0.1", "[127.0.0.1]:22", true},
+		{"BracketedWithoutAPort", "127.0.0.1", "[127.0.0.1]", true},
+		{"SamePort", "[127.0.0.1]:2222", "[127.0.0.1]:2222", true},
+		{"OtherPortPrinted", "[127.0.0.1]:9", "127.0.0.1", false},
+		{"OtherPortDialled", "127.0.0.1", "[127.0.0.1]:2222", false},
+		{"DifferentPorts", "[127.0.0.1]:9", "[127.0.0.1]:2222", false},
+		{"IPv6OtherPort", "[fd00::10]:9", "fd00::10", false},
+	}
+
+	for _, tt := range tests {
+		err := SystemSSHHostKeyFailure(changedKeyOutput(knownHosts, tt.printed), tt.bastion, nil)
+		if got := errors.Is(err, ErrHostKeyMismatch); got != tt.want {
+			t.Errorf("%s: printed %s, dialled %s: got %v, want a mismatch %v", tt.name, tt.printed, tt.bastion, err, tt.want)
 		}
 	}
 }
