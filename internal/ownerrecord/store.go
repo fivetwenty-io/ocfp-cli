@@ -118,10 +118,16 @@ type DirStore struct {
 
 var _ Store = (*DirStore)(nil)
 
-// NewDirStore returns a store for the record in dir. It touches nothing on
-// disk until it is used.
+// NewDirStore returns a store for the record in dir. It cleans dir, so that
+// a ".." climbs the names as written and not through a link, and every check
+// and every use name the same directory. It touches nothing on disk until it
+// is used.
 func NewDirStore(dir string) *DirStore {
-	return &DirStore{dir: dir}
+	if dir == "" {
+		return &DirStore{}
+	}
+
+	return &DirStore{dir: filepath.Clean(dir)}
 }
 
 type lockKind int
