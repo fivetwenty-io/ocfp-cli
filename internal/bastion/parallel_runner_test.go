@@ -16,6 +16,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // errTestPhaseMisconfigured fails a phase without a retry, because the
@@ -241,4 +242,58 @@ func TestParallelRunCheckpointResumes(t *testing.T) {
 	}
 
 	assert.Equal(t, 2, recorder.runs["post_2"], "the step that failed runs again")
+}
+
+// phaseInfoRecorder is a renderer that keeps what it was asked to show.
+type phaseInfoRecorder struct {
+	mu        sync.Mutex
+	started   map[string]output.PhaseInfo
+	completed map[string]output.PhaseInfo
+}
+
+func (r *phaseInfoRecorder) PhaseStart(info output.PhaseInfo) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.started[info.ID] = info
+
+	return nil
+}
+
+func (r *phaseInfoRecorder) PhaseComplete(info output.PhaseInfo) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.completed[info.ID] = info
+
+	return nil
+}
+
+func (r *phaseInfoRecorder) PhaseProgress(output.ProgressInfo) error     { return nil }
+func (r *phaseInfoRecorder) PhaseFailed(output.PhaseInfo, error) error   { return nil }
+func (r *phaseInfoRecorder) PhaseSkipped(output.PhaseInfo, string) error { return nil }
+func (r *phaseInfoRecorder) Finalize(output.Summary) error               { return nil }
+func (r *phaseInfoRecorder) Close() error                                { return nil }
+
+// Parallel workers start steps that overlap, so the reporter must time and
+// number each step by its own start. It kept one start time and one
+// number, so a step that finished after another had started took the
+// other's start time and number.
+func TestReporterTimesOverlappingStepsApart(t *testing.T) {
+	t.Parallel()
+
+	recorder := &phaseInfoRecorder{started: map[string]output.PhaseInfo{}, completed: map[string]output.PhaseInfo{}}
+	reporter := &ProgressReporter{renderer: recorder, progress: &ProvisioningProgress{}, log: zap.NewNop().Sugar()}
+
+	reporter.ReportPhaseStart("first", 0, 3)
+	reporter.ReportPhaseStart("second", 1, 3)
+	reporter.ReportPhaseComplete("first", 0)
+	reporter.ReportPhaseComplete("second", 0)
+
+	for _, name := range []string{"first", "second"} {
+		started, completed := recorder.started[name], recorder.completed[name]
+		assert.Equal(t, started.Number, completed.Number, name)
+		assert.Equal(t, 3, completed.Total, name)
+		assert.Equal(t, started.StartTime, completed.StartTime, name)
+	}
 }
