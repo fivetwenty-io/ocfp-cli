@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/deployments"
@@ -77,6 +78,18 @@ type Manager struct {
 	// the HTTP lookups, so a Manager built without them still fetches.
 	fetchGitHubKeys ssh.KeyFetchFunc
 	fetchGitLabKeys ssh.KeyFetchFunc
+	// tally counts the steps a dry run previewed and the ones it skipped,
+	// for its closing summary.
+	tally dryRunTally
+}
+
+// dryRunTally counts, for a dry run's closing summary, the steps that the
+// run previewed and the steps that it skipped because a resumed run's
+// checkpoint marks them as done. The parallel runner's workers count
+// together, so the counts are atomic.
+type dryRunTally struct {
+	previewed atomic.Int64
+	skipped   atomic.Int64
 }
 
 // task represents a phase execution task. index and total place it in the
@@ -1005,6 +1018,7 @@ func (m *Manager) executePhase(ctx context.Context, phase struct {
 }, index, total int, reporter *ProgressReporter) error {
 	if m.shouldSkipPhase(phase.name) {
 		m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+		m.tally.skipped.Add(1)
 
 		if reporter != nil {
 			reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
@@ -1038,16 +1052,21 @@ func (m *Manager) executePhase(ctx context.Context, phase struct {
 // step through the retry handler as a real run does, so the dry run fails
 // with the error the real run would give before it reached the bastion.
 // The caller handles the error as the real run does, except that a dry run
-// saves no checkpoint.
+// saves no checkpoint. A step that passes counts as previewed.
 func (m *Manager) previewStep(ctx context.Context, name string) error {
 	m.log.Infow("DRY RUN: Would execute phase", "phase", name)
 
 	step := m.dryRunStep(name)
-	if step == nil {
-		return nil
+	if step != nil {
+		err := m.errorHandler.ExecuteWithRetry(ctx, name, func() error { return step(ctx) })
+		if err != nil {
+			return err //nolint:wrapcheck // the caller wraps it as it wraps a real run's step error
+		}
 	}
 
-	return m.errorHandler.ExecuteWithRetry(ctx, name, func() error { return step(ctx) })
+	m.tally.previewed.Add(1)
+
+	return nil
 }
 
 // dryRunStep returns the function that a dry run runs for the init step
@@ -1154,7 +1173,8 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 	// Report the final summary. A dry run's says that nothing changed.
 	if m.reporter != nil {
 		if m.isDryRun() {
-			m.reporter.ReportDryRunSummary(true, duration, len(phases), len(m.progress.Errors))
+			m.reporter.ReportDryRunSummary(duration, m.progress.TotalSteps,
+				int(m.tally.previewed.Load()), int(m.tally.skipped.Load()))
 		} else {
 			m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
 		}
@@ -1171,14 +1191,16 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 
 // reportFailedDryRun closes a dry run that stopped at a step the real run
 // would fail at with a summary that says the dry run failed and changed
-// nothing. It counts the steps before that one as previewed. A real run
-// that fails reports no summary, as it always has.
+// nothing. It counts the steps this run previewed before that one, and the
+// steps a resumed run skipped. A real run that fails reports no summary, as
+// it always has.
 func (m *Manager) reportFailedDryRun() {
 	if !m.isDryRun() || m.reporter == nil {
 		return
 	}
 
-	m.reporter.ReportDryRunFailure(time.Since(m.progress.StartTime), m.progress.TotalSteps, m.progress.CompletedSteps)
+	m.reporter.ReportDryRunFailure(time.Since(m.progress.StartTime), m.progress.TotalSteps,
+		int(m.tally.previewed.Load()), int(m.tally.skipped.Load()))
 }
 
 // clearCheckpoints removes the bloc's resume checkpoint once a run has
@@ -1490,6 +1512,7 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 	for index, phase := range phases {
 		if m.shouldSkipPhase(phase.name) {
 			m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
+			m.tally.skipped.Add(1)
 
 			if m.reporter != nil {
 				m.reporter.ReportPhaseSkipped(phase.name, "resumed and previously completed")
@@ -1573,6 +1596,8 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<- error) {
 	for task := range tasks {
 		if m.shouldSkipPhase(task.name) {
+			m.tally.skipped.Add(1)
+
 			if m.reporter != nil {
 				m.reporter.ReportPhaseSkipped(task.name, "resumed and previously completed")
 			}

@@ -752,20 +752,18 @@ func TestDryRunFinalSummarySaysNothingChanged(t *testing.T) {
 		var out bytes.Buffer
 
 		m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, &unconnectedSSHClient{})
-		m.progress.StartTime = time.Now()
 		m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
 
-		m.finalizeInitialization(context.Background(), make([]struct {
-			name string
-			fn   func(context.Context) error
-		}, 3))
+		require.NoError(t, m.executeInitializationPhases(context.Background()))
 
+		steps := len(m.getInitializationPhases())
 		event := summaryEvent(t, out.String())
 		assert.Equal(t, true, event["dry_run"])
 		assert.Equal(t, false, event["changed"])
 		assert.Equal(t, "Dry run finished without changing anything", event["message"])
 		assert.InDelta(t, 0, event["completed_phases"], 0)
-		assert.InDelta(t, 3, event["previewed_phases"], 0)
+		assert.InDelta(t, steps, event["previewed_phases"], 0)
+		assert.InDelta(t, steps, event["total_phases"], 0)
 	})
 }
 

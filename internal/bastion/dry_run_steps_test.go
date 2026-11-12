@@ -331,6 +331,91 @@ func TestFailedDryRunSummarySaysNothingChanged(t *testing.T) {
 	})
 }
 
+// A resumed dry run skips the steps that the checkpoint marks as done, as
+// the real run does. Its summary counts them as skipped, and counts as
+// previewed only the steps that this run previewed, whether it finishes or
+// stops at a step the real run would fail at.
+func TestResumedDryRunSummaryCountsSkippedSteps(t *testing.T) {
+	// system_setup and directories come before config_files in both step
+	// lists, which is the fourth of the sequential list and the seventh of
+	// the parallel one.
+	for _, parallel := range []bool{false, true} {
+		for _, fails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("parallel=%t fails=%t", parallel, fails), func(t *testing.T) {
+				cfg := dryRunBloc(t)
+				dryRunWorkstation(t, cfg)
+
+				if fails {
+					require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+				}
+
+				var out bytes.Buffer
+
+				m, _, _ := dryRunManager(t, cfg,
+					&ProvisioningOptions{DryRun: true, Resume: true, Parallel: parallel}, &unconnectedSSHClient{})
+				m.progress.Checkpoints = map[string]bool{"system_setup": true, "directories": true}
+				m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+				err := m.executeInitializationPhases(context.Background())
+
+				total := len(m.getInitializationPhases())
+				if parallel {
+					total = len(m.parallelPrePhaseList()) + len(m.parallelParPhaseList()) + len(m.parallelPostPhaseList())
+				}
+
+				previewed, failed := total-2, 0
+				if fails {
+					require.ErrorIs(t, err, ErrOCFPConfigurationFileNotFound)
+
+					previewed, failed = 1, 1
+					if parallel {
+						previewed = 4
+					}
+				} else {
+					require.NoError(t, err)
+				}
+
+				event := summaryEvent(t, out.String())
+				assert.Equal(t, true, event["dry_run"])
+				assert.Equal(t, !fails, event["success"])
+				assert.InDelta(t, total, event["total_phases"], 0)
+				assert.InDelta(t, previewed, event["previewed_phases"], 0)
+				assert.InDelta(t, 2, event["skipped_phases"], 0)
+				assert.InDelta(t, failed, event["failed_phases"], 0)
+			})
+		}
+	}
+
+	// binary_tools runs in the parallel batch, so the batch's workers count
+	// it as skipped, not the sequential steps around them.
+	t.Run("parallel batch", func(t *testing.T) {
+		cfg := dryRunBloc(t)
+		dryRunWorkstation(t, cfg)
+
+		var out bytes.Buffer
+
+		m, _, _ := dryRunManager(t, cfg,
+			&ProvisioningOptions{DryRun: true, Resume: true, Parallel: true}, &unconnectedSSHClient{})
+		m.progress.Checkpoints = map[string]bool{"system_setup": true, "directories": true, "binary_tools": true}
+		m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+		var batch []string
+		for _, p := range m.parallelParPhaseList() {
+			batch = append(batch, p.name)
+		}
+
+		require.Contains(t, batch, "binary_tools")
+		require.NoError(t, m.executeInitializationPhases(context.Background()))
+
+		total := len(m.parallelPrePhaseList()) + len(m.parallelParPhaseList()) + len(m.parallelPostPhaseList())
+
+		event := summaryEvent(t, out.String())
+		assert.InDelta(t, 3, event["skipped_phases"], 0)
+		assert.InDelta(t, total-3, event["previewed_phases"], 0)
+		assert.InDelta(t, 0, event["failed_phases"], 0)
+	})
+}
+
 // A real run that fails reports no closing summary, as before.
 func TestFailedRealRunReportsNoSummary(t *testing.T) {
 	cfg := dryRunBloc(t)
