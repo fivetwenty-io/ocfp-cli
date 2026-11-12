@@ -417,7 +417,7 @@ func (f *initFlags) initializeBastionFromFlags(ctx context.Context, cfg *config.
 		return err
 	}
 
-	return runBastionInit(ctx, cfg, mode, f.bastionRunParams())
+	return runBastionInitFn(ctx, cfg, mode, f.bastionRunParams())
 }
 
 // initializeBastionFull runs the full bastion init. "init all" refuses the
@@ -426,8 +426,8 @@ func (f *initFlags) initializeBastionFull(ctx context.Context, cfg *config.Confi
 	return runBastionInitFn(ctx, cfg, bastionModeFull, f.bastionRunParams())
 }
 
-// runBastionInitFn runs the full bastion init for init all. Tests replace
-// it to exercise the components that follow without a bastion.
+// runBastionInitFn runs bastion init for both init bastion and init all.
+// Tests replace it to run either path without a bastion.
 var runBastionInitFn = runBastionInit //nolint:gochecknoglobals // intentional seam for testing
 
 // bastionRunParams collects the settings every bastion init mode shares.

@@ -226,3 +226,14 @@ func TestInitAllRealRunStillRunsEachComponent(t *testing.T) {
 	assert.Contains(t, err.Error(), "BOSH initialization failed")
 	assert.Equal(t, []bool{false}, *bastionCalls)
 }
+
+// init bastion runs bastion init through the same seam as init all, so
+// a test can stand in for the bastion on either path.
+func TestInitBastionRunsThroughTheBastionSeam(t *testing.T) {
+	cfg, _, _ := connectivityCheckFixture(t, "", 0)
+	bastionCalls := stubBastionInit(t)
+
+	f := &initFlags{dryRun: true}
+	require.NoError(t, f.executeInitialization(context.Background(), makeCmdNoBloc(t), cfg, RoleBastion))
+	assert.Equal(t, []bool{true}, *bastionCalls)
+}
