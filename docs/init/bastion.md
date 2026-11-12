@@ -624,6 +624,8 @@ ocfp --bloc 520-aws-wayne init bastion
 ocfp --bloc 520-aws-wayne init bastion --dry-run
 ```
 
+A full dry run lists the files that init would write, and then each phase it would run. The list starts with the config files in the bastion user's home directory and their modes, and then it covers the system files, which are `/etc/profile.d/ocfp.sh`, the entries init sets in `/etc/environment`, and the APT keys and repository lines. It doesn't read the bastion, so it can't show how a file differs from the copy that's already there. When init only creates a file that's missing, the dry run lists that file as one it creates unless it's already there. A full dry run that we start on the bastion itself lists each phase but prints no list of files.
+
 ### Force Re-initialization
 ```bash
 # Completely re-provision bastion
