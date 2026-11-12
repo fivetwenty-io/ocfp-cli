@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/safedir"
 	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
@@ -59,8 +60,13 @@ type Exit struct {
 // The job id must match ^[a-z0-9][a-z0-9-]{0,63}$, so that it names one entry
 // directly under root. The root must be a directory, not a symbolic link,
 // owned by this user, and not writable by group or other, because whoever
-// can write it can plant a job's spool. CreateSpool makes a missing root with
-// mode 0700, but never its parent. An existing spool path must pass the same
+// can write it can plant a job's spool. Every directory above the root, and
+// every symbolic link on the way to it, must be owned by this user or by
+// root, and a directory above it that group or other can write must be
+// sticky, because whoever can rename an ancestor can swap in their own
+// root. CreateSpool cleans root first, so a ".." in it climbs the names
+// as written and not through a link. It makes a missing root with mode
+// 0700, but never its parent. An existing spool path must pass the same
 // checks, so a file, a symbolic link, or a directory that others can write is
 // never taken for a job's spool.
 func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
@@ -71,6 +77,8 @@ func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 	if root == "" {
 		return Spool{}, false, errors.New("spool: no spool root")
 	}
+
+	root = filepath.Clean(root)
 
 	err = prepareRoot(root)
 	if err != nil {
@@ -96,10 +104,16 @@ func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 	return s, false, nil
 }
 
-// prepareRoot makes root when it is missing and checks that it is a private
-// directory.
+// prepareRoot checks that no other user can replace root by way of one of
+// its ancestors, makes root when it is missing, and checks that it is a
+// private directory.
 func prepareRoot(root string) error {
-	err := os.Mkdir(root, 0o700)
+	err := safedir.Ancestors(root)
+	if err != nil {
+		return fmt.Errorf("spool: %w", err)
+	}
+
+	err = os.Mkdir(root, 0o700)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("spool: make root: %w", err)
 	}

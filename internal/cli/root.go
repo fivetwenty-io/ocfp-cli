@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -91,11 +93,22 @@ func Execute() {
 	releaseCommandLock(lock)
 
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		code := reportError(os.Stderr, err)
 		// os.Exit skips deferred calls; release the signal handler explicitly.
 		stop()
-		os.Exit(1) //nolint:gocritic // stop() invoked above before exit
+		os.Exit(code) //nolint:gocritic // stop() invoked above before exit
 	}
+}
+
+// reportError prints err to w unless the command has already reported it,
+// and returns the exit code for it.
+func reportError(w io.Writer, err error) int {
+	var reported *commands.ExitError
+	if !errors.As(err, &reported) {
+		_, _ = fmt.Fprintln(w, err)
+	}
+
+	return commands.ExitCode(err)
 }
 
 // flagConfig holds all flag values.
@@ -276,7 +289,7 @@ func createPreRunHandler(blocName *string, lock *lockInfo) func(*cobra.Command, 
 			Debug:      viper.GetBool("debug"),
 			Verbose:    viper.GetBool("verbose"),
 			Trace:      viper.GetBool("trace"),
-			NoLog:      viper.GetBool("no_log"),
+			NoLog:      viper.GetBool("no_log") || fileLogDisabled(commandName),
 			LogDir:     "",
 			BlocName:   effectiveBlocName,
 			Command:    commandName,
@@ -393,9 +406,23 @@ func setupCommandTracking(lock *lockInfo, commandName, subcommandName string) {
 // an active-command lock. The logs command reads the locks and must not
 // see itself among them, and the config group (and its deprecated
 // top-level migrate alias) moves the .active directory the locks live in.
+// The job and owner-record groups, and version, which a caller runs before
+// every job, run once per job on a bastion and leave nothing behind them.
 func commandTrackingDisabled(commandName string) bool {
 	switch commandName {
-	case "logs", "config", "migrate":
+	case "logs", "config", "migrate", "job", "owner-record", "version":
+		return true
+	default:
+		return false
+	}
+}
+
+// fileLogDisabled reports whether a top-level command runs without a log
+// file, whatever --no-log says. These commands run once per job on a
+// bastion, so a log file each would pile up there.
+func fileLogDisabled(commandName string) bool {
+	switch commandName {
+	case "job", "owner-record", "version":
 		return true
 	default:
 		return false

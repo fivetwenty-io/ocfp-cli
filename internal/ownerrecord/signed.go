@@ -49,7 +49,7 @@ func SigningBytes(payload []byte) []byte {
 // would refuse, including one whose signer is not its owner and one whose
 // signature does not verify against r.OwnerPublicKey.
 func Seal(r Record, sign func(msg []byte) ([]byte, error)) (Signed, error) {
-	return seal(r, sign, Open)
+	return seal(r, sign, SigningBytes, Open)
 }
 
 // SealWithKey is Seal for a record that another instance signs, such as one
@@ -58,12 +58,19 @@ func Seal(r Record, sign func(msg []byte) ([]byte, error)) (Signed, error) {
 // and sign must sign with its private key. SealWithKey refuses a record that
 // OpenWithKey would refuse with the same id and key.
 func SealWithKey(r Record, signerKey ed25519.PublicKey, sign func(msg []byte) ([]byte, error)) (Signed, error) {
-	return seal(r, sign, func(sf Signed) (Record, error) {
+	return seal(r, sign, SigningBytes, func(sf Signed) (Record, error) {
 		return OpenWithKey(sf, r.SignerID, signerKey)
 	})
 }
 
-func seal(r Record, sign func(msg []byte) ([]byte, error), open func(Signed) (Record, error)) (Signed, error) {
+// seal encodes r and signs signingBytes of the encoding, and refuses a signed
+// form that open does not accept.
+func seal(
+	r Record,
+	sign func(msg []byte) ([]byte, error),
+	signingBytes func(payload []byte) []byte,
+	open func(Signed) (Record, error),
+) (Signed, error) {
 	if sign == nil {
 		return Signed{}, errors.New("seal owner record: no signer")
 	}
@@ -79,7 +86,7 @@ func seal(r Record, sign func(msg []byte) ([]byte, error), open func(Signed) (Re
 		return Signed{}, fmt.Errorf("seal owner record: encode payload: %w", err)
 	}
 
-	sig, err := sign(SigningBytes(payload))
+	sig, err := sign(signingBytes(payload))
 	if err != nil {
 		return Signed{}, fmt.Errorf("seal owner record: sign: %w", err)
 	}
@@ -137,6 +144,12 @@ func OpenWithKey(sf Signed, signerID string, signerKey ed25519.PublicKey) (Recor
 // open verifies sf with key and binds the record's signer to signerID. A nil
 // key means the payload's own owner key, which binds the signer to the owner.
 func open(sf Signed, key ed25519.PublicKey, signerID string) (Record, error) {
+	return openWith(sf, key, signerID, SigningBytes)
+}
+
+// openWith is open for a signed form whose signature covers
+// signingBytes(sf.Payload).
+func openWith(sf Signed, key ed25519.PublicKey, signerID string, signingBytes func(payload []byte) []byte) (Record, error) {
 	if sf.Format != FormatV1 {
 		return Record{}, invalid("unsupported owner record format %d, want %d", sf.Format, FormatV1)
 	}
@@ -158,7 +171,7 @@ func open(sf Signed, key ed25519.PublicKey, signerID string) (Record, error) {
 		key = ed25519.PublicKey(r.OwnerPublicKey)
 	}
 
-	if !ed25519.Verify(key, SigningBytes(sf.Payload), sf.Signature) {
+	if !ed25519.Verify(key, signingBytes(sf.Payload), sf.Signature) {
 		return Record{}, unsigned("owner record signature does not verify")
 	}
 
