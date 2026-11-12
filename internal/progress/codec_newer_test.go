@@ -21,7 +21,7 @@ func TestDecodeNewerRecordWithoutError(t *testing.T) {
 		t.Fatalf("header: %v", err)
 	}
 
-	if h.WireContract != 1 || h.Producer != "ocfp" || h.Version != "9.9.9-fixture" || h.JobID != "job-fixture-01" {
+	if h.WireContract != 2 || h.Producer != "ocfp" || h.Version != "9.9.9-fixture" || h.JobID != "job-fixture-01" {
 		t.Errorf("header = %+v, known fields were not all read", h)
 	}
 

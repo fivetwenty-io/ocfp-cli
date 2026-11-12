@@ -77,6 +77,8 @@ func goodRequest() Request {
 		InstallationID: "inst-fixture-01",
 		InstanceID:     "instance-fixture-a",
 		Epoch:          3,
+		Org:            "org-fixture",
+		Bloc:           "bloc-fixture",
 		Env:            map[string]string{"LANG": "C"},
 		IssuedAt:       testNow.Add(-time.Minute),
 	}
@@ -223,8 +225,13 @@ func faults() []fault {
 			}
 		}},
 		{"newer contract", progress.CodeWireContractUnsupported, "wire contract", func(s *scenario) {
-			s.request.WireContract = 2
+			s.request.WireContract = progress.WireContract + 1
 		}},
+		{"older contract", progress.CodeWireContractUnsupported, "names no org or bloc", func(s *scenario) {
+			s.request.WireContract = progress.WireContract - 1
+		}},
+		{"other org", progress.CodeTenantMismatch, "names org", func(s *scenario) { s.request.Org = "org-other" }},
+		{"other bloc", progress.CodeTenantMismatch, "names bloc", func(s *scenario) { s.request.Bloc = "bloc-other" }},
 		{"stale request", progress.CodeJobRequestInvalid, "issued", func(s *scenario) {
 			s.request.IssuedAt = s.now.Add(-11 * time.Minute)
 		}},
@@ -318,6 +325,7 @@ func mustMarshalString(b []byte) string {
 func requestsEqual(a, b Request) bool {
 	return a.WireContract == b.WireContract && a.JobID == b.JobID && a.Verb == b.Verb &&
 		a.InstallationID == b.InstallationID && a.InstanceID == b.InstanceID && a.Epoch == b.Epoch &&
+		a.Org == b.Org && a.Bloc == b.Bloc &&
 		maps.Equal(a.Env, b.Env) && a.Interactive == b.Interactive && a.IssuedAt.Equal(b.IssuedAt)
 }
 
@@ -488,7 +496,7 @@ func TestCheckOwnerZeroContractAndFormat(t *testing.T) {
 		t.Parallel()
 
 		st := storeWith(t, liveRecord())
-		payload := replaceOnce(t, mustMarshal(t, goodRequest()), `"wireContract":1,`, ``)
+		payload := replaceOnce(t, mustMarshal(t, goodRequest()), `"wireContract":2,`, ``)
 
 		_, _, err := checkOwner(t.Context(), signPayload(payload, ownerKey()), st, fixedClock{testNow})
 		wantRefusal(t, err, progress.CodeWireContractUnsupported)
@@ -715,7 +723,7 @@ func TestCheckOwnerRefusesAmbiguousPayload(t *testing.T) {
 	good := mustMarshal(t, goodRequest())
 
 	newer := goodRequest()
-	newer.WireContract = 2
+	newer.WireContract = progress.WireContract + 1
 	newerPayload := mustMarshal(t, newer)
 
 	for _, tc := range []struct {

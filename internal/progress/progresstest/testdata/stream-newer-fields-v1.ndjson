@@ -1,4 +1,4 @@
-{"kind":"header","seq":0,"time":"2026-11-10T09:00:00Z","body":{"wireContract":1,"producer":"ocfp","version":"9.9.9-fixture","jobId":"job-fixture-01","futureField":{"mode":"fast"}},"futureRecordField":true}
+{"kind":"header","seq":0,"time":"2026-11-10T09:00:00Z","body":{"wireContract":2,"producer":"ocfp","version":"9.9.9-fixture","jobId":"job-fixture-01","futureField":{"mode":"fast"}},"futureRecordField":true}
 {"kind":"telemetry","seq":1,"time":"2026-11-10T09:00:00Z","body":{"cpu":0.25,"window":5}}
 {"kind":"event","seq":2,"time":"2026-11-10T09:00:00Z","body":{"kind":"step_started","step":"noop"}}
 {"kind":"log","seq":3,"time":"2026-11-10T09:00:00Z","body":{"stream":"stdout","line":"{\"hostname\":\"host-fixture\",\"version\":\"0.0.0-fixture\"}"}}
