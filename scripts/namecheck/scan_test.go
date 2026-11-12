@@ -1530,3 +1530,131 @@ func TestScanFailsOnReplacementCharacterFromTrustedDecoder(t *testing.T) {
 		t.Fatalf("code %d out %q, want %q", code, out, want)
 	}
 }
+
+func TestScanFindsTermsSplitByInvisibleCharacters(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+
+	splitters := map[string]string{
+		"zero width space":          "\u200b",
+		"zero width non-joiner":     "\u200c",
+		"zero width joiner":         "\u200d",
+		"word joiner":               "\u2060",
+		"soft hyphen":               "\u00ad",
+		"byte order mark":           "\ufeff",
+		"left-to-right mark":        "\u200e",
+		"right-to-left mark":        "\u200f",
+		"left-to-right embed":       "\u202a",
+		"right-to-left override":    "\u202e",
+		"left-to-right isolate":     "\u2066",
+		"c0 escape":                 "\x1b",
+		"c0 bell":                   "\x07",
+		"c1 control 0x81":           "\u0081",
+		"c1 control 0x9f":           "\u009f",
+		"c1 next line":              "\u0085",
+		"variation selector 1":      "\ufe00",
+		"variation selector 16":     "\ufe0f",
+		"variation selector 17":     "\U000e0100",
+		"variation selector 256":    "\U000e01ef",
+		"combining grapheme joiner": "\u034f",
+	}
+	for name, sep := range splitters {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p := writeFile(t, "f.txt", "first line\nthe zebra"+sep+"corp lab\n")
+			code, out, errs := runScan(t, getenv, p)
+			want := "CLIENT_NAME_FOUND " + p + ":2:5 term 1\n"
+			if code != 1 || out != want {
+				t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+			}
+			for _, leak := range []string{"zebracorp", "zebra", "corp"} {
+				if strings.Contains(strings.ToLower(out+errs), leak) {
+					t.Fatalf("output leaks %q: %q %q", leak, out, errs)
+				}
+			}
+		})
+	}
+}
+
+func TestScanFindsTermSplitAtEveryPosition(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	text := "z\u200be\u200bb\u200dr\u0081a\u00adc\u200co\ufeffr\u2060p"
+	p := writeFile(t, "g.txt", text+"\n")
+	code, out, errs := runScan(t, getenv, p)
+	want := "CLIENT_NAME_FOUND " + p + ":1:1 term 1\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestScanFindsTermsSplitByInvisibleBytesUnderLatin1(t *testing.T) {
+	t.Parallel()
+	// ISO-8859-1 defines every byte, so 0x81 and 0xAD decode to a C1
+	// control and a soft hyphen instead of failing the scan.
+	for name, b := range map[string]string{"0x81": "\x81", "0xad": "\xad"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hash, code, out := scanOneCommit(t, "ISO-8859-1", "Visit zebra"+b+"corp today\n")
+			want := "CLIENT_NAME_FOUND commit " + hash + " message term 1\n"
+			if code != 1 || out != want {
+				t.Fatalf("code %d out %q, want %q", code, out, want)
+			}
+		})
+	}
+}
+
+func TestScanInvisibleCharactersInTermListAreDropped(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	// The term itself carries a zero-width space, so it must fold to the
+	// same runes as the plain text.
+	getenv := setupConfig(t, []byte("zebra\u200bcorp\n"), 0o600)
+	p := writeFile(t, "f.txt", "the zebracorp lab\n")
+	code, out, errs := runScan(t, getenv, p)
+	want := "CLIENT_NAME_FOUND " + p + ":1:5 term 1\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestNormalizeKeepsTabsAndLineBreaks(t *testing.T) {
+	t.Parallel()
+	got, cols := normalize("a\tb\r\nc\nd")
+	if string(got) != "a\tb\r\nc\nd" {
+		t.Fatalf("got %q", string(got))
+	}
+	if len(cols) != len(got) {
+		t.Fatalf("cols %d runes %d", len(cols), len(got))
+	}
+	got, _ = normalize("a\u200bb\u00adc\u0085d\x1be\ufe0ff\u034fg")
+	if string(got) != "abcdefg" {
+		t.Fatalf("got %q, want abcdefg", string(got))
+	}
+}
+
+func TestScanOrdinaryTextWithTabsAndNewlinesBehavesAsBefore(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	p := writeFile(t, "f.txt", "clean\tline\r\n\tzebracorp\there\nzebra\tcorp\n")
+	code, out, errs := runScan(t, getenv, p)
+	want := "CLIENT_NAME_FOUND " + p + ":2:2 term 1\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+	clean := writeFile(t, "c.txt", "plain\ttext\r\nwith\nbreaks\n")
+	if code, out, errs := runScan(t, getenv, clean); code != 0 || out != "" || errs != "" {
+		t.Fatalf("code %d out %q err %q, want clean", code, out, errs)
+	}
+}

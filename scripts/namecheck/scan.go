@@ -181,8 +181,23 @@ func isAlnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 func isSep(r rune) bool { return r == '.' || r == '-' || r == '_' || r == ' ' }
 
-// normalize folds the whole of s with NFKC, lowercases it, and drops
-// separators that sit between two single letters. It returns the folded
+// isInvisible reports whether r renders as nothing and could sit inside a
+// term to split it. That covers format characters (Cf), control characters
+// (Cc) other than tab, line feed, and carriage return, the variation
+// selectors, and the combining grapheme joiner.
+func isInvisible(r rune) bool {
+	switch {
+	case r == '\t' || r == '\n' || r == '\r':
+		return false
+	case r == 0x034f, r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef:
+		return true
+	}
+
+	return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r)
+}
+
+// normalize folds the whole of s with NFKC, lowercases it, drops invisible
+// characters, and drops separators that sit between two single letters. It returns the folded
 // runes and, for each, the one-based column in s of the start of the input
 // segment that produced it.
 func normalize(s string) ([]rune, []int) {
@@ -198,6 +213,10 @@ func normalize(s string) ([]rune, []int) {
 		col := utf8.RuneCountInString(s[:start]) + 1
 
 		for _, r := range string(it.Next()) {
+			if isInvisible(r) {
+				continue
+			}
+
 			runes = append(runes, unicode.ToLower(r))
 			cols = append(cols, col)
 		}
