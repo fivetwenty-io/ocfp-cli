@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/spf13/cobra"
@@ -280,7 +281,7 @@ func writeHostBlock(sb *strings.Builder, hostAlias, hostName, user, keyPath, pro
 	// Without a bloc key, leave identity selection to the rest of the
 	// user's ssh config and agent.
 	if keyPath != "" {
-		fmt.Fprintf(sb, "    IdentityFile %s\n", keyPath)
+		fmt.Fprintf(sb, "    IdentityFile %s\n", bastionssh.QuoteConfigPath(keyPath))
 	}
 
 	if proxyJump != "" {

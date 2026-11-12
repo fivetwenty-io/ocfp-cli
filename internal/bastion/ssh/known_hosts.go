@@ -98,6 +98,14 @@ func sshConfigPath(path string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path) + `"`
 }
 
+// QuoteConfigPath writes path as the value of an ssh_config file option,
+// such as IdentityFile, so that ssh reads back exactly path. It escapes %
+// and quotes the path as sshConfigPath does, and has the same limit for
+// "${".
+func QuoteConfigPath(path string) string {
+	return sshConfigPath(path)
+}
+
 // checkSSHConfigPath reports a path that sshConfigPath cannot pass to ssh
 // intact: one holding "${", which ssh expands as an environment variable.
 func checkSSHConfigPath(path string) error {
