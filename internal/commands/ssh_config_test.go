@@ -120,7 +120,7 @@ func TestGenerateSSHConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := generateSSHConfig(tt.bastionIP, tt.blocName, tt.user, tt.keyPath, tt.internalHosts)
+			result := sshConfigHostBlocks(t, generateSSHConfig(tt.bastionIP, tt.blocName, tt.user, tt.keyPath, tt.internalHosts))
 			require.NotEmpty(t, result)
 
 			for _, expected := range tt.checkContains {
@@ -146,13 +146,40 @@ func TestGenerateSSHConfigStructure(t *testing.T) {
 	)
 
 	blocks := strings.Split(strings.TrimSpace(result), "\n\n")
-	require.Len(t, blocks, 2, "Expected 2 Host blocks (bastion + bosh)")
+	require.Len(t, blocks, 3, "Expected the header comment and 2 Host blocks (bastion + bosh)")
 
-	// First block should be bastion
-	assert.True(t, strings.HasPrefix(blocks[0], "Host prod-bastion"), "First block should be bastion")
+	assert.True(t, strings.HasPrefix(blocks[0], "# "), "First part should be the header comment")
 
-	// Second block should be internal host
-	assert.True(t, strings.HasPrefix(blocks[1], "Host prod-bosh"), "Second block should be bosh")
+	// Then the bastion block
+	assert.True(t, strings.HasPrefix(blocks[1], "Host prod-bastion"), "Second part should be bastion")
+
+	// Then the internal host
+	assert.True(t, strings.HasPrefix(blocks[2], "Host prod-bosh"), "Third part should be bosh")
+}
+
+// ssh keeps the first value it finds for an option, so an earlier "Host *"
+// block that turns host key checking off wins over the bastion block. The
+// output says where the blocks have to go, and so does the help.
+func TestSSHConfigSaysTheBlocksGoBeforeHostStar(t *testing.T) {
+	t.Parallel()
+
+	result := generateSSHConfig("203.0.113.10", "prod", "ubuntu", "", nil)
+	header := strings.Split(result, "\n\n")[0]
+
+	for _, want := range []string{`"Host *"`, "Include ~/.ssh/config.d/ocfp-prod", "near the top of\n# ~/.ssh/config"} {
+		assert.Contains(t, header, want)
+	}
+
+	for _, line := range strings.Split(header, "\n") {
+		assert.True(t, strings.HasPrefix(line, "#"), "header line %q is not a comment", line)
+	}
+
+	help := newSSHConfigCmd()
+	for _, want := range []string{`"Host *"`, "Include ~/.ssh/config.d/ocfp-<bloc>"} {
+		assert.Contains(t, help.Long, want)
+	}
+
+	assert.NotContains(t, help.Example, ">> ~/.ssh/config\n", "the example should not append after any Host * block")
 }
 
 // TestGenerateSSHConfigChecksOnlyTheBastionHostKey proves the bastion block
@@ -170,7 +197,7 @@ func TestGenerateSSHConfigChecksOnlyTheBastionHostKey(t *testing.T) {
 		map[string]string{"bosh": "10.0.0.5"},
 	)
 
-	blocks := strings.Split(strings.TrimSpace(result), "\n\n")
+	blocks := strings.Split(strings.TrimSpace(sshConfigHostBlocks(t, result)), "\n\n")
 	require.Len(t, blocks, 2)
 
 	assert.Contains(t, blocks[0], "    StrictHostKeyChecking accept-new\n")
@@ -275,4 +302,16 @@ func TestExtractInternalHosts(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// sshConfigHostBlocks returns the generated ssh config without the header
+// comment that opens it.
+func sshConfigHostBlocks(t *testing.T, result string) string {
+	t.Helper()
+
+	header, rest, found := strings.Cut(result, "\n\n")
+	require.True(t, found, "the output has no header comment")
+	require.True(t, strings.HasPrefix(header, "# "), "the output does not open with a comment")
+
+	return rest
 }

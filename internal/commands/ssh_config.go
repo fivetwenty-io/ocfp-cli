@@ -25,16 +25,24 @@ func newSSHConfigCmd() *cobra.Command {
 		Short: "Generate SSH config entries for bloc hosts",
 		Long: `Generates SSH config blocks for the bloc's bastion and internal hosts.
 
-Output is suitable for appending to ~/.ssh/config. Internal hosts are
-discovered from state outputs and configured with ProxyJump through the
-bastion.
+Internal hosts are discovered from state outputs and configured with
+ProxyJump through the bastion.
 
 The bastion block checks the bastion's host key with
 StrictHostKeyChecking accept-new against your default known_hosts, the
 same file ocfp itself uses, and the internal blocks inherit that check
 on their jump through it. The internal hosts are not checked. Blocks you
 appended with an earlier version turn the check off for the bastion;
-delete them and append the output again to pick up the check.
+delete them and add the output again to pick up the check.
+
+ssh keeps the first value it finds for each option, so a "Host *" block
+earlier in ~/.ssh/config that sets StrictHostKeyChecking or
+UserKnownHostsFile overrides these blocks and turns the bastion's check
+off. Put the blocks before any "Host *" block. The simplest way is to
+save the output to its own file and pull it in with an Include line at
+the top of ~/.ssh/config, before any Host or Match line:
+
+  Include ~/.ssh/config.d/ocfp-<bloc>
 
 --key names a private key to write as IdentityFile instead of the bloc key.
 When neither --key nor the bloc's SSH key is on this machine, the blocks
@@ -43,8 +51,10 @@ keys, and ssh config decide how to log in.`,
 		Example: `  # Generate SSH config for a bloc
   ocfp ssh config --bloc production
 
-  # Append to SSH config
-  ocfp ssh config --bloc production >> ~/.ssh/config
+  # Save to its own file, then add "Include ~/.ssh/config.d/ocfp-production"
+  # at the top of ~/.ssh/config
+  mkdir -p ~/.ssh/config.d
+  ocfp ssh config --bloc production > ~/.ssh/config.d/ocfp-production
 
   # Use a specific SSH key
   ocfp ssh config --bloc production --key ~/.ssh/id_ed25519`,
@@ -225,8 +235,25 @@ func reservedComponentForKey(key string, subnetNames []string) string {
 	return ""
 }
 
+// writeSSHConfigHeader writes the comment that opens the output. ssh keeps
+// the first value it finds for each option, so it says where the blocks
+// must go for the bastion's host key check to hold.
+func writeSSHConfigHeader(sb *strings.Builder, blocName string) {
+	fmt.Fprintf(sb, `# ocfp ssh config for bloc %[1]s.
+# ssh keeps the first value it finds for each option, so these blocks must
+# come before any "Host *" block that sets StrictHostKeyChecking or
+# UserKnownHostsFile, or that block turns off the bastion's host key check.
+# Save this output to its own file and pull it in near the top of
+# ~/.ssh/config, before any Host or Match line, with:
+#   Include ~/.ssh/config.d/ocfp-%[1]s
+
+`, blocName)
+}
+
 func generateSSHConfig(bastionIP, blocName, user, keyPath string, internalHosts map[string]string) string {
 	var sb strings.Builder
+
+	writeSSHConfigHeader(&sb, blocName)
 
 	writeHostBlock(&sb, blocName+"-bastion", bastionIP, user, keyPath, "")
 
