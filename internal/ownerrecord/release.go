@@ -43,15 +43,16 @@ func openRelease(sf Signed) (Record, error) {
 // Release removes the stored record when proof is its owner's release proof
 // for it. expect must be the stored record's generation. The proof must be
 // signed over ReleaseSigningContext by the stored record's owner key, and it
-// must name the stored record's installation, owner, owner key, epoch,
-// generation, head, and signing time.
+// must name the stored record's installation, org, bloc, owner, owner key,
+// epoch, generation, head, and signing time.
 //
 // Release returns ErrNoRecord when there is no record, an error wrapping
 // ErrStoredRecordInvalid when the stored record does not open, and an error
 // wrapping ErrRecordChanged when the stored generation is not expect. It
 // refuses, with a *progress.Refusal, a proof that does not verify against the
 // stored owner key (REQUEST_UNSIGNED), a proof that another key signed or
-// that names another record (OWNER_MISMATCH), and a proof that is not a valid
+// that names another record (OWNER_MISMATCH), a proof that names another org
+// or bloc (ORG_BLOC_MISMATCH), and a proof that is not a valid
 // signed form (JOB_REQUEST_INVALID). A refused release leaves the record as
 // it was. A release keeps the lock file, so the directory can be removed
 // afterwards.
@@ -127,6 +128,10 @@ func checkRelease(stored Record, proof Signed) error {
 	switch {
 	case pr.InstallationID != stored.InstallationID:
 		return mismatch("the release proof names another installation")
+	case pr.Org != stored.Org:
+		return orgBlocMismatch(fmt.Sprintf("the release proof names org %q, the stored record serves org %q", pr.Org, stored.Org))
+	case pr.Bloc != stored.Bloc:
+		return orgBlocMismatch(fmt.Sprintf("the release proof names bloc %q, the stored record serves bloc %q", pr.Bloc, stored.Bloc))
 	case pr.OwnerInstanceID != stored.OwnerInstanceID:
 		return mismatch("the release proof names another owner")
 	case !bytes.Equal(pr.OwnerPublicKey, stored.OwnerPublicKey):
@@ -146,4 +151,8 @@ func checkRelease(stored Record, proof Signed) error {
 
 func mismatch(msg string) error {
 	return &progress.Refusal{Code: progress.CodeOwnerMismatch, Message: msg}
+}
+
+func orgBlocMismatch(msg string) error {
+	return &progress.Refusal{Code: progress.CodeOrgBlocMismatch, Message: msg}
 }

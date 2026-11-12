@@ -45,8 +45,9 @@ const (
 	// fault in its own request.
 	CodeOwnerRecordInvalid Code = "OWNER_RECORD_INVALID"
 
-	// CodeOrgBlocMismatch reports a request for an org or a bloc other than
-	// the one the host's owner record names.
+	// CodeOrgBlocMismatch reports a request, or a proof that gives up the
+	// owner record, for an org or a bloc other than the one the host's owner
+	// record names.
 	CodeOrgBlocMismatch Code = "ORG_BLOC_MISMATCH"
 )
 
