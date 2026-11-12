@@ -515,3 +515,21 @@ func splitYAMLDocs(yamlStr string) []string {
 
 	return docs
 }
+
+// A phase that never recorded a start has no elapsed time, so its failure
+// reports none instead of the time since the zero time.
+func TestYAMLRenderer_PhaseFailedWithoutAStartTime(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewYAMLRenderer(&buf)
+	r.now = func() time.Time { return fixedTime }
+
+	require.NoError(t, r.PhaseFailed(PhaseInfo{ID: "test_phase", Number: 1, Total: 2}, assert.AnError))
+
+	docs := splitYAMLDocs(buf.String())
+	require.Len(t, docs, 1)
+
+	var event map[string]interface{}
+	require.NoError(t, yaml.Unmarshal([]byte(docs[0]), &event))
+	assert.Equal(t, "phase_failed", event["event"])
+	assert.EqualValues(t, 0, event["duration_ms"])
+}

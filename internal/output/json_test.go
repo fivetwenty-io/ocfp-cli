@@ -448,3 +448,18 @@ func TestJSONRenderer_AllFields(t *testing.T) {
 		assert.Contains(t, event, field, "phase_start event should contain %s", field)
 	}
 }
+
+// A phase that never recorded a start has no elapsed time, so its failure
+// reports none instead of the time since the zero time.
+func TestJSONRenderer_PhaseFailedWithoutAStartTime(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewJSONRenderer(&buf)
+	r.now = func() time.Time { return fixedTime }
+
+	require.NoError(t, r.PhaseFailed(PhaseInfo{ID: "test_phase", Number: 1, Total: 2}, assert.AnError))
+
+	var event map[string]interface{}
+	require.NoError(t, json.NewDecoder(&buf).Decode(&event))
+	assert.Equal(t, "phase_failed", event["event"])
+	assert.Equal(t, float64(0), event["duration_ms"])
+}
