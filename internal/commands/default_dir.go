@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/safedir"
@@ -175,9 +175,9 @@ func locateFrom(path string) (located, string, error) {
 // for b, such as a different case, a firmlink, or a bind mount, counts as b.
 // It walks up from the nearest existing directory of a. When it meets the
 // nearest existing directory of b, a is inside b if the names that follow
-// start with the names b is still missing. Those names are compared without
-// regard to case or Unicode normalization, so that a doubtful case is
-// counted as inside.
+// start with the names b is still missing. Those names are compared after
+// full case folding and normalization, so that a doubtful case is counted as
+// inside.
 func inside(a, b located) (bool, error) {
 	target, err := os.Stat(b.near)
 	if err != nil {
@@ -208,17 +208,25 @@ func inside(a, b located) (bool, error) {
 }
 
 // namesStartWith reports whether names begins with prefix, comparing each
-// name without regard to case or Unicode normalization.
+// name as foldName folds it.
 func namesStartWith(names, prefix []string) bool {
 	if len(prefix) > len(names) {
 		return false
 	}
 
 	for i, p := range prefix {
-		if !strings.EqualFold(norm.NFC.String(names[i]), norm.NFC.String(p)) {
+		if foldName(names[i]) != foldName(p) {
 			return false
 		}
 	}
 
 	return true
+}
+
+// foldName folds name with full Unicode case folding between two NFC
+// normalizations, so that names a file system that ignores case and
+// normalization would take for one name, such as "straße" and "STRASSE",
+// fold to the same string. A Caser keeps state, so each call makes its own.
+func foldName(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
 }
