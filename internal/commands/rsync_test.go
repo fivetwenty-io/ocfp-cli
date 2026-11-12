@@ -2,6 +2,7 @@ package commands
 
 import (
 	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -173,8 +174,12 @@ func TestRSyncTheFieldCommandLine(t *testing.T) {
 }
 
 // TestRSyncKeepsSSHOptions proves the ssh command rsync is told to use is
-// unchanged by the passthrough.
+// unchanged by the passthrough, and that it checks the bastion's host key
+// against the known_hosts file the Go client uses.
 func TestRSyncKeepsSSHOptions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	argv := parseRSyncLine(t, []string{
 		"/local/dir/", "bastion:/remote/dir/", "--", "--itemize-changes",
 	})
@@ -182,7 +187,26 @@ func TestRSyncKeepsSSHOptions(t *testing.T) {
 	dashE := indexOf(argv, "-e")
 	require.NotEqual(t, -1, dashE)
 	assert.Equal(t,
-		"ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR -i /tmp/id_ed25519",
+		"ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="+
+			filepath.Join(home, ".ssh", "known_hosts")+" -o LogLevel=ERROR -i /tmp/id_ed25519",
+		argv[dashE+1])
+}
+
+// TestRSyncQuotesPathsInTheSSHCommand proves a known_hosts or key path with
+// a space survives rsync splitting the -e command into words.
+func TestRSyncQuotesPathsInTheSSHCommand(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "o p")
+	t.Setenv("HOME", home)
+
+	config := &rsyncConfig{} //nolint:exhaustruct // Only the fields the builder reads are set.
+
+	argv := buildRSyncCommand(config, "/local/dir/", "ubuntu@10.61.148.10:/remote/dir/", "/keys/my key")
+
+	dashE := indexOf(argv, "-e")
+	require.NotEqual(t, -1, dashE)
+	assert.Equal(t,
+		`ssh -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile="`+
+			filepath.Join(home, ".ssh", "known_hosts")+`"' -o LogLevel=ERROR -i '/keys/my key'`,
 		argv[dashE+1])
 }
 
