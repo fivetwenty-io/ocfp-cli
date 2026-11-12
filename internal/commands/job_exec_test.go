@@ -201,7 +201,7 @@ func TestOwnerDirFlagOverridesDefault(t *testing.T) {
 		opened = append(opened, dir)
 
 		return ownerrecord.NewDirStore(dir)
-	})
+	}, ownerrecord.DefaultDir)
 
 	execCmd, _, err := cmd.Find([]string{"exec"})
 	if err != nil {
