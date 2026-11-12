@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
@@ -52,6 +53,17 @@ type CheckpointManager struct {
 	config        *config.Config
 	checkpointDir string
 	log           logger.Logger
+
+	// saveMu makes each Save read the progress and write the file in one
+	// step. The parallel phase runner's workers save at the same time, and
+	// without it two writes could interleave in the file, or an older
+	// reading of the progress could land after a newer one.
+	saveMu sync.Mutex
+
+	// afterSnapshot runs inside Save between reading the progress and
+	// writing the file. Tests use it to hold one save there while another
+	// starts, and it is nil otherwise.
+	afterSnapshot func()
 }
 
 // CheckpointData represents saved provisioning state.
@@ -92,7 +104,16 @@ func NewCheckpointManager(cfg *config.Config) *CheckpointManager {
 }
 
 // Save saves the current provisioning state.
-func (cm *CheckpointManager) Save(progress *ProvisioningProgress, metadata map[string]interface{}) error {
+func (cm *CheckpointManager) Save(shared *ProvisioningProgress, metadata map[string]interface{}) error {
+	cm.saveMu.Lock()
+	defer cm.saveMu.Unlock()
+
+	progress := shared.snapshot()
+
+	if cm.afterSnapshot != nil {
+		cm.afterSnapshot()
+	}
+
 	// Ensure checkpoint directory exists
 	err := os.MkdirAll(cm.checkpointDir, checkpointDirMode)
 	if err != nil {
@@ -248,11 +269,7 @@ func (cm *CheckpointManager) IsPhaseCompleted(checkpoint *CheckpointData, phase 
 
 // MarkPhaseCompleted marks a phase as completed.
 func (cm *CheckpointManager) MarkPhaseCompleted(progress *ProvisioningProgress, phase string) {
-	if progress.Checkpoints == nil {
-		progress.Checkpoints = make(map[string]bool)
-	}
-
-	progress.Checkpoints[phase] = true
+	progress.markCompleted(phase)
 }
 
 // GetCompletionStatus returns completion status information.

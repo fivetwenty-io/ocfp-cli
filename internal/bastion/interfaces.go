@@ -4,6 +4,7 @@ package bastion
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
@@ -151,6 +152,10 @@ type CustomScript struct {
 }
 
 // ProvisioningProgress tracks the progress of bastion provisioning.
+//
+// The parallel phase runner's workers share one ProvisioningProgress, so
+// any code a worker can reach reads and writes it through the methods that
+// hold mu: setStep, markCompleted, isCompleted, addError, and snapshot.
 type ProvisioningProgress struct {
 	TotalSteps     int
 	CompletedSteps int
@@ -158,6 +163,8 @@ type ProvisioningProgress struct {
 	StartTime      time.Time
 	Errors         []error
 	Checkpoints    map[string]bool
+
+	mu sync.Mutex
 }
 
 // ProvisioningOptions configures bastion provisioning behavior.

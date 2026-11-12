@@ -1467,7 +1467,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 				m.reporter.ReportPhaseComplete(task.name, time.Since(m.progress.StartTime))
 			}
 		} else {
-			m.progress.Errors = append(m.progress.Errors, err)
+			m.progress.addError(err)
 			_ = m.checkpointManager.Save(m.progress, map[string]interface{}{"failed_phase": task.name, "error_type": "execution_failure", "timestamp": time.Now()})
 		}
 
@@ -1544,7 +1544,7 @@ func (m *Manager) shouldSkipPhase(phase string) bool {
 		return false
 	}
 
-	return m.progress.Checkpoints[phase]
+	return m.progress.isCompleted(phase)
 }
 
 // getProgressReporter returns a progress reporter if configured.

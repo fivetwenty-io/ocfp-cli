@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -13,11 +16,71 @@ import (
 
 // No constants needed - renderers handle all configuration
 
+// setStep records the phase the run is on and how far it has got.
+func (p *ProvisioningProgress) setStep(step string, completed, total int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.CurrentStep = step
+	p.CompletedSteps = completed
+	p.TotalSteps = total
+}
+
+// markCompleted records that a phase finished.
+func (p *ProvisioningProgress) markCompleted(phase string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.Checkpoints == nil {
+		p.Checkpoints = make(map[string]bool)
+	}
+
+	p.Checkpoints[phase] = true
+}
+
+// isCompleted reports whether a phase has finished, in this run or in the
+// one it resumes.
+func (p *ProvisioningProgress) isCompleted(phase string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.Checkpoints[phase]
+}
+
+// addError records a phase's failure.
+func (p *ProvisioningProgress) addError(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.Errors = append(p.Errors, err)
+}
+
+// snapshot returns a copy that no worker writes to, with its own map and
+// error list, for code that reads the whole progress at once.
+func (p *ProvisioningProgress) snapshot() *ProvisioningProgress {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return &ProvisioningProgress{
+		TotalSteps:     p.TotalSteps,
+		CompletedSteps: p.CompletedSteps,
+		CurrentStep:    p.CurrentStep,
+		StartTime:      p.StartTime,
+		Errors:         slices.Clone(p.Errors),
+		Checkpoints:    maps.Clone(p.Checkpoints),
+	}
+}
+
 // ProgressReporter handles real-time progress reporting.
+//
+// The parallel phase runner's workers share one reporter. mu guards the
+// phase bookkeeping below it, and the renderers hold their own locks.
 type ProgressReporter struct {
-	renderer       output.Renderer
-	progress       *ProvisioningProgress
-	log            logger.Logger
+	renderer output.Renderer
+	progress *ProvisioningProgress
+	log      logger.Logger
+
+	mu             sync.Mutex
 	currentNumber  int           // Current phase number for completion messages
 	currentTotal   int           // Total phases for completion messages
 	cumulativeTime time.Duration // Cumulative time across all completed phases
@@ -81,9 +144,7 @@ func (pr *ProgressReporter) Start(_ctx context.Context) {
 
 // UpdateProgress updates the current progress state.
 func (pr *ProgressReporter) UpdateProgress(step string, completed int, total int) {
-	pr.progress.CurrentStep = step
-	pr.progress.CompletedSteps = completed
-	pr.progress.TotalSteps = total
+	pr.progress.setStep(step, completed, total)
 }
 
 // ReportPhaseStart reports the start of a new phase.
@@ -95,16 +156,20 @@ func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 	pr.UpdateProgress(phase, index, total)
 
 	// Store current phase info for completion message and track start time
+	startTime := time.Now()
+
+	pr.mu.Lock()
 	pr.currentNumber = index + 1
 	pr.currentTotal = total
-	pr.phaseStartTime = time.Now()
+	pr.phaseStartTime = startTime
+	pr.mu.Unlock()
 
 	phaseInfo := output.PhaseInfo{
 		ID:        phase,
 		Name:      phase,
 		Number:    index + 1,
 		Total:     total,
-		StartTime: pr.phaseStartTime,
+		StartTime: startTime,
 	}
 
 	err := pr.renderer.PhaseStart(phaseInfo)
@@ -121,6 +186,8 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 	if pr.renderer == nil {
 		return
 	}
+
+	pr.mu.Lock()
 
 	// Calculate actual phase duration from tracked start time
 	actualDuration := duration
@@ -139,6 +206,8 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 		StartTime:          pr.phaseStartTime,
 		CumulativeDuration: pr.cumulativeTime,
 	}
+
+	pr.mu.Unlock()
 
 	err := pr.renderer.PhaseComplete(phaseInfo)
 	if err != nil {
