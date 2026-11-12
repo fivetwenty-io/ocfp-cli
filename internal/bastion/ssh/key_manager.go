@@ -322,16 +322,13 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", nil
 	}
 
-	if !filepath.IsLocal(blocName) || blocName == "." || strings.ContainsAny(blocName, `/\`) {
-		return "", fmt.Errorf("invalid bloc name %q: expected a single directory name", blocName)
+	keyDir, keyPath, err := restoredKeyPath(blocName)
+	if err != nil {
+		return "", err
 	}
 
-	// Restore to primary location: config.OcfpSSHKeyDir(blocName)/id_ed25519
-	keyDir := config.OcfpSSHKeyDir(blocName)
-	keyPath := filepath.Join(keyDir, "id_ed25519")
-
 	// Create directory if it doesn't exist
-	err := os.MkdirAll(keyDir, sshDirectoryMode)
+	err = os.MkdirAll(keyDir, sshDirectoryMode)
 	if err != nil {
 		return "", fmt.Errorf("failed to create SSH key directory: %w", err)
 	}
@@ -353,6 +350,50 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		"bloc", blocName)
 
 	return keyPath, nil
+}
+
+// PreviewRestoreKeyFromConfig is the read-only form of
+// RestoreKeyFromConfig, for a dry run. It refuses the bloc names that the
+// restore refuses, with the same error, and returns the path the restore
+// would write the key to. It writes nothing, and it logs the restore it
+// would make instead. Only writing the key checks that its directory can
+// be created and written, so it says that it didn't check that. It returns
+// an empty path when the config holds no key, as the restore does.
+func (km *KeyManager) PreviewRestoreKeyFromConfig(blocName, privateKeyPEM string) (string, error) {
+	if privateKeyPEM == "" {
+		return "", nil
+	}
+
+	_, keyPath, err := restoredKeyPath(blocName)
+	if err != nil {
+		return "", err
+	}
+
+	km.log.Infow("DRY RUN: Would restore the SSH private key from the config, and did not check that it can be written there",
+		"path", keyPath,
+		"bloc", blocName)
+
+	return keyPath, nil
+}
+
+// restoredKeyPath returns the directory and the path that the bloc's key
+// is restored to, which is id_ed25519 in config.OcfpSSHKeyDir(blocName). It
+// refuses a bloc name that isn't a single directory name.
+func restoredKeyPath(blocName string) (string, string, error) {
+	if !filepath.IsLocal(blocName) || blocName == "." || strings.ContainsAny(blocName, `/\`) {
+		return "", "", fmt.Errorf("invalid bloc name %q: expected a single directory name", blocName)
+	}
+
+	keyDir := config.OcfpSSHKeyDir(blocName)
+
+	return keyDir, filepath.Join(keyDir, "id_ed25519"), nil
+}
+
+// IsKeyDataPasswordProtected reports whether the private key in keyData is
+// passphrase-protected, as IsKeyPasswordProtected does for a key file. A
+// dry run uses it for a key it would have restored, which has no file yet.
+func (km *KeyManager) IsKeyDataPasswordProtected(keyData []byte) bool {
+	return km.isKeyPasswordProtected(keyData)
 }
 
 // keysEqual compares two SSH public keys for equality.

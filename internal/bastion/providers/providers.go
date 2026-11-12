@@ -42,6 +42,11 @@ func (a *AzureBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionD
 	return nil, ErrAzureProviderNotImplemented
 }
 
+// PreviewConnectionDetails fails as GetConnectionDetails does.
+func (a *AzureBastionInit) PreviewConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
+	return nil, ErrAzureProviderNotImplemented
+}
+
 // OpenStackBastionInit implements bastion initialization for OpenStack.
 type OpenStackBastionInit struct {
 	config *config.Config
@@ -68,6 +73,11 @@ func (o *OpenStackBastionInit) GetConnectionDetails(_ context.Context) (*Connect
 	return nil, ErrOpenStackProviderNotImplemented
 }
 
+// PreviewConnectionDetails fails as GetConnectionDetails does.
+func (o *OpenStackBastionInit) PreviewConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
+	return nil, ErrOpenStackProviderNotImplemented
+}
+
 // VMwareBastionInit implements bastion initialization for VMware.
 type VMwareBastionInit struct {
 	config *config.Config
@@ -91,5 +101,10 @@ func (v *VMwareBastionInit) PrepareEnvironment() map[string]string {
 
 // GetConnectionDetails returns SSH connection details for the VMware bastion.
 func (v *VMwareBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
+	return nil, ErrVMwareProviderNotImplemented
+}
+
+// PreviewConnectionDetails fails as GetConnectionDetails does.
+func (v *VMwareBastionInit) PreviewConnectionDetails(_ context.Context) (*ConnectionDetails, error) {
 	return nil, ErrVMwareProviderNotImplemented
 }

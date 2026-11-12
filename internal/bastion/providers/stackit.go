@@ -29,6 +29,9 @@ var (
 type StackitBastionInit struct {
 	config *config.Config
 	log    logger.Logger
+	// dryRun makes the connection lookup read only. Only
+	// PreviewConnectionDetails sets it, on its own copy.
+	dryRun bool
 }
 
 // NewStackitBastionInit creates a new STACKIT bastion initializer.
@@ -113,19 +116,19 @@ func (s *StackitBastionInit) GetConnectionDetails(_ context.Context) (*Connectio
 
 	sshUser := s.getSSHUser()
 
-	privateKeyPath, err := s.findSSHPrivateKey()
+	key, err := s.findSSHPrivateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	isEncrypted := s.checkKeyEncryption(privateKeyPath)
+	isEncrypted := s.checkKeyEncryption(key)
 	sshOptions := s.buildSSHOptions()
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
 		Port:           defaultSSHPort,
 		User:           sshUser,
-		PrivateKeyPath: privateKeyPath,
+		PrivateKeyPath: key.path,
 		Password:       "",
 		SSHOptions:     sshOptions,
 		UseSSHPass:     false,
@@ -134,6 +137,15 @@ func (s *StackitBastionInit) GetConnectionDetails(_ context.Context) (*Connectio
 	s.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
+}
+
+// PreviewConnectionDetails returns what GetConnectionDetails returns, and
+// fails where it fails, without writing any file.
+func (s *StackitBastionInit) PreviewConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
+	preview := *s
+	preview.dryRun = true
+
+	return preview.GetConnectionDetails(ctx)
 }
 
 // getSSHUser returns the SSH user for bastion connection.
@@ -145,13 +157,16 @@ func (s *StackitBastionInit) getSSHUser() string {
 	return defaultSSHUser // Default for STACKIT
 }
 
-// findSSHPrivateKey locates the SSH private key, restoring from config if needed.
-func (s *StackitBastionInit) findSSHPrivateKey() (string, error) {
+// findSSHPrivateKey locates the SSH private key, restoring from config if
+// needed. A dry run returns the key it would have restored.
+func (s *StackitBastionInit) findSSHPrivateKey() (bastionKey, error) {
+	var none bastionKey
+
 	keyManager := ssh.NewKeyManager()
 
 	privateKeyPath, err := keyManager.FindPrivateKey(s.config.Name)
 	if err == nil {
-		return privateKeyPath, nil
+		return bastionKey{path: privateKeyPath, pendingPEM: ""}, nil
 	}
 
 	// Try to restore key from config if it exists
@@ -159,26 +174,28 @@ func (s *StackitBastionInit) findSSHPrivateKey() (string, error) {
 
 	configKey, exists := s.config.Keys[keypairName]
 	if !exists || configKey == "" {
-		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+		return none, fmt.Errorf("failed to find SSH private key: %w", err)
 	}
 
-	restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(s.config.Name, configKey)
-	if restoreErr != nil || restoredPath == "" {
+	restored, restoreErr := restoreKey(keyManager, s.config.Name, configKey, s.dryRun)
+	if restoreErr != nil || restored.path == "" {
 		s.log.Warn("Failed to restore key from config", "error", restoreErr)
 
-		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+		return none, fmt.Errorf("failed to find SSH private key: %w", err)
 	}
 
-	s.log.Info("Restored SSH key from config", "path", restoredPath)
+	if !s.dryRun {
+		s.log.Info("Restored SSH key from config", "path", restored.path)
+	}
 
-	return restoredPath, nil
+	return restored, nil
 }
 
 // checkKeyEncryption checks if the SSH key is password protected.
-func (s *StackitBastionInit) checkKeyEncryption(privateKeyPath string) bool {
+func (s *StackitBastionInit) checkKeyEncryption(key bastionKey) bool {
 	keyManager := ssh.NewKeyManager()
 
-	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
+	isEncrypted, err := key.encrypted(keyManager)
 	if err != nil {
 		s.log.Warn("Failed to check if key is encrypted", "error", err.Error())
 
@@ -261,7 +278,7 @@ func (s *StackitBastionInit) getBastionIP() (string, error) {
 	// Strategy 2: Check state cache first (fast path)
 	stateDir, err := state.GetStateDir(s.config.Name)
 	if err == nil { //nolint:nestif // state cache lookup requires nested checks
-		stateManager, err := state.NewManager(stateDir)
+		stateManager, err := openState(stateDir, s.dryRun)
 		if err == nil {
 			_, err := stateManager.Load(s.config.Name)
 			if err == nil {

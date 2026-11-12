@@ -33,6 +33,9 @@ type AWSBastionInit struct {
 	config    *config.Config
 	log       logger.Logger
 	ec2Client EC2DescribeInstancesAPI // nil until first use; injectable for tests
+	// dryRun makes the connection lookup read only. Only
+	// PreviewConnectionDetails sets it, on its own copy.
+	dryRun bool
 }
 
 // NewAWSBastionInit creates a new AWS bastion initializer.
@@ -126,16 +129,18 @@ func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionD
 	keyManager := ssh.NewKeyManager()
 
 	privateKeyPath, err := keyManager.FindPrivateKey(a.config.Name)
+	key := bastionKey{path: privateKeyPath, pendingPEM: ""}
+
 	if err != nil {
-		restoredPath, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
+		restored, restoreErr := a.tryRestoreKeyFromConfig(keyManager)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("failed to find SSH private key (lookup: %w; restore: %w)", err, restoreErr)
 		}
 
-		privateKeyPath = restoredPath
+		key = restored
 	}
 
-	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
+	isEncrypted, err := key.encrypted(keyManager)
 	if err != nil {
 		a.log.Warn("Failed to check if key is encrypted", "error", err)
 	}
@@ -146,7 +151,7 @@ func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionD
 		Host:           bastionIP,
 		Port:           defaultSSHPort,
 		User:           sshUser,
-		PrivateKeyPath: privateKeyPath,
+		PrivateKeyPath: key.path,
 		Password:       "",
 		SSHOptions:     sshOptions,
 		UseSSHPass:     false,
@@ -158,6 +163,15 @@ func (a *AWSBastionInit) GetConnectionDetails(ctx context.Context) (*ConnectionD
 	}
 
 	return details, nil
+}
+
+// PreviewConnectionDetails returns what GetConnectionDetails returns, and
+// fails where it fails, without writing any file.
+func (a *AWSBastionInit) PreviewConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
+	preview := *a
+	preview.dryRun = true
+
+	return preview.GetConnectionDetails(ctx)
 }
 
 // addGenesisEnv adds Genesis-specific environment variables to the provided map.
@@ -303,7 +317,7 @@ func (a *AWSBastionInit) getBastionIPFromState() (string, error) {
 		return "", fmt.Errorf("failed to determine state directory: %w", err)
 	}
 
-	stateMgr, err := state.NewManager(stateDir)
+	stateMgr, err := openState(stateDir, a.dryRun)
 	if err != nil {
 		return "", fmt.Errorf("failed to create state manager: %w", err)
 	}
@@ -346,29 +360,34 @@ func (a *AWSBastionInit) getBastionIPFromState() (string, error) {
 	return publicIP, nil
 }
 
-// tryRestoreKeyFromConfig attempts to restore an SSH key from the configuration.
-func (a *AWSBastionInit) tryRestoreKeyFromConfig(keyManager *ssh.KeyManager) (string, error) {
+// tryRestoreKeyFromConfig attempts to restore an SSH key from the
+// configuration. A dry run returns the key it would have restored.
+func (a *AWSBastionInit) tryRestoreKeyFromConfig(keyManager *ssh.KeyManager) (bastionKey, error) {
+	var none bastionKey
+
 	keypairName := a.config.Name + "-bastion"
 	configKey, exists := a.config.Keys[keypairName]
 
 	if !exists || configKey == "" {
-		return "", ErrNoKeyFoundInConfig(keypairName)
+		return none, ErrNoKeyFoundInConfig(keypairName)
 	}
 
-	restoredPath, err := keyManager.RestoreKeyFromConfig(a.config.Name, configKey)
+	restored, err := restoreKey(keyManager, a.config.Name, configKey, a.dryRun)
 	if err != nil {
 		a.log.Warn("Failed to restore key from config", "error", err)
 
-		return "", fmt.Errorf("failed to restore key from config: %w", err)
+		return none, fmt.Errorf("failed to restore key from config: %w", err)
 	}
 
-	if restoredPath == "" {
-		return "", ErrRestoredPathEmpty
+	if restored.path == "" {
+		return none, ErrRestoredPathEmpty
 	}
 
-	a.log.Info("Restored SSH key from config", "path", restoredPath)
+	if !a.dryRun {
+		a.log.Info("Restored SSH key from config", "path", restored.path)
+	}
 
-	return restoredPath, nil
+	return restored, nil
 }
 
 // sshOptions returns the ssh -o options for connections to the bastion.

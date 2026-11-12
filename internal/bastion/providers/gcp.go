@@ -28,6 +28,9 @@ var (
 type GCPBastionInit struct {
 	config *config.Config
 	log    logger.Logger
+	// dryRun makes the connection lookup read only. Only
+	// PreviewConnectionDetails sets it, on its own copy.
+	dryRun bool
 }
 
 // NewGCPBastionInit creates a new GCP bastion initializer.
@@ -124,6 +127,15 @@ func (g *GCPBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDet
 		PrivateKeyPath: sshKey,
 		SSHOptions:     g.getSSHOptions(),
 	}, nil
+}
+
+// PreviewConnectionDetails returns what GetConnectionDetails returns, and
+// fails where it fails, without writing any file.
+func (g *GCPBastionInit) PreviewConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
+	preview := *g
+	preview.dryRun = true
+
+	return preview.GetConnectionDetails(ctx)
 }
 
 // addGenesisEnv adds Genesis-specific environment variables.
@@ -262,7 +274,7 @@ func (g *GCPBastionInit) getBastionIPFromState() (string, error) {
 		return "", err
 	}
 
-	sm, err := state.NewManager(dir)
+	sm, err := openState(dir, g.dryRun)
 	if err != nil {
 		return "", err
 	}
@@ -317,7 +329,9 @@ func (g *GCPBastionInit) findSSHKey() (string, error) {
 	}
 
 	if key := g.config.Keys[g.config.Name+"-keypair"]; key != "" {
-		return bastionssh.NewKeyManager().RestoreKeyFromConfig(g.config.Name, key)
+		restored, err := restoreKey(bastionssh.NewKeyManager(), g.config.Name, key, g.dryRun)
+
+		return restored.path, err
 	}
 
 	// Check standard locations

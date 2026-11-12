@@ -28,6 +28,9 @@ var (
 type PVEBastionInit struct {
 	config *config.Config
 	log    logger.Logger
+	// dryRun makes the connection lookup read only. Only
+	// PreviewConnectionDetails sets it, on its own copy.
+	dryRun bool
 }
 
 // NewPVEBastionInit creates a new Proxmox VE bastion initializer.
@@ -140,19 +143,19 @@ func (p *PVEBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDet
 
 	sshUser := p.getSSHUser()
 
-	privateKeyPath, err := p.findSSHPrivateKey()
+	key, err := p.findSSHPrivateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	isEncrypted := p.checkKeyEncryption(privateKeyPath)
+	isEncrypted := p.checkKeyEncryption(key)
 	sshOptions := p.buildSSHOptions()
 
 	details := &ConnectionDetails{
 		Host:           bastionIP,
 		Port:           defaultSSHPort,
 		User:           sshUser,
-		PrivateKeyPath: privateKeyPath,
+		PrivateKeyPath: key.path,
 		Password:       "",
 		SSHOptions:     sshOptions,
 		UseSSHPass:     false,
@@ -161,6 +164,15 @@ func (p *PVEBastionInit) GetConnectionDetails(_ context.Context) (*ConnectionDet
 	p.configurePasswordIfEncrypted(details, isEncrypted)
 
 	return details, nil
+}
+
+// PreviewConnectionDetails returns what GetConnectionDetails returns, and
+// fails where it fails, without writing any file.
+func (p *PVEBastionInit) PreviewConnectionDetails(ctx context.Context) (*ConnectionDetails, error) {
+	preview := *p
+	preview.dryRun = true
+
+	return preview.GetConnectionDetails(ctx)
 }
 
 // getSSHUser returns the SSH user for bastion connection.
@@ -172,13 +184,16 @@ func (p *PVEBastionInit) getSSHUser() string {
 	return defaultSSHUser // Default for cloud images on Proxmox VE
 }
 
-// findSSHPrivateKey locates the SSH private key, restoring from config if needed.
-func (p *PVEBastionInit) findSSHPrivateKey() (string, error) {
+// findSSHPrivateKey locates the SSH private key, restoring from config if
+// needed. A dry run returns the key it would have restored.
+func (p *PVEBastionInit) findSSHPrivateKey() (bastionKey, error) {
+	var none bastionKey
+
 	keyManager := ssh.NewKeyManager()
 
 	privateKeyPath, err := keyManager.FindPrivateKey(p.config.Name)
 	if err == nil {
-		return privateKeyPath, nil
+		return bastionKey{path: privateKeyPath, pendingPEM: ""}, nil
 	}
 
 	// Try to restore key from config if it exists
@@ -186,26 +201,28 @@ func (p *PVEBastionInit) findSSHPrivateKey() (string, error) {
 
 	configKey, exists := p.config.Keys[keypairName]
 	if !exists || configKey == "" {
-		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+		return none, fmt.Errorf("failed to find SSH private key: %w", err)
 	}
 
-	restoredPath, restoreErr := keyManager.RestoreKeyFromConfig(p.config.Name, configKey)
-	if restoreErr != nil || restoredPath == "" {
+	restored, restoreErr := restoreKey(keyManager, p.config.Name, configKey, p.dryRun)
+	if restoreErr != nil || restored.path == "" {
 		p.log.Warn("Failed to restore key from config", "error", restoreErr)
 
-		return "", fmt.Errorf("failed to find SSH private key: %w", err)
+		return none, fmt.Errorf("failed to find SSH private key: %w", err)
 	}
 
-	p.log.Info("Restored SSH key from config", "path", restoredPath)
+	if !p.dryRun {
+		p.log.Info("Restored SSH key from config", "path", restored.path)
+	}
 
-	return restoredPath, nil
+	return restored, nil
 }
 
 // checkKeyEncryption checks if the SSH key is password protected.
-func (p *PVEBastionInit) checkKeyEncryption(privateKeyPath string) bool {
+func (p *PVEBastionInit) checkKeyEncryption(key bastionKey) bool {
 	keyManager := ssh.NewKeyManager()
 
-	isEncrypted, err := keyManager.IsKeyPasswordProtected(privateKeyPath)
+	isEncrypted, err := key.encrypted(keyManager)
 	if err != nil {
 		p.log.Warn("Failed to check if key is encrypted", "error", err.Error())
 
@@ -291,7 +308,7 @@ func (p *PVEBastionInit) getBastionIP() (string, error) {
 	// Strategy 2: Check state cache first (fast path)
 	stateDir, err := state.GetStateDir(p.config.Name)
 	if err == nil { //nolint:nestif // state cache lookup requires nested checks
-		stateManager, err := state.NewManager(stateDir)
+		stateManager, err := openState(stateDir, p.dryRun)
 		if err == nil {
 			_, err := stateManager.Load(p.config.Name)
 			if err == nil {

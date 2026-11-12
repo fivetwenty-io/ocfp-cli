@@ -651,8 +651,14 @@ func (m *Manager) setupInfrastructure(ctx context.Context) error {
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
 
-	// Get connection details
-	providerConnDetails, err := initializer.GetConnectionDetails(ctx)
+	// Get connection details. A dry run uses the lookup's read-only form,
+	// which creates no state directory and restores no SSH key.
+	lookup := initializer.GetConnectionDetails
+	if m.options.DryRun {
+		lookup = initializer.PreviewConnectionDetails
+	}
+
+	providerConnDetails, err := lookup(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get connection details: %w", err)
 	}
