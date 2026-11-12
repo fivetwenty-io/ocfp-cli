@@ -20,6 +20,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
@@ -193,11 +194,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		artifactsIP: func(ctx context.Context) (string, error) {
 			return lookupArtifactsIPForSSH(ctx, provider, cfg.Name)
 		},
-		isBastion: func(ctx context.Context, address string) bool {
-			return sshAddressIsBastion(ctx, address, cfg, func(ctx context.Context) (string, error) {
-				return findBastionIP(ctx, provider, cfg.Name)
-			})
-		},
+		isBastion: sshAddressMatcher(cfg),
 	})
 	if err != nil {
 		return err
@@ -446,21 +443,32 @@ func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noP
 	return sshRoute{Host: target, Bastion: "", HostIsBastion: false}, nil
 }
 
+// sshAddressMatcher returns the check for whether an address target names
+// the bloc's bastion. It compares only against what the config and the
+// state on disk already hold, because it runs on every address target: no
+// probe, no provider query, and nothing written.
+func sshAddressMatcher(cfg *config.Config) func(ctx context.Context, address string) bool {
+	return func(_ context.Context, address string) bool {
+		return sshAddressIsBastion(address, cfg, recordedBastionAddresses(cfg.Name))
+	}
+}
+
 // sshAddressIsBastion reports whether an address target names the bloc's
-// bastion: the configured bastion_ip, the bastion's tailnet host name
-// (tailscale.hostname, else "<bloc>-bastion") alone or as the first label of
-// a dotted name such as a MagicDNS name, or the address lookup resolves for
-// the bastion. Names compare without regard to case. The configuration
-// answers first, because the lookup can take seconds, and a failed lookup
-// only means no match.
-func sshAddressIsBastion(ctx context.Context, address string, cfg *config.Config, lookup func(ctx context.Context) (string, error)) bool {
+// bastion: the configured bastion_ip, one of the bastion's recorded
+// addresses in known, or the bastion's tailnet host name
+// (tailscale.hostname, else "<bloc>-bastion") alone or followed by a domain,
+// such as a MagicDNS name. Names compare without regard to case, and
+// addresses as IPs.
+func sshAddressIsBastion(address string, cfg *config.Config, known []string) bool {
 	target := normalizeSSHHost(address)
 	if target == "" {
 		return false
 	}
 
-	if cfg.BastionIP != "" && sameSSHHost(target, normalizeSSHHost(cfg.BastionIP)) {
-		return true
+	for _, candidate := range append([]string{cfg.BastionIP}, known...) {
+		if sameSSHHost(target, normalizeSSHHost(candidate)) {
+			return true
+		}
 	}
 
 	hostName := cfg.Name + "-bastion"
@@ -469,13 +477,54 @@ func sshAddressIsBastion(ctx context.Context, address string, cfg *config.Config
 	}
 
 	hostName = normalizeSSHHost(hostName)
-	if label, _, _ := strings.Cut(target, "."); label == hostName && net.ParseIP(target) == nil {
-		return true
+
+	return net.ParseIP(target) == nil && (target == hostName || strings.HasPrefix(target, hostName+"."))
+}
+
+// recordedBastionAddresses returns the bastion addresses bootstrap recorded
+// in the bloc's state: the ssh host, the public or floating IP, the private
+// IP, and the reserved address. It only reads the state, and returns none
+// when there is no state.
+func recordedBastionAddresses(blocName string) []string {
+	stateDir, err := state.GetStateDir(blocName)
+	if err != nil {
+		return nil
 	}
 
-	ip, err := lookup(ctx)
+	// state.NewManager creates a missing directory, so look first.
+	if _, err = os.Stat(stateDir); err != nil {
+		return nil
+	}
 
-	return err == nil && sameSSHHost(target, normalizeSSHHost(ip))
+	manager, err := state.NewManager(stateDir)
+	if err != nil {
+		return nil
+	}
+
+	if _, err = manager.Load(blocName); err != nil {
+		return nil
+	}
+
+	var addresses []string
+
+	for _, key := range []string{
+		"bastion_ssh_host",
+		"bastion_public_ip",
+		"bastion_private_ip",
+		"reserved_" + blocName + "-ocfp-0_bastion_ip",
+		"reserved_" + blocName + "_bastion_ip",
+	} {
+		value, getErr := manager.GetOutput(key)
+		if getErr != nil {
+			continue
+		}
+
+		if address, ok := value.(string); ok && strings.TrimSpace(address) != "" {
+			addresses = append(addresses, strings.TrimSpace(address))
+		}
+	}
+
+	return addresses
 }
 
 // normalizeSSHHost lower-cases a host and drops surrounding space, IPv6
