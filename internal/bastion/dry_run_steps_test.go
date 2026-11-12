@@ -255,6 +255,31 @@ func TestDryRunSaysItDidNotConnect(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a dry run must not write known_hosts")
 }
 
+// When the bloc has no key file, the real run restores the bastion's SSH
+// key from the config before it connects. A dry run reads the config's copy
+// in its place, and it writes no key file or key directory.
+func TestDryRunDoesNotRestoreTheBastionKey(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+	cfg.APIEndpoint = "https://pve.example.invalid:8006"
+	cfg.AuthToken = "root@pam!ocfp"
+	cfg.TokenSecret = "secret"
+	cfg.BastionIP = "10.61.148.10"
+	block, err := gossh.MarshalPrivateKey(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{4}, ed25519.SeedSize)), "")
+	require.NoError(t, err)
+	cfg.Keys = map[string]string{cfg.Name + "-keypair": string(pem.EncodeToMemory(block))}
+
+	keyDir := config.OcfpSSHKeyDir(cfg.Name)
+	_, err = os.Stat(keyDir)
+	require.True(t, os.IsNotExist(err), "the bloc starts with no key directory")
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, &unconnectedSSHClient{})
+
+	require.NoError(t, m.setupInfrastructure(context.Background()))
+	_, err = os.Stat(keyDir)
+	assert.True(t, os.IsNotExist(err), "a dry run must not restore the key")
+}
+
 // A dry run that stops at a step the real run would fail at closes with a
 // summary that says the dry run failed and changed nothing. It counts the
 // steps before the failed one as previewed and the failed one as failed.
