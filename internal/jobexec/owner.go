@@ -45,7 +45,11 @@ var jobIDPattern = ownerrecord.NamePattern
 //     (OWNER_MISMATCH);
 //   - a record in handover or any mode but live (OWNER_HANDOVER);
 //   - a wire contract other than progress.WireContract
-//     (WIRE_CONTRACT_UNSUPPORTED);
+//     (WIRE_CONTRACT_UNSUPPORTED), which includes every request of the
+//     first contract, whose requests name no org or bloc;
+//   - an org or a bloc that is missing or that does not match
+//     ownerrecord.NamePattern (JOB_REQUEST_INVALID);
+//   - an org or a bloc other than the record's (TENANT_MISMATCH);
 //   - a key that names no field, an issue time outside the window from ten
 //     minutes before the bastion's clock to one minute after it, a job id that
 //     does not match ^[a-z0-9][a-z0-9-]{0,63}$, and a format other than
@@ -148,6 +152,16 @@ func verify(ctx context.Context, sr SignedRequest, store ownerrecord.Store, cloc
 		return Request{}, err
 	}
 
+	err = checkContract(req)
+	if err != nil {
+		return Request{}, err
+	}
+
+	err = checkTenant(req, rec)
+	if err != nil {
+		return Request{}, err
+	}
+
 	err = checkRequest(req, unknown, sr.Format, clock.Now())
 	if err != nil {
 		return Request{}, err
@@ -220,14 +234,53 @@ func checkOwnerFields(req Request, rec ownerrecord.Record) error {
 	return nil
 }
 
-// checkRequest checks the request's own fields once its requester is known to
-// be the owner.
-func checkRequest(req Request, unknown []string, format int, now time.Time) error {
-	if req.WireContract != progress.WireContract {
-		return refuse(progress.CodeWireContractUnsupported, fmt.Sprintf("job request wire contract is %d, this CLI reads %d",
-			req.WireContract, progress.WireContract))
+// tenantWireContract is the first wire contract whose requests name an org
+// and a bloc.
+const tenantWireContract = 2
+
+// checkContract refuses a request of any wire contract but this CLI's. It runs
+// before any field that a contract added is read, so a request of an older
+// contract is refused as one, and never as a request with fields missing.
+func checkContract(req Request) error {
+	if req.WireContract == progress.WireContract {
+		return nil
 	}
 
+	msg := fmt.Sprintf("job request wire contract is %d, this CLI reads %d", req.WireContract, progress.WireContract)
+	if req.WireContract > 0 && req.WireContract < tenantWireContract {
+		msg += ", and a request of that contract names no org or bloc"
+	}
+
+	return refuse(progress.CodeWireContractUnsupported, msg)
+}
+
+// checkTenant refuses a request whose org or bloc is missing or not of the
+// name form, and then one whose org or bloc is not the record's. The form is
+// checked first, so a request that names nothing is never read as one for
+// another host.
+func checkTenant(req Request, rec ownerrecord.Record) error {
+	for _, f := range []struct{ name, value string }{{"org", req.Org}, {"bloc", req.Bloc}} {
+		switch {
+		case f.value == "":
+			return invalid("job request names no " + f.name)
+		case !ownerrecord.NamePattern.MatchString(f.value):
+			return invalid("job request " + f.name + " " + quote(f.value) + " is not of the form " + ownerrecord.NamePattern.String())
+		}
+	}
+
+	switch {
+	case req.Org != rec.Org:
+		return refuse(progress.CodeTenantMismatch, fmt.Sprintf("job request names org %s, this host serves org %q", quote(req.Org), rec.Org))
+	case req.Bloc != rec.Bloc:
+		return refuse(progress.CodeTenantMismatch, fmt.Sprintf("job request names bloc %s, this host serves bloc %q", quote(req.Bloc), rec.Bloc))
+	}
+
+	return nil
+}
+
+// checkRequest checks the request's own fields once its requester is known to
+// be the owner and to have asked this host.
+func checkRequest(req Request, unknown []string, format int, now time.Time) error {
 	if len(unknown) > 0 {
 		return invalid("job request holds the unknown field " + quote(unknown[0]))
 	}

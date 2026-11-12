@@ -49,7 +49,8 @@ The job keeps its own copy of the stream in a spool under --spool-root, so
 a job whose caller goes away still runs to the end. Sending the same request
 again attaches to that job and replays its stream from the start.
 
-A request that is not signed by the owner, or that the owner record cannot
+A request that is not signed by the owner, that names an org or a bloc
+other than the ones the owner record names, or that the owner record cannot
 vouch for, is refused before anything runs: the stream carries the refusal
 code, stderr names it, and the command exits 2. The command exits 0 when the
 job succeeds and 1 for any other failure.`,

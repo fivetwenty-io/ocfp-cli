@@ -39,6 +39,12 @@ type Request struct {
 	InstanceID     string `json:"instanceId"`
 	Epoch          uint64 `json:"epoch"`
 
+	// Org and Bloc name the organisation and the bloc the job is for. They
+	// must match the owner record, which names the org and the bloc this
+	// host serves.
+	Org  string `json:"org"`
+	Bloc string `json:"bloc"`
+
 	// Env holds environment variables for the job.
 	Env map[string]string `json:"env,omitempty"`
 
@@ -101,6 +107,8 @@ func (r Request) checkStrings() error {
 		{"verb", r.Verb},
 		{"installation id", r.InstallationID},
 		{"instance id", r.InstanceID},
+		{"org", r.Org},
+		{"bloc", r.Bloc},
 	} {
 		if strings.ContainsRune(f.value, utf8.RuneError) {
 			return fmt.Errorf("%s holds U+FFFD", f.name)

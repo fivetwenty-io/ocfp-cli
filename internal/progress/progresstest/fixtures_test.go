@@ -120,8 +120,8 @@ func TestFixturesDecode(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if h.WireContract != 1 {
-				t.Errorf("wireContract = %d, want 1", h.WireContract)
+			if h.WireContract != 2 {
+				t.Errorf("wireContract = %d, want 2", h.WireContract)
 			}
 
 			count, last := 1, int64(0)

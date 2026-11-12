@@ -24,7 +24,7 @@ func TestJobRequestUsesTheSharedHelper(t *testing.T) {
 	good := mustMarshal(t, goodRequest())
 
 	newer := goodRequest()
-	newer.WireContract = 2
+	newer.WireContract = progress.WireContract + 1
 	newerPayload := mustMarshal(t, newer)
 
 	stranger := goodRequest()

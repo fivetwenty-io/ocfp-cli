@@ -131,6 +131,8 @@ func TestJobCommandsWriteNothingOutsideScratch(t *testing.T) {
 		InstallationID: r.InstallationID,
 		InstanceID:     r.OwnerInstanceID,
 		Epoch:          r.Epoch,
+		Org:            r.Org,
+		Bloc:           r.Bloc,
 		IssuedAt:       time.Now().UTC(),
 	})
 	require.NoError(t, err)

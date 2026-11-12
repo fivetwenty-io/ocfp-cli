@@ -97,17 +97,32 @@ func ownerDirWith(t *testing.T) string {
 func jobRequest(t *testing.T, jobID string, key ed25519.PrivateKey) []byte {
 	t.Helper()
 
-	r := testOwnerRecord()
+	return jobRequestWith(t, jobID, key, nil)
+}
 
-	payload, err := json.Marshal(jobexec.Request{
+// jobRequestWith is jobRequest with change applied to the request before it
+// is signed. A nil change leaves the request as it is.
+func jobRequestWith(t *testing.T, jobID string, key ed25519.PrivateKey, change func(*jobexec.Request)) []byte {
+	t.Helper()
+
+	r := testOwnerRecord()
+	req := jobexec.Request{
 		WireContract:   progress.WireContract,
 		JobID:          jobID,
 		Verb:           "noop",
 		InstallationID: r.InstallationID,
 		InstanceID:     r.OwnerInstanceID,
 		Epoch:          r.Epoch,
+		Org:            r.Org,
+		Bloc:           r.Bloc,
 		IssuedAt:       time.Now().UTC(),
-	})
+	}
+
+	if change != nil {
+		change(&req)
+	}
+
+	payload, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,10 +256,16 @@ func TestJobExecExitCodes(t *testing.T) {
 		ownerDir func(t *testing.T) string
 		key      ed25519.PrivateKey
 		code     progress.Code
+		change   func(*jobexec.Request)
 	}{
-		{"unsigned", ownerDirWith, otherKey, progress.CodeRequestUnsigned},
-		{"no owner record", func(t *testing.T) string { return filepath.Join(t.TempDir(), "owner") }, ownerrecordtest.TestKey(), progress.CodeOwnerRecordMissing},
-		{"owner record does not open", badOwnerDir, ownerrecordtest.TestKey(), progress.CodeOwnerRecordInvalid},
+		{"unsigned", ownerDirWith, otherKey, progress.CodeRequestUnsigned, nil},
+		{"no owner record", func(t *testing.T) string { return filepath.Join(t.TempDir(), "owner") }, ownerrecordtest.TestKey(), progress.CodeOwnerRecordMissing, nil},
+		{"owner record does not open", badOwnerDir, ownerrecordtest.TestKey(), progress.CodeOwnerRecordInvalid, nil},
+		{"another org", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeTenantMismatch, func(r *jobexec.Request) { r.Org = "org-other" }},
+		{"another bloc", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeTenantMismatch, func(r *jobexec.Request) { r.Bloc = "bloc-other" }},
+		{"older wire contract", ownerDirWith, ownerrecordtest.TestKey(), progress.CodeWireContractUnsupported, func(r *jobexec.Request) {
+			r.WireContract, r.Org, r.Bloc = 1, "", ""
+		}},
 	}
 
 	for _, tc := range refusals {
@@ -253,7 +274,7 @@ func TestJobExecExitCodes(t *testing.T) {
 
 			spool := filepath.Join(t.TempDir(), "spool")
 
-			res := runCmd(t, NewJobCmd(), bytes.NewReader(jobRequest(t, "job-refused", tc.key)),
+			res := runCmd(t, NewJobCmd(), bytes.NewReader(jobRequestWith(t, "job-refused", tc.key, tc.change)),
 				"exec", "--spool-root", spool, "--owner-dir", tc.ownerDir(t))
 			if res.code != 2 {
 				t.Fatalf("job exec = %d, %v, want exit code 2", res.code, res.err)
@@ -270,6 +291,10 @@ func TestJobExecExitCodes(t *testing.T) {
 
 			if _, err := os.Stat(filepath.Join(spool, "job-refused")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("a refused job has a spool: %v", err)
+			}
+
+			if entries, err := os.ReadDir(spool); err == nil && len(entries) != 0 {
+				t.Fatalf("a refused job left %d entries under the spool root", len(entries))
 			}
 		})
 	}
