@@ -33,6 +33,8 @@ var otherKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x3c}, ed25519.SeedSiz
 func testOwnerRecord() ownerrecord.Record {
 	return ownerrecord.Record{
 		InstallationID:  "inst-cmd-01",
+		Org:             "org-cmd",
+		Bloc:            "bloc-cmd",
 		OwnerInstanceID: "instance-cmd-a",
 		OwnerPublicKey:  ownerrecordtest.TestKey().Public().(ed25519.PublicKey),
 		Epoch:           1,

@@ -78,6 +78,8 @@ func runRootWithStdin(t *testing.T, stdin []byte, args ...string) (string, strin
 func exemptOwnerRecord() ownerrecord.Record {
 	return ownerrecord.Record{
 		InstallationID:  "inst-cli-01",
+		Org:             "org-cli",
+		Bloc:            "bloc-cli",
 		OwnerInstanceID: "instance-cli-a",
 		OwnerPublicKey:  ownerrecordtest.TestKey().Public().(ed25519.PublicKey),
 		Epoch:           1,

@@ -42,6 +42,8 @@ func otherKey() ed25519.PrivateKey {
 func liveRecord() ownerrecord.Record {
 	return ownerrecord.Record{
 		InstallationID:  "inst-fixture-01",
+		Org:             "org-fixture",
+		Bloc:            "bloc-fixture",
 		OwnerInstanceID: "instance-fixture-a",
 		OwnerPublicKey:  ownerKey().Public().(ed25519.PublicKey),
 		Epoch:           3,

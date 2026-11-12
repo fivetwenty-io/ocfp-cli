@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 
@@ -21,8 +20,8 @@ const (
 )
 
 // jobIDPattern is the form of a job id. A job id names a spool directory, so
-// it can never hold a path separator or start with a dot or a dash.
-var jobIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+// it takes the form of every name that may reach a path on the host.
+var jobIDPattern = ownerrecord.NamePattern
 
 // CheckOwner verifies sr against the owner record in store and returns the
 // request with the release of the shared lock on the record. The lock stays
