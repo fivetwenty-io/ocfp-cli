@@ -106,6 +106,25 @@ func TestStoreRefusesWhatAnotherUserCouldChange(t *testing.T) {
 
 			return dir
 		}},
+		{name: "a writable directory reached through a link and ..", arrange: func(t *testing.T, parent, dir string) string {
+			// link/.. leads the kernel to x, which holds a private owner
+			// directory, while the path names parent/owner, which is open
+			// to everyone.
+			chmod(t, dir, 0o777)
+
+			for _, d := range []string{"x", filepath.Join("x", "sub"), filepath.Join("x", "owner")} {
+				if err := os.Mkdir(filepath.Join(parent, d), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := os.Symlink(filepath.Join(parent, "x", "sub"), filepath.Join(parent, "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			// filepath.Join would clean the path, so build it by hand.
+			return parent + "/link/../owner"
+		}},
 		{name: "a writable parent", arrange: func(t *testing.T, parent, dir string) string {
 			chmod(t, parent, 0o777)
 
