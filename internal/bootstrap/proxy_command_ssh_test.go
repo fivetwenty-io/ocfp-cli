@@ -123,3 +123,21 @@ func TestBastionProxyCommandInnerSSHChecksTheRealKnownHosts(t *testing.T) {
 		}
 	}
 }
+
+// The key path, user, and bastion reach the inner ssh through a shell, so
+// each must arrive as one argument, unchanged, whatever it holds.
+func TestBastionProxyCommandHandsTheInnerSSHEachValueWhole(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	keyPath := filepath.Join(t.TempDir(), `my key's "dir"`, "id_ed25519")
+
+	argv := proxyCommandInnerArgv(t, mustProxyCommand(t, keyPath, "ubuntu", "100.109.226.53", true))
+
+	if len(argv) < 2 || argv[0] != "-i" || argv[1] != keyPath {
+		t.Errorf("the inner ssh starts with %q, want -i %q", argv, keyPath)
+	}
+
+	if argv[len(argv)-1] != "ubuntu@100.109.226.53" {
+		t.Errorf("the inner ssh ends with %q, want the bastion as one argument", argv[len(argv)-1])
+	}
+}
