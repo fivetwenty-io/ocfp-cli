@@ -169,6 +169,202 @@ func TestAncestorsRefusesAnotherOwner(t *testing.T) {
 	}
 }
 
+// realPath is path with every symbolic link in it resolved. On macOS this
+// moves a temporary directory from /var to /private/var.
+func realPath(t *testing.T, path string) string {
+	t.Helper()
+
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return real
+}
+
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// wantResolved checks that Resolve accepts path and returns want, and that no
+// directory above what it returns is a symbolic link.
+func wantResolved(t *testing.T, path, want string) {
+	t.Helper()
+
+	got, err := safedir.Resolve(path)
+	if err != nil {
+		t.Fatalf("Resolve(%s) refused: %v", path, err)
+	}
+
+	if got != want {
+		t.Fatalf("Resolve(%s) = %s, want %s", path, got, want)
+	}
+
+	if parent := filepath.Dir(got); realPath(t, parent) != parent {
+		t.Fatalf("Resolve(%s) = %s, whose parent still holds a symbolic link", path, got)
+	}
+}
+
+// A home directory or a data directory reached through a link that this user
+// owns must keep working, and the caller must get the directory the link
+// leads to, so that what was checked is what it uses.
+func TestResolveFollowsALinkToAPrivateDirectory(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	data := filepath.Join(base, "data")
+	mkdirMode(t, data, 0o700)
+	mkdirMode(t, filepath.Join(data, "sub"), 0o750)
+
+	symlink(t, data, filepath.Join(base, "abs"))
+	symlink(t, "data", filepath.Join(base, "rel"))
+	symlink(t, filepath.Join("..", "data", "sub"), filepath.Join(data, "up"))
+
+	want := filepath.Join(realPath(t, data), "sub", "x")
+
+	wantResolved(t, filepath.Join(base, "abs", "sub", "x"), want)
+	wantResolved(t, filepath.Join(base, "rel", "sub", "x"), want)
+	wantResolved(t, filepath.Join(base, "abs", "up", "x"), want)
+	wantResolved(t, filepath.Join(data, "sub", "x"), want)
+}
+
+// A link that leads into a directory another user can write gives that user
+// a way to swap what lies below it, so it is refused however the link is
+// written.
+func TestResolveRefusesALinkIntoAWritableDirectory(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []fs.FileMode{0o777, 0o770, 0o722} {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
+
+			base := t.TempDir()
+
+			shared := filepath.Join(base, "shared")
+			mkdirMode(t, shared, mode)
+			mkdirMode(t, filepath.Join(shared, "mine"), 0o700)
+
+			mine := filepath.Join(base, "mine")
+			mkdirMode(t, mine, 0o700)
+
+			symlink(t, shared, filepath.Join(base, "into"))
+			symlink(t, filepath.Join(shared, "mine"), filepath.Join(base, "below"))
+			symlink(t, filepath.Join("..", "shared", "mine"), filepath.Join(mine, "up"))
+
+			for _, path := range []string{
+				filepath.Join(base, "into", "x"),
+				filepath.Join(base, "below", "x"),
+				filepath.Join(mine, "up", "x"),
+			} {
+				got, err := safedir.Resolve(path)
+				if err == nil {
+					t.Errorf("Resolve(%s) accepted a link into a %s directory and returned %s", path, mode, got)
+				}
+
+				if got != "" {
+					t.Errorf("Resolve(%s) refused but returned %s", path, got)
+				}
+			}
+		})
+	}
+}
+
+// Resolve follows links only above the last name. A link at the last name is
+// kept as written, so that Entry still refuses it.
+func TestResolveKeepsALinkAtTheLastName(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	data := filepath.Join(base, "data")
+	mkdirMode(t, data, 0o700)
+	mkdirMode(t, filepath.Join(data, "real"), 0o700)
+
+	symlink(t, data, filepath.Join(base, "home"))
+	symlink(t, filepath.Join(data, "real"), filepath.Join(data, "leaf"))
+
+	want := filepath.Join(realPath(t, data), "leaf")
+	wantResolved(t, filepath.Join(base, "home", "leaf"), want)
+
+	if err := safedir.Entry(want, true); err == nil {
+		t.Fatal("Entry accepted the link that Resolve kept")
+	}
+}
+
+// A last name that does not exist yet is fine, as it is for Ancestors, so
+// that a caller can make it. A missing directory above it is not.
+func TestResolveWithAMissingName(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	data := filepath.Join(base, "data")
+	mkdirMode(t, data, 0o700)
+	symlink(t, data, filepath.Join(base, "home"))
+	symlink(t, filepath.Join(base, "nowhere"), filepath.Join(base, "dangling"))
+
+	wantResolved(t, filepath.Join(base, "home", "missing"), filepath.Join(realPath(t, data), "missing"))
+
+	for _, path := range []string{
+		filepath.Join(base, "home", "missing", "x"),
+		filepath.Join(base, "dangling", "x"),
+	} {
+		if _, err := safedir.Resolve(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Resolve(%s) = %v, want fs.ErrNotExist", path, err)
+		}
+	}
+}
+
+func TestResolveCleansThePath(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	data := filepath.Join(base, "data")
+	mkdirMode(t, data, 0o700)
+
+	// filepath.Join would clean the path, so build it by hand.
+	wantResolved(t, data+"/./gone/../x", filepath.Join(realPath(t, data), "x"))
+	wantResolved(t, "/", "/")
+}
+
+func TestResolveRefusesALinkLoop(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	symlink(t, "b", filepath.Join(base, "a"))
+	symlink(t, "a", filepath.Join(base, "b"))
+
+	if _, err := safedir.Resolve(filepath.Join(base, "a", "x")); err == nil {
+		t.Fatal("Resolve accepted a link loop")
+	}
+}
+
+func TestResolveAsRefusesAnotherOwner(t *testing.T) {
+	t.Parallel()
+
+	euid := os.Geteuid()
+	if euid == 0 {
+		t.Skip("every parent is owned by root or by this user")
+	}
+
+	path := filepath.Join(t.TempDir(), "x")
+
+	if _, err := safedir.ResolveAs(path, euid); err != nil {
+		t.Fatalf("ResolveAs refused this user's own parents: %v", err)
+	}
+
+	if _, err := safedir.ResolveAs(path, euid+1); err == nil {
+		t.Fatal("ResolveAs accepted parents owned by another user")
+	}
+}
+
 func TestEntry(t *testing.T) {
 	t.Parallel()
 

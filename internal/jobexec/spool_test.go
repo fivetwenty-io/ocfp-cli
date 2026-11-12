@@ -44,7 +44,14 @@ func TestCreateSpoolOnce(t *testing.T) {
 		t.Fatalf("first CreateSpool = %v, %v; want created", created, err)
 	}
 
-	if want := filepath.Join(root, "job-0001"); s.Dir != want {
+	// The spool names its root with the links above it resolved, which on
+	// macOS moves a temporary directory from /var to /private/var.
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := filepath.Join(realRoot, "job-0001"); s.Dir != want {
 		t.Fatalf("spool dir = %q, want %q", s.Dir, want)
 	}
 

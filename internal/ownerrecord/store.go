@@ -97,6 +97,12 @@ type Store interface {
 // writable by group or other. Every directory above them must pass
 // safedir.Ancestors. A store that fails any of these is refused with
 // ErrUnsafeStore, and nothing in it is read or changed.
+//
+// Each use resolves the symbolic links above the directory with
+// safedir.Resolve and then works only in the resolved directory, so a link
+// that changes while the store holds its lock cannot move the record
+// somewhere that was not checked or locked. The directory itself is never
+// followed, because it must not be a link.
 type DirStore struct {
 	dir string
 
@@ -158,18 +164,18 @@ func (s *DirStore) Read(ctx context.Context) (Signed, Record, error) {
 // readShared reads the stored record under the shared lock. The release is
 // deferred so that a panic recovered further up cannot leave the lock held.
 func (s *DirStore) readShared(ctx context.Context) (sf Signed, err error) {
-	release, err := s.RLock(ctx)
+	f, dir, err := s.lock(ctx, lockShared)
 	if err != nil {
 		return Signed{}, err
 	}
 
 	defer func() {
-		if rerr := release(); rerr != nil && err == nil {
+		if rerr := release(f); rerr != nil && err == nil {
 			sf, err = Signed{}, rerr
 		}
 	}()
 
-	return s.readSigned()
+	return s.readSigned(dir)
 }
 
 // RLock takes the shared lock. It never creates the directory, and it
@@ -177,7 +183,7 @@ func (s *DirStore) readShared(ctx context.Context) (sf Signed, err error) {
 // that another user could change with ErrUnsafeStore. The release it
 // returns may be called more than once, and only the first call acts.
 func (s *DirStore) RLock(ctx context.Context) (func() error, error) {
-	f, err := s.lock(ctx, lockShared)
+	f, _, err := s.lock(ctx, lockShared)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +257,7 @@ func (s *DirStore) Replace(ctx context.Context, expect *uint64, next Signed) (er
 		return err
 	}
 
-	f, err := s.lock(ctx, lockExclusive)
+	f, dir, err := s.lock(ctx, lockExclusive)
 	if err != nil {
 		return err
 	}
@@ -264,19 +270,19 @@ func (s *DirStore) Replace(ctx context.Context, expect *uint64, next Signed) (er
 		}
 	}()
 
-	s.sweepTemps()
+	s.sweepTemps(dir)
 
-	if err := s.checkReplace(expect, nr); err != nil {
+	if err := s.checkReplace(dir, expect, nr); err != nil {
 		return err
 	}
 
-	return s.writeRecord(data)
+	return s.writeRecord(dir, data)
 }
 
-// checkReplace checks next against the stored record. The caller holds the
-// exclusive lock.
-func (s *DirStore) checkReplace(expect *uint64, next Record) error {
-	cur, err := s.readSigned()
+// checkReplace checks next against the record stored in dir. The caller
+// holds the exclusive lock.
+func (s *DirStore) checkReplace(dir string, expect *uint64, next Record) error {
+	cur, err := s.readSigned(dir)
 
 	switch {
 	case errors.Is(err, ErrNoRecord) && expect == nil:
@@ -322,10 +328,10 @@ func (s *DirStore) checkReplace(expect *uint64, next Record) error {
 	return nil
 }
 
-// readSigned reads and parses the stored record. It returns ErrNoRecord when
-// there is none.
-func (s *DirStore) readSigned() (Signed, error) {
-	path := filepath.Join(s.dir, RecordFile)
+// readSigned reads and parses the record stored in dir, the resolved
+// directory. It returns ErrNoRecord when there is none.
+func (s *DirStore) readSigned(dir string) (Signed, error) {
+	path := filepath.Join(dir, RecordFile)
 
 	err := safedir.EntryAs(path, false, s.uid())
 	if errors.Is(err, fs.ErrNotExist) {
@@ -381,15 +387,16 @@ const tempPrefix = "." + RecordFile + ".tmp-"
 // temporary file exists, so none of these files is still being written. It
 // removes only regular files whose names are exactly the store's own pattern,
 // and it is best effort: a file it cannot remove is left for the next writer.
-func (s *DirStore) sweepTemps() {
-	entries, err := os.ReadDir(s.dir)
+// dir is the resolved directory.
+func (s *DirStore) sweepTemps(dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 
 	for _, e := range entries {
 		if e.Type().IsRegular() && isTempName(e.Name()) {
-			_ = os.Remove(filepath.Join(s.dir, e.Name()))
+			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
 }
@@ -420,10 +427,11 @@ func (s *DirStore) syncDirectory(dir string) error {
 	return syncDir(dir)
 }
 
-// writeRecord writes data to a temporary file in the directory and renames
-// it over RecordFile. The caller holds the exclusive lock.
-func (s *DirStore) writeRecord(data []byte) error {
-	tmp, err := os.CreateTemp(s.dir, tempPrefix+"*")
+// writeRecord writes data to a temporary file in dir, the resolved
+// directory, and renames it over RecordFile. The caller holds the exclusive
+// lock.
+func (s *DirStore) writeRecord(dir string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("create temporary owner record: %w", err)
 	}
@@ -447,13 +455,13 @@ func (s *DirStore) writeRecord(data []byte) error {
 		return fmt.Errorf("close temporary owner record: %w", err)
 	}
 
-	if err := os.Rename(name, filepath.Join(s.dir, RecordFile)); err != nil {
+	if err := os.Rename(name, filepath.Join(dir, RecordFile)); err != nil {
 		return fmt.Errorf("rename owner record into place: %w", err)
 	}
 
 	renamed = true
 
-	return s.syncDirectory(s.dir)
+	return s.syncDirectory(dir)
 }
 
 // fillTemp writes data to tmp, sets its mode, and syncs it.
@@ -483,16 +491,16 @@ func (s *DirStore) fillTemp(tmp *os.File, data []byte) error {
 	return nil
 }
 
-// makeDir checks the directories above the store, creates the directory
-// with dirMode when it does not exist, and then syncs its parent so that the
-// new directory's entry survives a crash. It leaves an existing directory's
-// mode alone.
+// makeDir checks the directories above the store, creates the resolved
+// directory with dirMode when it does not exist, and then syncs its parent
+// so that the new directory's entry survives a crash. It leaves an existing
+// directory's mode alone.
 func (s *DirStore) makeDir() error {
 	if s.dir == "" {
 		return errNoDir
 	}
 
-	err := safedir.AncestorsAs(s.dir, s.uid())
+	dir, err := safedir.ResolveAs(s.dir, s.uid())
 	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("create owner record directory: %w", err)
 	}
@@ -501,27 +509,27 @@ func (s *DirStore) makeDir() error {
 		return unsafeStore(err)
 	}
 
-	err = os.Mkdir(s.dir, dirMode)
+	err = os.Mkdir(dir, dirMode)
 	if err == nil {
 		// Mkdir's mode passes through the umask, so set it outright.
-		if err := os.Chmod(s.dir, dirMode); err != nil {
+		if err := os.Chmod(dir, dirMode); err != nil {
 			return fmt.Errorf("set owner record directory mode: %w", err)
 		}
 
-		return s.syncDirectory(filepath.Dir(s.dir))
+		return s.syncDirectory(filepath.Dir(dir))
 	}
 
 	if !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("create owner record directory: %w", err)
 	}
 
-	fi, err := os.Stat(s.dir)
+	fi, err := os.Stat(dir)
 	if err != nil {
 		return fmt.Errorf("owner record directory: %w", err)
 	}
 
 	if !fi.IsDir() {
-		return fmt.Errorf("owner record directory %s is not a directory", s.dir)
+		return fmt.Errorf("owner record directory %s is not a directory", dir)
 	}
 
 	return nil
@@ -548,72 +556,82 @@ func unsafeStore(err error) error {
 }
 
 // checkPrivate checks that no user but this one and root can change the
-// directory, the record, or a directory above them. A missing directory, or
-// a missing directory above it, is ErrNoRecord. A missing record is left
-// for the caller to find.
-func (s *DirStore) checkPrivate() error {
+// directory, the record, or a directory above them, and returns the
+// directory with the symbolic links above it resolved. Everything the caller
+// does next must use that directory. A missing directory, or a missing
+// directory above it, is ErrNoRecord. A missing record is left for the
+// caller to find.
+func (s *DirStore) checkPrivate() (string, error) {
 	if s.dir == "" {
-		return errNoDir
+		return "", errNoDir
 	}
 
 	uid := s.uid()
 
-	err := safedir.AncestorsAs(s.dir, uid)
+	dir, err := safedir.ResolveAs(s.dir, uid)
 	if err == nil {
-		err = safedir.EntryAs(s.dir, true, uid)
+		err = safedir.EntryAs(dir, true, uid)
 	}
 
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("owner record directory %s does not exist: %w", s.dir, ErrNoRecord)
+		return "", fmt.Errorf("owner record directory %s does not exist: %w", s.dir, ErrNoRecord)
 	}
 
 	if err != nil {
-		return unsafeStore(err)
+		return "", unsafeStore(err)
 	}
 
-	err = safedir.EntryAs(filepath.Join(s.dir, RecordFile), false, uid)
+	err = safedir.EntryAs(filepath.Join(dir, RecordFile), false, uid)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return unsafeStore(err)
+		return "", unsafeStore(err)
 	}
 
-	return nil
+	return dir, nil
 }
 
 // lock opens LockFile, creating it when it does not exist, and takes a lock
 // of the given kind on it. When the lock is taken elsewhere it waits until
-// the lock is granted or ctx is done. It returns ErrNoRecord when the
-// directory does not exist, and refuses with checkPrivate's error a store
-// that another user could change.
-func (s *DirStore) lock(ctx context.Context, kind lockKind) (*os.File, error) {
+// the lock is granted or ctx is done. It returns the lock and the resolved
+// directory that checkPrivate checked, which is where the caller must work
+// while it holds the lock. It returns ErrNoRecord when the directory does
+// not exist, and refuses with checkPrivate's error a store that another user
+// could change.
+func (s *DirStore) lock(ctx context.Context, kind lockKind) (*os.File, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("lock owner record: %w", err)
+		return nil, "", fmt.Errorf("lock owner record: %w", err)
 	}
 
-	if err := s.checkPrivate(); err != nil {
-		return nil, err
-	}
-
-	f, err := s.openLock(ctx)
+	dir, err := s.checkPrivate()
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+
+	f, err := s.openLock(ctx, dir)
+	if err != nil {
+		return nil, "", err
 	}
 
 	ok, err := tryLock(f, kind)
 	if err != nil {
 		_ = f.Close()
 
-		return nil, fmt.Errorf("lock owner record: %w", err)
+		return nil, "", fmt.Errorf("lock owner record: %w", err)
 	}
 
 	if ok {
-		return f, nil
+		return f, dir, nil
 	}
 
 	if s.onWait != nil {
 		s.onWait()
 	}
 
-	return waitForLock(ctx, f, kind)
+	f, err = waitForLock(ctx, f, kind)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return f, dir, nil
 }
 
 // waitForLock waits for the lock on f in another goroutine, because neither
@@ -650,16 +668,17 @@ func waitForLock(ctx context.Context, f *os.File, kind lockKind) (*os.File, erro
 // keeps appearing and disappearing under it.
 const maxLockOpens = 8
 
-// openLock opens LockFile for locking. It creates the file with lockMode
-// when it does not exist, but never the directory. It refuses, with
-// JOB_REQUEST_INVALID, a lock path that is a symbolic link or anything else
-// but a regular file, and it checks ctx on every pass.
-func (s *DirStore) openLock(ctx context.Context) (*os.File, error) {
-	if s.dir == "" {
+// openLock opens LockFile in dir, the resolved directory, for locking. It
+// creates the file with lockMode when it does not exist, but never the
+// directory. It refuses, with JOB_REQUEST_INVALID, a lock path that is a
+// symbolic link or anything else but a regular file, and it checks ctx on
+// every pass.
+func (s *DirStore) openLock(ctx context.Context, dir string) (*os.File, error) {
+	if dir == "" {
 		return nil, errNoDir
 	}
 
-	path := filepath.Join(s.dir, LockFile)
+	path := filepath.Join(dir, LockFile)
 
 	for range maxLockOpens {
 		if err := ctx.Err(); err != nil {
@@ -688,7 +707,7 @@ func (s *DirStore) openLock(ctx context.Context) (*os.File, error) {
 		}
 
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("owner record directory %s does not exist: %w", s.dir, ErrNoRecord)
+			return nil, fmt.Errorf("owner record directory %s does not exist: %w", dir, ErrNoRecord)
 		}
 
 		if err != nil {

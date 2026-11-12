@@ -65,10 +65,12 @@ type Exit struct {
 // root, and a directory above it that group or other can write must be
 // sticky, because whoever can rename an ancestor can swap in their own
 // root. CreateSpool cleans root first, so a ".." in it climbs the names
-// as written and not through a link. It makes a missing root with mode
-// 0700, but never its parent. An existing spool path must pass the same
-// checks, so a file, a symbolic link, or a directory that others can write is
-// never taken for a job's spool.
+// as written and not through a link. It then resolves the symbolic links
+// above root, and the Spool it returns names the resolved directory, so a
+// link that changes later cannot move where the spool reads and writes. It
+// makes a missing root with mode 0700, but never its parent. An existing
+// spool path must pass the same checks, so a file, a symbolic link, or a
+// directory that others can write is never taken for a job's spool.
 func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 	if !jobIDPattern.MatchString(jobID) {
 		return Spool{}, false, fmt.Errorf("spool: job id %s is not of the form %s", quote(jobID), jobIDPattern)
@@ -78,9 +80,7 @@ func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 		return Spool{}, false, errors.New("spool: no spool root")
 	}
 
-	root = filepath.Clean(root)
-
-	err = prepareRoot(root)
+	root, err = prepareRoot(filepath.Clean(root))
 	if err != nil {
 		return Spool{}, false, err
 	}
@@ -106,19 +106,25 @@ func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 
 // prepareRoot checks that no other user can replace root by way of one of
 // its ancestors, makes root when it is missing, and checks that it is a
-// private directory.
-func prepareRoot(root string) error {
-	err := safedir.Ancestors(root)
+// private directory. It returns root with the symbolic links above it
+// resolved, which is the root it checked and the one the caller must use.
+func prepareRoot(root string) (string, error) {
+	resolved, err := safedir.Resolve(root)
 	if err != nil {
-		return fmt.Errorf("spool: %w", err)
+		return "", fmt.Errorf("spool: %w", err)
 	}
 
-	err = os.Mkdir(root, 0o700)
+	err = os.Mkdir(resolved, 0o700)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("spool: make root: %w", err)
+		return "", fmt.Errorf("spool: make root: %w", err)
 	}
 
-	return checkPrivateDir(root, "spool root")
+	err = checkPrivateDir(resolved, "spool root")
+	if err != nil {
+		return "", err
+	}
+
+	return resolved, nil
 }
 
 // checkPrivateDir checks that path is a directory, not a symbolic link, owned
