@@ -11,21 +11,29 @@ import (
 // the first time and refuses one whose key differs from the entry on record,
 // and naming the file keeps system ssh on the same known_hosts the Go client
 // reads and writes, whatever the user's ssh config says. When the home
-// directory cannot be found the file is left to ssh's default, and the check
-// stays strict.
+// directory cannot be found the file is named as the literal
+// ~/.ssh/known_hosts, which ssh expands from the password database, so a
+// UserKnownHostsFile in the user's ssh config still cannot replace it.
 //
 // ssh keeps the first value it sees for an option, so callers put these
 // before any options the operator supplies.
 func BastionHostKeyOptions() []string {
-	options := []string{"-o", "StrictHostKeyChecking=accept-new"}
+	knownHosts := defaultKnownHostsFile
 
 	knownHostsPath, err := KnownHostsFile()
 	if err == nil {
-		options = append(options, "-o", "UserKnownHostsFile="+sshConfigPath(knownHostsPath))
+		knownHosts = sshConfigPath(knownHostsPath)
 	}
 
-	return options
+	return []string{
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=" + knownHosts,
+	}
 }
+
+// defaultKnownHostsFile names the user's known_hosts file in the form ssh
+// expands itself, for when the home directory cannot be found here.
+const defaultKnownHostsFile = "~/.ssh/known_hosts"
 
 // InternalHostKeyOptions returns the ssh -o options for a host behind the
 // bastion, such as a BOSH VM or the artifacts VM. Those hosts are rebuilt

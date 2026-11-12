@@ -34,6 +34,23 @@ func TestBastionHostKeyOptionsQuoteAPathWithSpaces(t *testing.T) {
 	}
 }
 
+// Without a home directory the file is still named on the command line, as
+// the literal ~/.ssh/known_hosts that ssh expands itself, so a user's ssh
+// config cannot point the check at /dev/null.
+func TestBastionHostKeyOptionsWithoutAHomeStillNameTheFile(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	got := BastionHostKeyOptions()
+	want := []string{
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=~/.ssh/known_hosts",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BastionHostKeyOptions() = %q, want %q", got, want)
+	}
+}
+
 func TestInternalHostKeyOptionsStayRelaxed(t *testing.T) {
 	t.Parallel()
 
