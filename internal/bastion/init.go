@@ -79,10 +79,13 @@ type Manager struct {
 	fetchGitLabKeys ssh.KeyFetchFunc
 }
 
-// task represents a phase execution task.
+// task represents a phase execution task. index and total place it in the
+// whole run, for the progress report and the checkpoint.
 type task struct {
-	name string
-	fn   func(context.Context) error
+	name  string
+	fn    func(context.Context) error
+	index int
+	total int
 }
 
 // job represents a git clone/update job.
@@ -919,17 +922,29 @@ func (m *Manager) parallelPostPhaseList() []struct {
 
 // executeParallelPhases handles parallel execution of initialization phases.
 func (m *Manager) executeParallelPhases(ctx context.Context, _ *ProgressReporter) error {
-	err := m.runPhasesSequential(ctx, m.parallelPrePhaseList())
+	return m.runParallelLists(ctx, m.parallelPrePhaseList(), m.parallelParPhaseList(), m.parallelPostPhaseList())
+}
+
+// runParallelLists runs the steps before the parallel batch, the batch,
+// and the steps after it. It numbers them as one list, so the step a
+// checkpoint records is never past its total and --resume can load it.
+func (m *Manager) runParallelLists(ctx context.Context, pre, par, post []struct {
+	name string
+	fn   func(context.Context) error
+}) error {
+	m.progress.TotalSteps = len(pre) + len(par) + len(post)
+
+	err := m.runPhasesSequential(ctx, pre, 0)
 	if err != nil {
 		return err
 	}
 
-	err = m.runPhasesParallel(ctx, m.parallelParPhaseList())
+	err = m.runPhasesParallel(ctx, par, len(pre))
 	if err != nil {
 		return err
 	}
 
-	return m.runPhasesSequential(ctx, m.parallelPostPhaseList())
+	return m.runPhasesSequential(ctx, post, len(pre)+len(par))
 }
 
 // executeSequentialPhases handles sequential execution of all phases.
@@ -1370,11 +1385,12 @@ func (m *Manager) previewAPTRepositories() {
 	}
 }
 
-// runPhasesSequential executes phases one by one (internal helper).
+// runPhasesSequential executes phases one by one (internal helper). offset
+// is the number of steps in the run before the first of these.
 func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 	name string
 	fn   func(context.Context) error
-}) error {
+}, offset int) error {
 	for index, phase := range phases {
 		if m.shouldSkipPhase(phase.name) {
 			m.log.Infow("Skipping phase", "phase", phase.name, "reason", "checkpoint exists")
@@ -1386,11 +1402,12 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 			continue
 		}
 
+		number := offset + index
 		m.progress.CurrentStep = phase.name
+		m.progress.CompletedSteps = number
 
-		m.progress.CompletedSteps++
 		if m.reporter != nil {
-			m.reporter.ReportPhaseStart(phase.name, index, m.progress.TotalSteps)
+			m.reporter.ReportPhaseStart(phase.name, number, m.progress.TotalSteps)
 		}
 
 		if m.options.DryRun {
@@ -1420,10 +1437,11 @@ func (m *Manager) runPhasesSequential(ctx context.Context, phases []struct {
 }
 
 // runPhasesParallel executes phases concurrently with a worker limit.
+// offset is the number of steps in the run before the first of these.
 func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 	name string
 	fn   func(context.Context) error
-}) error {
+}, offset int) error {
 	workers := m.options.MaxWorkers
 	if workers <= 0 {
 		workers = defaultWorkerCount
@@ -1438,8 +1456,10 @@ func (m *Manager) runPhasesParallel(ctx context.Context, phases []struct {
 	}
 
 	// Enqueue tasks
-	for _, p := range phases {
-		tasks <- task{name: p.name, fn: p.fn}
+	total := m.progress.TotalSteps
+
+	for index, p := range phases {
+		tasks <- task{name: p.name, fn: p.fn, index: offset + index, total: total}
 	}
 
 	close(tasks)
@@ -1462,7 +1482,7 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 		}
 
 		if m.reporter != nil {
-			m.reporter.ReportPhaseStart(task.name, 0, 0)
+			m.reporter.ReportPhaseStart(task.name, task.index, task.total)
 		}
 
 		// A dry run only logs each step, as the sequential runner does, and

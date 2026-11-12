@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,7 +75,7 @@ func TestParallelRunnerSharesProgressSafely(t *testing.T) {
 	m.progress.StartTime = time.Now()
 	m.reporter = NewProgressReporter(&out, output.ModeConcise, m.progress)
 
-	err := m.runPhasesParallel(context.Background(), parallelTestPhases(phaseCount, failing))
+	err := m.runPhasesParallel(context.Background(), parallelTestPhases(phaseCount, failing), 0)
 	require.ErrorIs(t, err, errTestPhaseMisconfigured)
 	assert.Len(t, m.progress.Errors, 1)
 
@@ -159,4 +160,85 @@ func TestCheckpointSavesLandInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, checkpoint)
 	assert.True(t, checkpoint.CompletedPhases["second"], "the newer progress must be the one on disk")
+}
+
+// stepRecorder builds steps that record each run, and it fails the one
+// named failing while fail is set.
+type stepRecorder struct {
+	mu      sync.Mutex
+	runs    map[string]int
+	failing string
+	fail    bool
+}
+
+func (r *stepRecorder) steps(names ...string) []struct {
+	name string
+	fn   func(context.Context) error
+} {
+	steps := make([]struct {
+		name string
+		fn   func(context.Context) error
+	}, 0, len(names))
+
+	for _, name := range names {
+		steps = append(steps, struct {
+			name string
+			fn   func(context.Context) error
+		}{name, func(context.Context) error {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+
+			r.runs[name]++
+
+			if r.fail && name == r.failing {
+				return errTestPhaseMisconfigured
+			}
+
+			return nil
+		}})
+	}
+
+	return steps
+}
+
+// A parallel run that fails after the batch must leave a checkpoint that
+// --resume can load, and the resumed run must skip what already finished.
+// The workers used to report every batch step as step 0 of 0, which set
+// the checkpoint's total to 0, so Load threw the checkpoint away.
+func TestParallelRunCheckpointResumes(t *testing.T) {
+	cfg := dryRunBloc(t)
+	t.Setenv("OCFP_HOME", t.TempDir())
+
+	recorder := &stepRecorder{runs: map[string]int{}, failing: "post_2", fail: true}
+	pre := recorder.steps("pre_0", "pre_1", "pre_2")
+	par := recorder.steps("par_0", "par_1", "par_2")
+	post := recorder.steps("post_0", "post_1", "post_2", "post_3")
+
+	var out bytes.Buffer
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{Parallel: true, ProgressOut: &out}, &unconnectedSSHClient{})
+	m.progress.StartTime = time.Now()
+	m.reporter = NewProgressReporter(&out, output.ModeConcise, m.progress)
+
+	require.ErrorIs(t, m.runParallelLists(context.Background(), pre, par, post), errTestPhaseMisconfigured)
+
+	checkpoint, err := m.checkpointManager.Load()
+	require.NoError(t, err)
+	require.NotNil(t, checkpoint, "the checkpoint of a failed parallel run must load")
+	assert.Equal(t, 10, checkpoint.TotalSteps)
+
+	recorder.fail = false
+
+	resumed, _, _ := dryRunManager(t, cfg,
+		&ProvisioningOptions{Parallel: true, Resume: true, ProgressOut: &out}, &unconnectedSSHClient{})
+	resumed.progress = resumed.checkpointManager.RestoreProgress(checkpoint)
+	resumed.reporter = NewProgressReporter(&out, output.ModeConcise, resumed.progress)
+
+	require.NoError(t, resumed.runParallelLists(context.Background(), pre, par, post))
+
+	for _, name := range []string{"pre_0", "pre_1", "pre_2", "par_0", "par_1", "par_2", "post_0", "post_1", "post_3"} {
+		assert.Equal(t, 1, recorder.runs[name], "%s finished in the first run, so the resumed run skips it", name)
+	}
+
+	assert.Equal(t, 2, recorder.runs["post_2"], "the step that failed runs again")
 }
