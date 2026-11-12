@@ -2,7 +2,10 @@ package commands
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -97,5 +100,78 @@ func TestRunShowingStderrDeliversEverythingToASlowTerminal(t *testing.T) {
 
 	if got := len(terminal.String()); got != size {
 		t.Errorf("the terminal got %d of %d bytes", got, size)
+	}
+}
+
+// The command can exit while the copy is busy writing to a slow terminal
+// rather than waiting to read. The grace still applies to the copy's next
+// read, so a background process holding the pipe does not hold the run.
+func TestRunShowingStderrGraceStartsAfterASlowWrite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	terminal := &slowTerminal{stall: time.Second} //nolint:exhaustruct // zero values are ready to use
+
+	cmd := exec.Command("/bin/sh", "-c", "echo early >&2; (sleep 5; echo late >&2) & exit 0")
+
+	start := time.Now()
+
+	err := runShowingStderr(cmd, terminal, "100.109.226.53")
+	if err != nil {
+		t.Fatalf("got %v, want success", err)
+	}
+
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("the run took %s to return, waiting on the background process", elapsed)
+	}
+
+	if !strings.Contains(terminal.String(), "early") {
+		t.Errorf("terminal = %q, want the command's own output", terminal.String())
+	}
+}
+
+// openFiles counts this process's open file descriptors.
+func openFiles(t *testing.T) int {
+	t.Helper()
+
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		t.Skipf("cannot list open files: %v", err)
+	}
+
+	return len(entries)
+}
+
+// Each run closes both ends of its stderr pipe once the command is done
+// with them, so runs do not leak file descriptors. The garbage collector
+// would close a dropped file too, so it is held off while the runs are
+// counted.
+func TestRunShowingStderrClosesItsPipe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const runs = 20
+
+	runtime.GC()
+	gcPercent := debug.SetGCPercent(-1)
+	t.Cleanup(func() { debug.SetGCPercent(gcPercent) })
+
+	before := openFiles(t)
+
+	for range runs {
+		err := runShowingStderr(exec.Command("/bin/sh", "-c", "echo x >&2"), &lockedBuffer{}, "100.109.226.53") //nolint:exhaustruct // zero values are ready to use
+		if err != nil {
+			t.Fatalf("got %v, want success", err)
+		}
+	}
+
+	// The copy closes the read end just after the run returns.
+	after := openFiles(t)
+	for deadline := time.Now().Add(2 * time.Second); after > before && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+
+		after = openFiles(t)
+	}
+
+	if after-before >= runs/2 {
+		t.Errorf("%d runs left %d more file descriptors open", runs, after-before)
 	}
 }
