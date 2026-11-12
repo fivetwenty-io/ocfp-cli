@@ -71,20 +71,27 @@ func (p *ProvisioningProgress) snapshot() *ProvisioningProgress {
 	}
 }
 
+// phaseTiming is where a started phase sits in the run and when it began.
+type phaseTiming struct {
+	number int
+	total  int
+	start  time.Time
+}
+
 // ProgressReporter handles real-time progress reporting.
 //
-// The parallel phase runner's workers share one reporter. mu guards the
-// phase bookkeeping below it, and the renderers hold their own locks.
+// The parallel phase runner's workers share one reporter, and their phases
+// overlap. mu guards the phase bookkeeping below it, which keeps each
+// started phase's own number and start time, and the renderers hold their
+// own locks.
 type ProgressReporter struct {
 	renderer output.Renderer
 	progress *ProvisioningProgress
 	log      logger.Logger
 
 	mu             sync.Mutex
-	currentNumber  int           // Current phase number for completion messages
-	currentTotal   int           // Total phases for completion messages
-	cumulativeTime time.Duration // Cumulative time across all completed phases
-	phaseStartTime time.Time     // Start time of current phase for accurate duration
+	started        map[string]phaseTiming // Phases started and not yet complete, by name
+	cumulativeTime time.Duration          // Cumulative time across all completed phases
 }
 
 // SelectOutputMode determines the appropriate output mode based on environment.
@@ -155,13 +162,15 @@ func (pr *ProgressReporter) ReportPhaseStart(phase string, index, total int) {
 
 	pr.UpdateProgress(phase, index, total)
 
-	// Store current phase info for completion message and track start time
+	// Keep this phase's number and start time for its completion message
 	startTime := time.Now()
 
 	pr.mu.Lock()
-	pr.currentNumber = index + 1
-	pr.currentTotal = total
-	pr.phaseStartTime = startTime
+	if pr.started == nil {
+		pr.started = make(map[string]phaseTiming)
+	}
+
+	pr.started[phase] = phaseTiming{number: index + 1, total: total, start: startTime}
 	pr.mu.Unlock()
 
 	phaseInfo := output.PhaseInfo{
@@ -189,10 +198,13 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 
 	pr.mu.Lock()
 
-	// Calculate actual phase duration from tracked start time
+	timing, started := pr.started[phase]
+	delete(pr.started, phase)
+
+	// Calculate actual phase duration from this phase's own start time
 	actualDuration := duration
-	if !pr.phaseStartTime.IsZero() {
-		actualDuration = time.Since(pr.phaseStartTime)
+	if started {
+		actualDuration = time.Since(timing.start)
 	}
 
 	// Update cumulative time with actual duration
@@ -201,9 +213,9 @@ func (pr *ProgressReporter) ReportPhaseComplete(phase string, duration time.Dura
 	phaseInfo := output.PhaseInfo{
 		ID:                 phase,
 		Name:               phase,
-		Number:             pr.currentNumber,
-		Total:              pr.currentTotal,
-		StartTime:          pr.phaseStartTime,
+		Number:             timing.number,
+		Total:              timing.total,
+		StartTime:          timing.start,
 		CumulativeDuration: pr.cumulativeTime,
 	}
 
