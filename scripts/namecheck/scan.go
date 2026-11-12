@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -17,6 +18,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/htmlindex"
+	"golang.org/x/text/encoding/ianaindex"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -526,7 +530,13 @@ func (s *scanner) scanLog(revs ...string) error {
 			return err
 		}
 
-		s.reportCommit(hash, scanContent(s.terms, commitText(string(obj)), 1))
+		text, unreadable := commitText(string(obj))
+		s.reportCommit(hash, scanContent(s.terms, text, 1))
+
+		for _, why := range unreadable {
+			s.failed = true
+			s.emit(fmt.Sprintf("CLIENT_NAME_UNREADABLE commit %s encoding %s", hash, why))
+		}
 
 		nameList, err := s.git("diff-tree", "--ignore-submodules=none", "-r", "-z", "--name-only", "-m", "--root", "--no-commit-id", "-M", hash)
 		if err != nil {
@@ -645,13 +655,52 @@ func tagText(obj string) string {
 
 // commitText keeps the parts of a raw commit object that name people and
 // carry the message. It skips the tree, parent, and signature lines, where a
-// short term could match inside a hash.
-func commitText(obj string) string {
+// short term could match inside a hash. It also keeps the tag inside each
+// mergetag header, which holds a tagger and a message of its own. A commit
+// that declares a message encoding other than UTF-8 is read twice, once as
+// the raw bytes and once decoded from the declared encoding, so a term spelled
+// with bytes that are invalid in UTF-8 cannot hide. Only decoders that cannot
+// lose bytes are trusted, which are UTF-8, US-ASCII, the ISO-8859 family, and
+// the windows-125x family. Any other declared encoding, a decode that yields a
+// replacement character, and invalid UTF-8 under a UTF-8 or absent header are
+// each returned as a reason that the message cannot be read, because it may
+// hold a term the raw bytes do not show. A reason never carries any of the
+// header text, which is free and could hold a term. The caller treats each
+// reason as a failure.
+func commitText(obj string) (string, []string) {
 	head, body, _ := strings.Cut(obj, "\n\n")
 
-	var keep []string
+	var (
+		keep, encodings []string
+		tag             []string
+		inTag           bool
+	)
+
+	flushTag := func() {
+		if inTag {
+			keep = append(keep, tagText(strings.Join(tag, "\n")))
+		}
+
+		inTag, tag = false, nil
+	}
 
 	for _, l := range strings.Split(head, "\n") {
+		if rest, ok := strings.CutPrefix(l, " "); ok && inTag {
+			tag = append(tag, rest)
+
+			continue
+		}
+
+		flushTag()
+
+		if rest, ok := strings.CutPrefix(l, "mergetag "); ok {
+			inTag, tag = true, []string{rest}
+		}
+
+		if rest, ok := strings.CutPrefix(l, "encoding "); ok {
+			encodings = append(encodings, rest)
+		}
+
 		if strings.HasPrefix(l, "author ") || strings.HasPrefix(l, "committer ") {
 			// Keep the name and the mail address only. The keyword before
 			// them and the timestamp and zone after them are left out.
@@ -664,7 +713,81 @@ func commitText(obj string) string {
 		}
 	}
 
-	return strings.Join(keep, "\n") + "\n" + body
+	flushTag()
+
+	text := strings.Join(keep, "\n") + "\n" + body
+
+	var (
+		out        strings.Builder
+		unreadable []string
+	)
+
+	out.WriteString(text)
+
+	if len(encodings) == 0 && !utf8.ValidString(text) {
+		unreadable = append(unreadable, "<absent>")
+	}
+
+	for _, header := range encodings {
+		dec, ok := decodeAs(strings.TrimSpace(header), text)
+		if !ok {
+			unreadable = append(unreadable, fmt.Sprintf("<withheld, %d bytes>", len(header)))
+
+			continue
+		}
+
+		if dec != text {
+			out.WriteString("\n")
+			out.WriteString(dec)
+		}
+	}
+
+	return out.String(), unreadable
+}
+
+// decodeAs turns text from the named character encoding into UTF-8. It
+// reports false when the name is not one it knows, when its decoder is not on
+// the allowlist, or when the decode could have lost bytes.
+func decodeAs(name, text string) (string, bool) {
+	enc := lookupEncoding(name)
+	if enc == nil {
+		return "", false
+	}
+
+	canon, err := ianaindex.IANA.Name(enc)
+	if err != nil || !safeEncoding.MatchString(strings.ToLower(canon)) {
+		return "", false
+	}
+
+	dec, err := enc.NewDecoder().String(text)
+	if err != nil {
+		return "", false
+	}
+
+	if strings.EqualFold(canon, "utf-8") {
+		return dec, utf8.ValidString(text)
+	}
+
+	return dec, !strings.ContainsRune(dec, utf8.RuneError)
+}
+
+// safeEncoding matches the IANA names of the decoders that cannot lose bytes.
+var safeEncoding = regexp.MustCompile(`^(utf-8|us-ascii|windows-125[0-9]|iso[-_]8859-[0-9]+(:[0-9]{4})?)$`)
+
+// lookupEncoding finds an encoding by its IANA or HTML name, also with
+// underscores written as hyphens, and returns nil when neither index knows it.
+func lookupEncoding(name string) encoding.Encoding {
+	for _, n := range []string{name, strings.ReplaceAll(name, "_", "-")} {
+		if enc, err := ianaindex.IANA.Encoding(n); err == nil && enc != nil {
+			return enc
+		}
+
+		if enc, err := htmlindex.Get(n); err == nil && enc != nil {
+			return enc
+		}
+	}
+
+	return nil
 }
 
 // unquoteName turns a name from a patch header back into the real name.
