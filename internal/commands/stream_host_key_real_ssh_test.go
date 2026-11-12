@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,16 +112,31 @@ func serveLocalSSH(conn net.Conn, config *gossh.ServerConfig, stderr string, sta
 
 // localSSHCommand is the ssh command executeSSH would run against the local
 // server, checking its key as the bastion's is checked and reading nothing
-// from the real home directory.
+// from the real home directory. ssh finds ~ from the passwd entry rather
+// than $HOME, so the known_hosts files are named outright: the temporary
+// one realSSHHome made, and no global one. The shipped options must name
+// that same file, or the test fails before ssh runs.
 func localSSHCommand(t *testing.T, port int) []string {
 	t.Helper()
+
+	knownHosts, err := bastionssh.KnownHostsFile()
+	if err != nil || !strings.HasPrefix(knownHosts, os.Getenv("HOME")+string(filepath.Separator)) {
+		t.Fatalf("known_hosts %q (%v) is not under the test's home; call realSSHHome first", knownHosts, err)
+	}
 
 	hostKey, err := bastionssh.BastionHostKeyOptions()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cmd := []string{"ssh", "-F", "/dev/null"}
+	if !slices.Contains(hostKey, "UserKnownHostsFile="+bastionssh.QuoteConfigPath(knownHosts)) {
+		t.Fatalf("host key options %q do not name %s", hostKey, knownHosts)
+	}
+
+	cmd := []string{"ssh", "-F", "/dev/null",
+		"-o", "UserKnownHostsFile=" + bastionssh.QuoteConfigPath(knownHosts),
+		"-o", "GlobalKnownHostsFile=/dev/null",
+	}
 	cmd = append(cmd, hostKey...)
 
 	return append(cmd,
