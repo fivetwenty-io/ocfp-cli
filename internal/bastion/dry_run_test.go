@@ -17,6 +17,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
@@ -604,4 +605,45 @@ func TestFinishedRealRunClearsCheckpoints(t *testing.T) {
 
 	m.clearCheckpoints()
 	assert.Empty(t, readCheckpoints(t))
+}
+
+// A dry run of the local ocfp upload must not report that it checks the
+// bastion's binary, because it never does.
+func TestDryRunUploadReportsNoRemoteCheck(t *testing.T) {
+	cfg := dryRunBloc(t)
+	build := dryRunWorkstation(t, cfg)
+	t.Setenv("OCFP_CLI_SOURCE", "local")
+	t.Setenv("OCFP_BINARY_PATH", build)
+
+	var out bytes.Buffer
+
+	client := &unconnectedSSHClient{}
+	m, _, logs := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true, OCFPOnly: true}, client)
+	m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+	require.NoError(t, m.uploadOCFPBinary(context.Background()))
+	assert.Empty(t, client.recorded())
+	assert.Contains(t, loggedDryRun(logs), "DRY RUN: Would upload the local ocfp build to the bastion")
+	assert.NotContains(t, out.String(), "Checking remote binary")
+}
+
+// A real upload reports that it is checking the bastion's binary before it
+// reads the local build, as it always has, so a build it can't read still
+// leaves that report behind.
+func TestRealUploadReportsTheRemoteCheckFirst(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+	t.Setenv("OCFP_CLI_SOURCE", "local")
+	t.Setenv("OCFP_BINARY_PATH", t.TempDir())
+
+	var out bytes.Buffer
+
+	client := &unconnectedSSHClient{}
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{OCFPOnly: true}, client)
+	m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+	err := m.uploadOCFPBinary(context.Background())
+	require.ErrorContains(t, err, "failed to calculate local binary checksum")
+	assert.Contains(t, out.String(), "Checking remote binary")
+	assert.Empty(t, client.recorded())
 }
