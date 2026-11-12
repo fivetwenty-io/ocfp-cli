@@ -125,7 +125,7 @@ func runSCP(cmd *cobra.Command, args []string) error {
 	logResolvedSSHKey(log, keyPath)
 	log.Debugf("Bastion IP: %s", bastionIP)
 
-	return executeSCP(ctx, scpCmd)
+	return executeSCP(ctx, scpCmd, bastionIP)
 }
 
 type scpConfig struct {
@@ -267,7 +267,7 @@ func buildSCPCommand(source, destination, keyPath string, hostKey []string, recu
 }
 
 // executeSCP executes the SCP command.
-func executeSCP(ctx context.Context, scpCmd []string) error {
+func executeSCP(ctx context.Context, scpCmd []string, bastionHost string) error {
 	log := logger.WithOperation("executeSCP")
 	log.Debugf("Executing: %s", strings.Join(scpCmd, " "))
 
@@ -279,9 +279,8 @@ func executeSCP(ctx context.Context, scpCmd []string) error {
 	cmd := exec.CommandContext(ctx, scpCmd[0], scpCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err := runShowingStderr(cmd, os.Stderr, bastionHost, transferRefusalExit)
 	if err != nil {
 		return fmt.Errorf("scp command failed: %w", err)
 	}

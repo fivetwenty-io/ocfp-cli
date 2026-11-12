@@ -484,7 +484,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 
 	log.Infof("Copying artifacts provision script to %s", host)
 
-	err := executeSCP(context.Background(), scpCmd)
+	err := executeSCP(context.Background(), scpCmd, bastion)
 	if err != nil {
 		return err
 	}
@@ -508,7 +508,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 
 	log.Infof("Running artifacts provision on %s (RustFS install + bucket creation)", host)
 
-	err = executeSSH(context.Background(), sshCmd)
+	err = executeSSH(context.Background(), sshCmd, route.Bastion)
 	if err != nil {
 		return err
 	}
@@ -517,7 +517,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString
 	cleanup, err := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
 	if err == nil {
 		cleanup = append(cleanup, "rm -f "+artifactsRemoteScript)
-		_ = executeSSH(context.Background(), cleanup)
+		_ = executeSSH(context.Background(), cleanup, route.Bastion)
 	}
 
 	return nil
