@@ -305,12 +305,19 @@ func (pr *ProgressReporter) ReportError(phase string, err error, attempt, maxAtt
 			"max_attempts", maxAttempts,
 		)
 	} else {
-		// Final failure - report to renderer
+		// Final failure - report to renderer, with the start time of
+		// the phase if it was reported as started
+		pr.mu.Lock()
+		timing := pr.started[phase]
+		delete(pr.started, phase)
+		pr.mu.Unlock()
+
 		phaseInfo := output.PhaseInfo{
-			ID:     phase,
-			Name:   phase,
-			Number: number,
-			Total:  total,
+			ID:        phase,
+			Name:      phase,
+			Number:    number,
+			Total:     total,
+			StartTime: timing.start,
 		}
 
 		renderErr := pr.renderer.PhaseFailed(phaseInfo, err)

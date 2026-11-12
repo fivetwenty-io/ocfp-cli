@@ -92,7 +92,11 @@ func (r *YAMLRenderer) PhaseComplete(info PhaseInfo) error {
 
 // PhaseFailed marks failure of the current phase with error details.
 func (r *YAMLRenderer) PhaseFailed(info PhaseInfo, err error) error {
-	duration := r.now().Sub(info.StartTime)
+	// A phase that never reported a start has no elapsed time.
+	var duration time.Duration
+	if !info.StartTime.IsZero() {
+		duration = r.now().Sub(info.StartTime)
+	}
 
 	r.log.Errorw("Phase failed",
 		eventKeyPhaseID, info.ID,
