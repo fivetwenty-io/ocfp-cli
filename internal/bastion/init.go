@@ -1176,7 +1176,9 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 			m.reporter.ReportDryRunSummary(duration, m.progress.TotalSteps,
 				int(m.tally.previewed.Load()), int(m.tally.skipped.Load()))
 		} else {
-			m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
+			// A parallel run's list is longer than the sequential one
+			// that phases holds, so the total is the list the run used.
+			m.reporter.ReportFinalSummary(true, duration, m.progress.TotalSteps, len(m.progress.Errors))
 		}
 	}
 
