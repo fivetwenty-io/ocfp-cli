@@ -129,6 +129,7 @@ func TestGenerateSSHConfigWithoutKeyOmitsIdentity(t *testing.T) {
 	assert.NotContains(t, out, "IdentityFile")
 	assert.NotContains(t, out, "IdentitiesOnly")
 	assert.Contains(t, out, "ProxyJump lab-bastion")
-	assert.Equal(t, 2, strings.Count(out, "StrictHostKeyChecking no"))
-	assert.Equal(t, 2, strings.Count(out, "UserKnownHostsFile /dev/null"))
+	assert.Equal(t, 1, strings.Count(out, "StrictHostKeyChecking accept-new"))
+	assert.Equal(t, 1, strings.Count(out, "StrictHostKeyChecking no"))
+	assert.Equal(t, 1, strings.Count(out, "UserKnownHostsFile /dev/null"))
 }

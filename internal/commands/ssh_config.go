@@ -29,6 +29,13 @@ Output is suitable for appending to ~/.ssh/config. Internal hosts are
 discovered from state outputs and configured with ProxyJump through the
 bastion.
 
+The bastion block checks the bastion's host key with
+StrictHostKeyChecking accept-new against your default known_hosts, the
+same file ocfp itself uses, and the internal blocks inherit that check
+on their jump through it. The internal hosts are not checked. Blocks you
+appended with an earlier version turn the check off for the bastion;
+delete them and append the output again to pick up the check.
+
 --key names a private key to write as IdentityFile instead of the bloc key.
 When neither --key nor the bloc's SSH key is on this machine, the blocks
 leave out IdentityFile and IdentitiesOnly, so your own ssh-agent, default
@@ -253,8 +260,17 @@ func writeHostBlock(sb *strings.Builder, hostAlias, hostName, user, keyPath, pro
 		fmt.Fprintf(sb, "    ProxyJump %s\n", proxyJump)
 	}
 
-	fmt.Fprint(sb, "    StrictHostKeyChecking no\n")
-	fmt.Fprint(sb, "    UserKnownHostsFile /dev/null\n")
+	// The bastion's host key is checked against the default known_hosts,
+	// the file the Go client reads and writes, and the internal blocks reach
+	// it through this block. The hosts behind it are rebuilt often and are
+	// not checked.
+	if proxyJump == "" {
+		fmt.Fprint(sb, "    StrictHostKeyChecking accept-new\n")
+	} else {
+		fmt.Fprint(sb, "    StrictHostKeyChecking no\n")
+		fmt.Fprint(sb, "    UserKnownHostsFile /dev/null\n")
+	}
+
 	fmt.Fprint(sb, "    LogLevel ERROR\n")
 
 	if keyPath != "" {
