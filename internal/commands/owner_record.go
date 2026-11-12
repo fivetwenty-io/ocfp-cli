@@ -34,7 +34,10 @@ reads a signed form as one JSON document on stdin. The signed format is
 versioned and will gain fields.
 
 A --dir that is not the default as written, but that leads to the default
-directory or to a directory under it, is refused and exits 1.
+directory or to a directory under it, is refused and exits 1. So is a --dir
+that names a symbolic link to a directory that does not exist yet, and any
+--dir but the default as written when the default directory fails its own
+check.
 
 A refusal names its code on stderr and exits 2. Any other failure exits 1.`,
 	}
