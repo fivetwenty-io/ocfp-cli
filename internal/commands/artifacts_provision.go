@@ -13,6 +13,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
 	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
@@ -36,7 +37,7 @@ const (
 // artifactsProvision installs and configures RustFS on an already-created
 // ocfp-artifacts VM. The VM boots bare (network + SSH only, since PVE 9.x has
 // no snippets-capable storage to deliver the RustFS cloud-init); this step
-// SSHes in — ProxyJumping through the bloc bastion because the artifacts SDN
+// SSHes in, jumping through the bloc bastion because the artifacts SDN
 // address is not routable from the operator host — and runs the idempotent
 // scripts/provision/artifacts installer, then creates the BOSH/CF buckets.
 func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Logger) error {
@@ -64,17 +65,18 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 	// The bastion is the jump host: reachable from the operator (tailscale /
 	// bastion_ip) and able to reach the artifacts SDN address. The artifacts VM
 	// authorizes the same bloc keypair as the bastion, so one key serves both
-	// hops. --no-proxy-jump bypasses the jump when the operator is already on
-	// the SDN (e.g. running this command from the bastion itself), because
-	// OpenSSH's implicit ProxyJump inner ssh does not inherit the outer -o
-	// options and falls back to default host-key checking, which fails when the
-	// jump target's host key is unknown on the local machine.
+	// hops. The jump runs as an explicit ProxyCommand, because the inner ssh
+	// of a ProxyJump never sees the outer -o options. The ProxyCommand checks
+	// the bastion's host key against the known_hosts file the Go client uses,
+	// while the artifacts VM behind it is not checked. --no-proxy-jump bypasses
+	// the jump when the operator is already on the SDN (e.g. running this
+	// command from the bastion itself).
 	noProxyJump, _ := cmd.Flags().GetBool("no-proxy-jump")
 
 	var (
-		sshUser  = viper.GetString("ssh.user")
-		sshKey   string
-		proxyOpt string
+		sshUser   = viper.GetString("ssh.user")
+		sshKey    string
+		bastionIP string
 	)
 
 	if noProxyJump {
@@ -92,7 +94,7 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 
 		sshUser = bastionCtx.User
 		sshKey = bastionCtx.SSHKeyOption
-		proxyOpt = fmt.Sprintf("-o ProxyJump=%s@%s", bastionCtx.User, bastionCtx.IP)
+		bastionIP = bastionCtx.IP
 	}
 
 	cert, key, caPEM, fingerprint, err := resolveArtifactsProvisionTLS(acx.cfg, acx.lookup, acx.blocName)
@@ -112,9 +114,9 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if dryRun {
-		jumpDesc := "direct (no ProxyJump)"
-		if proxyOpt != "" {
-			jumpDesc = proxyOpt
+		jumpDesc := "direct (no jump host)"
+		if bastionIP != "" {
+			jumpDesc = fmt.Sprintf("a ProxyCommand through %s@%s", sshUser, bastionIP)
 		}
 
 		log.Infof("[dry-run] would scp %s to %s@%s:%s via %s and run it as root",
@@ -123,7 +125,7 @@ func artifactsProvision(cmd *cobra.Command, acx *artifactsContext, log logger.Lo
 		return nil
 	}
 
-	err = runArtifactsRemoteScript(sshUser, target, sshKey, proxyOpt, scriptPath, renderEnvAssignments(env), log)
+	err = runArtifactsRemoteScript(sshUser, target, sshKey, bastionIP, scriptPath, renderEnvAssignments(env), log)
 	if err != nil {
 		return err
 	}
@@ -449,15 +451,31 @@ func renderEnvAssignments(env map[string]string) string {
 	return strings.Join(lines, "\n")
 }
 
-// runArtifactsRemoteScript copies the installer to the artifacts VM (through
-// the bastion ProxyJump) and runs it as root. The env block is base64-encoded
-// and written to a 0600 temp file passed as the script's first argument; the
-// script sources it under `set -a` so root sees every value. PIPESTATUS
-// preserves the installer's exit code through the `tee`.
-func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envString string, log logger.Logger) error {
+// runArtifactsRemoteScript copies the installer to the artifacts VM and runs
+// it as root. When bastion is set, every connection jumps through it with
+// the ProxyCommand hop that checks its host key; when it is empty, they go
+// straight to host. The env block is base64-encoded and written to a 0600
+// temp file passed as the script's first argument; the script sources it
+// under `set -a` so root sees every value. PIPESTATUS preserves the
+// installer's exit code through the `tee`.
+func runArtifactsRemoteScript(user, host, keyOpt, bastion, scriptPath, envString string, log logger.Logger) error {
 	dest := fmt.Sprintf("%s@%s:%s", user, host, artifactsRemoteScript)
+	route := sshRoute{Host: host, Bastion: bastion, HostIsBastion: false}
 
-	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, bastionssh.InternalHostKeyOptions(), false, proxyOpt)
+	// The ProxyCommand string runs through a shell, so the bastion address,
+	// user, and key path must pass validation before they reach it.
+	scpOptions := bastionssh.InternalHostKeyOptions()
+
+	if bastion != "" {
+		err := validateSSHInputs(bastion, user, keyOpt)
+		if err != nil {
+			return fmt.Errorf("invalid bastion jump host: %w", err)
+		}
+
+		scpOptions = append(scpOptions, "-o", "ProxyCommand="+bootstrap.BastionProxyCommand(keyOpt, user, bastion, true))
+	}
+
+	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, scpOptions, false, "")
 
 	log.Infof("Copying artifacts provision script to %s", host)
 
@@ -476,7 +494,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 		envB64, artifactsRemoteScript, artifactsRemoteLog,
 	)
 
-	sshCmd := buildInternalSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
+	sshCmd := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Running artifacts provision on %s (RustFS install + bucket creation)", host)
@@ -487,7 +505,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 	}
 
 	// Best-effort cleanup of the remote script.
-	cleanup := buildInternalSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
+	cleanup := buildSSHCommandForRouteWith(route, user, keyOpt, "", []string{}, []string{}, false)
 	cleanup = append(cleanup, "rm -f "+artifactsRemoteScript)
 	_ = executeSSH(context.Background(), cleanup)
 
