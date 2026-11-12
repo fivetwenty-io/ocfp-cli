@@ -372,8 +372,10 @@ func mapKeys(m map[string]json.RawMessage) func(func(string) bool) {
 // The run that made a spool holds its lock on out from before it writes
 // status.json until after it writes exit.json, so an attach can never find
 // the lock free while exit.json is still to come. Every time the run reads
-// the clock, the test checks that rule from outside, and once Run returns it
-// checks that the lock is gone.
+// the clock once out exists, the test checks that rule from outside, and
+// once Run returns it checks that the lock is gone. The first of those reads
+// is the start time, which comes before status.json is written, so a lock
+// taken only after status.json fails the test.
 func TestRunHoldsOutUntilExitIsWritten(t *testing.T) {
 	t.Parallel()
 
@@ -385,7 +387,7 @@ func TestRunHoldsOutUntilExitIsWritten(t *testing.T) {
 	checks := 0
 
 	rc.clock.onNow = func() {
-		if _, err := os.Stat(filepath.Join(dir, "status.json")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "out")); err != nil {
 			return
 		}
 
@@ -405,10 +407,10 @@ func TestRunHoldsOutUntilExitIsWritten(t *testing.T) {
 		t.Fatalf("Run = %v", err)
 	}
 
-	// After status.json is written, the clock is read for each of the five
-	// records and once more for the exit time.
-	if checks < 6 {
-		t.Fatalf("the lock was checked %d times, want one for every clock read after status.json", checks)
+	// Once out exists, the clock is read for the start time, for each of the
+	// five records, and once more for the exit time.
+	if checks < 7 {
+		t.Fatalf("the lock was checked %d times, want one for every clock read once out exists", checks)
 	}
 
 	if lockedByAnother(t, dir) {
@@ -1021,6 +1023,39 @@ func TestAttachIgnoresARecycledPID(t *testing.T) {
 		cancel()
 		wantOrphanError(t, err)
 		wantOrphanTail(t, rc.stdout.Bytes(), out)
+	}
+}
+
+// A probe of the lock on out that fails says nothing about the run, as on a
+// file system with no locks. The attach must end with that error, and never
+// read it as a free lock and call a live job orphaned.
+func TestAttachStopsWhenTheLockProbeFails(t *testing.T) {
+	t.Parallel()
+
+	root := spoolRoot(t)
+	s := partialSpool(t, root, runningStatus(4242))
+	out := readFile(t, filepath.Join(s.Dir, "out"))
+
+	errProbe := errors.New("no locks available")
+
+	rc := newRun(t, storeWith(t, liveRecord()), root, signedRequest(t, goodRequest()))
+	rc.opts.held = func(*os.File) (bool, error) { return false, errProbe }
+
+	err := rc.run(t)
+	if !errors.Is(err, errProbe) {
+		t.Fatalf("Run = %v, want the probe's error", err)
+	}
+
+	if strings.Contains(err.Error(), string(progress.CodeJobOrphaned)) {
+		t.Fatalf("Run = %v, which calls the job orphaned", err)
+	}
+
+	if !bytes.Equal(rc.stdout.Bytes(), out) {
+		t.Fatalf("attach streamed\n%s\nwant only the spool\n%s", rc.stdout, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(s.Dir, "exit.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the attach wrote into the spool: %v", err)
 	}
 }
 

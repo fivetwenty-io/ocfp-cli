@@ -416,3 +416,30 @@ func TestOutLock(t *testing.T) {
 	// is free to take.
 	must(t, lockOut(other))
 }
+
+// A probe that cannot ask the lock reports an error, never a free lock, so
+// that the attach never takes a failed probe for a dead run.
+func TestOutHeldReportsAFailedProbe(t *testing.T) {
+	t.Parallel()
+
+	s, _, err := CreateSpool(spoolRoot(t), "job-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := s.createOut()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	must(t, run.Close())
+
+	held, err := outHeld(run)
+	if err == nil {
+		t.Fatalf("outHeld on a closed file = %v, nil; want an error", held)
+	}
+
+	if held {
+		t.Fatal("outHeld on a closed file reports the lock held")
+	}
+}
