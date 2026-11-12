@@ -257,6 +257,14 @@ func (r Record) validate() error {
 		return errors.New("no installation id")
 	case r.OwnerInstanceID == "":
 		return errors.New("no owner instance id")
+	case r.Org == "":
+		return errors.New("no org")
+	case !NamePattern.MatchString(r.Org):
+		return fmt.Errorf("org %+q is not of the form %s", r.Org, NamePattern)
+	case r.Bloc == "":
+		return errors.New("no bloc")
+	case !NamePattern.MatchString(r.Bloc):
+		return fmt.Errorf("bloc %+q is not of the form %s", r.Bloc, NamePattern)
 	case r.Mode != ModeLive && r.Mode != ModeHandover:
 		return fmt.Errorf("unknown mode %q", r.Mode)
 	case r.Mode == ModeHandover && r.Relocation == nil:

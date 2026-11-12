@@ -27,8 +27,9 @@ func newOwnerRecordCmd(newStore ownerStoreFunc) *cobra.Command {
 		Long: `Write or release the bastion's owner record.
 
 The owner record names the one instance whose signed job requests this
-bastion runs. Each subcommand reads a signed form as one JSON document on
-stdin. The signed format is versioned and will gain fields.
+bastion runs, and the org and bloc this bastion serves. Each subcommand
+reads a signed form as one JSON document on stdin. The signed format is
+versioned and will gain fields.
 
 A refusal names its code on stderr and exits 2. Any other failure exits 1.`,
 	}

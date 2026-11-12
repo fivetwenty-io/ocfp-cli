@@ -18,6 +18,8 @@ import (
 func liveRecord() ownerrecord.Record {
 	return ownerrecord.Record{
 		InstallationID:  "inst-fixture-01",
+		Org:             "org-fixture",
+		Bloc:            "bloc-fixture",
 		OwnerInstanceID: "instance-fixture-a",
 		OwnerPublicKey:  ownerrecordtest.TestKey().Public().(ed25519.PublicKey),
 		Epoch:           3,
@@ -349,13 +351,23 @@ func TestOpenRefusesInvalidRecord(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]func(*ownerrecord.Record){
-		"unknown mode":        func(r *ownerrecord.Record) { r.Mode = "paused" },
-		"empty mode":          func(r *ownerrecord.Record) { r.Mode = "" },
-		"no installation":     func(r *ownerrecord.Record) { r.InstallationID = "" },
-		"no owner instance":   func(r *ownerrecord.Record) { r.OwnerInstanceID = "" },
-		"no signer":           func(r *ownerrecord.Record) { r.SignerID = "" },
-		"no signed time":      func(r *ownerrecord.Record) { r.SignedAt = time.Time{} },
-		"handover without id": func(r *ownerrecord.Record) { r.Mode = ownerrecord.ModeHandover },
+		"unknown mode":           func(r *ownerrecord.Record) { r.Mode = "paused" },
+		"empty mode":             func(r *ownerrecord.Record) { r.Mode = "" },
+		"no installation":        func(r *ownerrecord.Record) { r.InstallationID = "" },
+		"no owner instance":      func(r *ownerrecord.Record) { r.OwnerInstanceID = "" },
+		"no org":                 func(r *ownerrecord.Record) { r.Org = "" },
+		"no bloc":                func(r *ownerrecord.Record) { r.Bloc = "" },
+		"org with a separator":   func(r *ownerrecord.Record) { r.Org = "../org" },
+		"org with a dot":         func(r *ownerrecord.Record) { r.Org = ".org" },
+		"org too long":           func(r *ownerrecord.Record) { r.Org = strings.Repeat("o", 65) },
+		"org in upper case":      func(r *ownerrecord.Record) { r.Org = "Org" },
+		"bloc with a separator":  func(r *ownerrecord.Record) { r.Bloc = "bloc/x" },
+		"bloc with a dash first": func(r *ownerrecord.Record) { r.Bloc = "-bloc" },
+		"bloc too long":          func(r *ownerrecord.Record) { r.Bloc = strings.Repeat("b", 65) },
+		"bloc with a newline":    func(r *ownerrecord.Record) { r.Bloc = "bloc\n" },
+		"no signer":              func(r *ownerrecord.Record) { r.SignerID = "" },
+		"no signed time":         func(r *ownerrecord.Record) { r.SignedAt = time.Time{} },
+		"handover without id":    func(r *ownerrecord.Record) { r.Mode = ownerrecord.ModeHandover },
 		"handover empty id": func(r *ownerrecord.Record) {
 			r.Mode, r.Relocation = ownerrecord.ModeHandover, &ownerrecord.Relocation{}
 		},

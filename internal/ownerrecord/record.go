@@ -6,7 +6,15 @@
 // over the signing context followed by the exact payload bytes.
 package ownerrecord
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
+
+// NamePattern is the form of every name that may become part of a path on the
+// host: a job id, an org, and a bloc. It can never hold a path separator or
+// start with a dot or a dash.
+var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // Mode says whether the owner may act on the bloc or is handing it over.
 type Mode string
@@ -25,6 +33,12 @@ const (
 type Record struct {
 	// InstallationID names the installation that owns the bloc.
 	InstallationID string `json:"installationId"`
+
+	// Org and Bloc name the organisation and the bloc that this record's host
+	// serves. A job request must name the same two. Each matches NamePattern,
+	// because either may name a directory.
+	Org  string `json:"org"`
+	Bloc string `json:"bloc"`
 
 	// OwnerInstanceID names the instance of that installation that may act.
 	OwnerInstanceID string `json:"ownerInstanceId"`
