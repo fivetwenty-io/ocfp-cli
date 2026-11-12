@@ -193,6 +193,11 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		artifactsIP: func(ctx context.Context) (string, error) {
 			return lookupArtifactsIPForSSH(ctx, provider, cfg.Name)
 		},
+		isBastion: func(ctx context.Context, address string) bool {
+			return sshAddressIsBastion(ctx, address, cfg, func(ctx context.Context) (string, error) {
+				return findBastionIP(ctx, provider, cfg.Name)
+			})
+		},
 	})
 	if err != nil {
 		return err
@@ -385,13 +390,15 @@ type sshRoute struct {
 type sshRouteResolver struct {
 	bastionIP   func(ctx context.Context) (string, error)
 	artifactsIP func(ctx context.Context) (string, error)
+	isBastion   func(ctx context.Context, address string) bool
 }
 
 // resolveSSHRoute turns a classified target into a route. The bastion is
 // dialled directly at the address findBastionIP resolves (the bastion_ip
 // override first). The artifacts VM sits on the SDN, so its private IP is
 // reached through that same bastion unless noProxyJump says the operator is
-// already on the SDN. Addresses pass through without any bloc lookup.
+// already on the SDN. Addresses pass through unchanged, and one that names
+// the bastion is dialled as the bastion, so its host key is checked.
 func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noProxyJump bool, resolver sshRouteResolver) (sshRoute, error) {
 	switch kind {
 	case sshTargetBastion:
@@ -418,10 +425,62 @@ func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noP
 
 		return sshRoute{Host: artifactsIP, Bastion: bastionIP, HostIsBastion: false}, nil
 	case sshTargetAddress:
-		return sshRoute{Host: target, Bastion: "", HostIsBastion: false}, nil
+		return sshRoute{Host: target, Bastion: "", HostIsBastion: resolver.isBastion(ctx, target)}, nil
 	}
 
 	return sshRoute{Host: target, Bastion: "", HostIsBastion: false}, nil
+}
+
+// sshAddressIsBastion reports whether an address target names the bloc's
+// bastion: the configured bastion_ip, the bastion's tailnet host name
+// (tailscale.hostname, else "<bloc>-bastion") alone or as the first label of
+// a dotted name such as a MagicDNS name, or the address lookup resolves for
+// the bastion. Names compare without regard to case. The configuration
+// answers first, because the lookup can take seconds, and a failed lookup
+// only means no match.
+func sshAddressIsBastion(ctx context.Context, address string, cfg *config.Config, lookup func(ctx context.Context) (string, error)) bool {
+	target := normalizeSSHHost(address)
+	if target == "" {
+		return false
+	}
+
+	if cfg.BastionIP != "" && sameSSHHost(target, normalizeSSHHost(cfg.BastionIP)) {
+		return true
+	}
+
+	hostName := cfg.Name + "-bastion"
+	if cfg.Tailscale != nil && strings.TrimSpace(cfg.Tailscale.Hostname) != "" {
+		hostName = cfg.Tailscale.Hostname
+	}
+
+	hostName = normalizeSSHHost(hostName)
+	if label, _, _ := strings.Cut(target, "."); label == hostName && net.ParseIP(target) == nil {
+		return true
+	}
+
+	ip, err := lookup(ctx)
+
+	return err == nil && sameSSHHost(target, normalizeSSHHost(ip))
+}
+
+// normalizeSSHHost lower-cases a host and drops surrounding space, IPv6
+// brackets, and the trailing dot of a fully qualified name.
+func normalizeSSHHost(host string) string {
+	host = strings.TrimSpace(host)
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+// sameSSHHost compares two normalized hosts, as addresses when both parse
+// as IPs, so that different spellings of one IPv6 address match.
+func sameSSHHost(a, b string) bool {
+	ipA, ipB := net.ParseIP(a), net.ParseIP(b)
+	if ipA != nil && ipB != nil {
+		return ipA.Equal(ipB)
+	}
+
+	return a != "" && a == b
 }
 
 // lookupArtifactsIPForSSH resolves the artifacts VM's private IP with
