@@ -17,10 +17,12 @@ const maxOwnerInput = 1 << 20
 // NewOwnerRecordCmd creates the owner-record command, which writes and
 // releases the bastion's owner record.
 func NewOwnerRecordCmd() *cobra.Command {
-	return newOwnerRecordCmd(ownerrecord.NewDirStore)
+	return newOwnerRecordCmd(ownerrecord.NewDirStore, ownerrecord.DefaultDir)
 }
 
-func newOwnerRecordCmd(newStore ownerStoreFunc) *cobra.Command {
+// newOwnerRecordCmd creates the owner-record command with newStore to open
+// the store and defaultDir as the default of --dir.
+func newOwnerRecordCmd(newStore ownerStoreFunc, defaultDir string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "owner-record",
 		Short: "Write or release the bastion's owner record",
@@ -31,15 +33,18 @@ bastion runs, and the org and bloc this bastion serves. Each subcommand
 reads a signed form as one JSON document on stdin. The signed format is
 versioned and will gain fields.
 
+A --dir that is not the default as written, but that leads to the default
+directory or to a directory under it, is refused and exits 1.
+
 A refusal names its code on stderr and exits 2. Any other failure exits 1.`,
 	}
 
-	cmd.AddCommand(newOwnerRecordWriteCmd(newStore), newOwnerRecordReleaseCmd(newStore))
+	cmd.AddCommand(newOwnerRecordWriteCmd(newStore, defaultDir), newOwnerRecordReleaseCmd(newStore, defaultDir))
 
 	return cmd
 }
 
-func newOwnerRecordWriteCmd(newStore ownerStoreFunc) *cobra.Command {
+func newOwnerRecordWriteCmd(newStore ownerStoreFunc, defaultDir string) *cobra.Command {
 	var (
 		dir    string
 		expect uint64
@@ -63,7 +68,7 @@ write without --expect-generation.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			const what = "owner-record write"
 
-			sf, err := readSignedForm(cmd, what, dir)
+			sf, err := readSignedForm(cmd, what, dir, defaultDir)
 			if err != nil {
 				return err
 			}
@@ -77,13 +82,13 @@ write without --expect-generation.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dir, "dir", ownerrecord.DefaultDir, "absolute path of the directory that holds the owner record")
+	cmd.Flags().StringVar(&dir, "dir", defaultDir, "absolute path of the directory that holds the owner record")
 	cmd.Flags().Uint64Var(&expect, "expect-generation", 0, "generation of the stored record this one replaces")
 
 	return cmd
 }
 
-func newOwnerRecordReleaseCmd(newStore ownerStoreFunc) *cobra.Command {
+func newOwnerRecordReleaseCmd(newStore ownerStoreFunc, defaultDir string) *cobra.Command {
 	var (
 		dir    string
 		expect uint64
@@ -106,7 +111,7 @@ place.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			const what = "owner-record release"
 
-			sf, err := readSignedForm(cmd, what, dir)
+			sf, err := readSignedForm(cmd, what, dir, defaultDir)
 			if err != nil {
 				return err
 			}
@@ -115,17 +120,22 @@ place.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dir, "dir", ownerrecord.DefaultDir, "absolute path of the directory that holds the owner record")
+	cmd.Flags().StringVar(&dir, "dir", defaultDir, "absolute path of the directory that holds the owner record")
 	cmd.Flags().Uint64Var(&expect, "expect-generation", 0, "generation of the stored record")
 	_ = cmd.MarkFlagRequired("expect-generation")
 
 	return cmd
 }
 
-// readSignedForm checks dir and reads and parses the signed form on stdin.
-// Its error has already been written to stderr.
-func readSignedForm(cmd *cobra.Command, what, dir string) (ownerrecord.Signed, error) {
+// readSignedForm checks dir against defaultDir, the default of --dir, and
+// reads and parses the signed form on stdin. Its error has already been
+// written to stderr.
+func readSignedForm(cmd *cobra.Command, what, dir, defaultDir string) (ownerrecord.Signed, error) {
 	if err := absoluteFlag("--dir", dir); err != nil {
+		return ownerrecord.Signed{}, failed(cmd, what, 1, err)
+	}
+
+	if err := refuseDefaultReach("--dir", dir, defaultDir); err != nil {
 		return ownerrecord.Signed{}, failed(cmd, what, 1, err)
 	}
 

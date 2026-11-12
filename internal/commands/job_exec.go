@@ -17,10 +17,12 @@ type ownerStoreFunc func(dir string) *ownerrecord.DirStore
 
 // NewJobCmd creates the job command, which runs signed jobs on a bastion.
 func NewJobCmd() *cobra.Command {
-	return newJobCmd(ownerrecord.NewDirStore)
+	return newJobCmd(ownerrecord.NewDirStore, ownerrecord.DefaultDir)
 }
 
-func newJobCmd(newStore ownerStoreFunc) *cobra.Command {
+// newJobCmd creates the job command with newStore to open the owner record
+// store and ownerDefault as the default of --owner-dir.
+func newJobCmd(newStore ownerStoreFunc, ownerDefault string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "job",
 		Short: "Run signed jobs on a bastion",
@@ -31,12 +33,12 @@ names. The job command checks every request against that record before it
 runs anything.`,
 	}
 
-	cmd.AddCommand(newJobExecCmd(newStore))
+	cmd.AddCommand(newJobExecCmd(newStore, ownerDefault))
 
 	return cmd
 }
 
-func newJobExecCmd(newStore ownerStoreFunc) *cobra.Command {
+func newJobExecCmd(newStore ownerStoreFunc, ownerDefault string) *cobra.Command {
 	var spoolRoot, ownerDir string
 
 	cmd := &cobra.Command{
@@ -53,7 +55,12 @@ A request that is not signed by the owner, that names an org or a bloc
 other than the ones the owner record names, or that the owner record cannot
 vouch for, is refused before anything runs: the stream carries the refusal
 code, stderr names it, and the command exits 2. The command exits 0 when the
-job succeeds and 1 for any other failure.`,
+job succeeds and 1 for any other failure.
+
+An --owner-dir that is not the default as written, but that leads to the
+default directory or to a directory under it, is refused before the request
+is read, and the command exits 1. So is a --spool-root that leads to the
+owner directory in use, or to a directory under it, by any path.`,
 		Example:       `  ocfp job exec --spool-root /data/ocfp-jobs < request.json`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -70,6 +77,14 @@ job succeeds and 1 for any other failure.`,
 			}
 
 			if err := absoluteFlag("--owner-dir", ownerDir); err != nil {
+				return failed(cmd, "job exec", 1, err)
+			}
+
+			if err := refuseDefaultReach("--owner-dir", ownerDir, ownerDefault); err != nil {
+				return failed(cmd, "job exec", 1, err)
+			}
+
+			if err := refuseSpoolInOwner(spoolRoot, ownerDir); err != nil {
 				return failed(cmd, "job exec", 1, err)
 			}
 
@@ -93,7 +108,7 @@ job succeeds and 1 for any other failure.`,
 	}
 
 	cmd.Flags().StringVar(&spoolRoot, "spool-root", "", "absolute path of the directory that holds one spool per job")
-	cmd.Flags().StringVar(&ownerDir, "owner-dir", ownerrecord.DefaultDir, "absolute path of the directory that holds the owner record")
+	cmd.Flags().StringVar(&ownerDir, "owner-dir", ownerDefault, "absolute path of the directory that holds the owner record")
 	_ = cmd.MarkFlagRequired("spool-root")
 
 	return cmd
