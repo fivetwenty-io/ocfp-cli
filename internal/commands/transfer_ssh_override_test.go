@@ -48,6 +48,9 @@ func TestRSyncRefusesOptionsThatReplaceTheSSHCommand(t *testing.T) {
 		{name: "FilterHoldingAnE", options: "-fexclude=*.tmp"},
 		{name: "LongOptionsWithAnE", options: "--exclude=e --delete-excluded"},
 		{name: "PassthroughOrdinary", passthrough: []string{"--itemize-changes", "--copy-links"}},
+		{name: "FilterRuleThatLooksLikeTheOption", options: "-f -e"},
+		{name: "TempDirThatLooksLikeTheOption", options: "-avT -e"},
+		{name: "PassthroughValueThatLooksLikeTheOption", passthrough: []string{"-f", "--rsh"}},
 	}
 
 	for _, tt := range allowed {
@@ -72,7 +75,7 @@ func TestSCPRefusesAnOptionThatReplacesSSH(t *testing.T) {
 		}
 	}
 
-	for _, options := range []string{"-C", "-l 8192", "-o Compression=yes", "-P 2222", "-iS"} {
+	for _, options := range []string{"-C", "-l 8192", "-o Compression=yes", "-P 2222", "-iS", "-i -S", "-rF -S"} {
 		cfg := &scpConfig{Source: "f", Destination: "bastion:/tmp/f", Options: options} //nolint:exhaustruct // only the paths and options matter
 
 		_, err := prepareSCPCommand(cfg, "10.61.148.10", "")
