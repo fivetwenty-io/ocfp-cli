@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
@@ -104,7 +105,7 @@ func TestResolveSSHRoute(t *testing.T) {
 			name:     "BastionIsDirect",
 			kind:     sshTargetBastion,
 			target:   "bastion",
-			expected: sshRoute{Host: "100.109.226.53"},
+			expected: sshRoute{Host: "100.109.226.53", HostIsBastion: true},
 		},
 		{
 			name:     "ArtifactsHopsThroughBastion",
@@ -190,8 +191,8 @@ func TestBuildSSHCommandForRouteArtifactsViaBastion(t *testing.T) { //nolint:par
 
 	expected := []string{
 		"ssh",
-		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "IdentitiesOnly=yes",
 		"-i", key,
@@ -224,8 +225,8 @@ func TestBuildSSHCommandForRouteArtifactsKeepsFlagsAndOptions(t *testing.T) { //
 
 	expected := []string{
 		"ssh",
-		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "IdentitiesOnly=yes",
 		"-i", key,
@@ -279,9 +280,10 @@ func TestBuildSSHCommandForRouteRejectsInvalidBastion(t *testing.T) {
 	assert.Equal(t, []string{"ssh", "--help"}, got)
 }
 
-// Direct routes (bastion, IPs, dotted hostnames, and artifacts with
-// --no-proxy-jump) produce exactly the vector buildSSHCommand always has.
-func TestBuildSSHCommandForRouteDirectMatchesBuildSSHCommand(t *testing.T) { //nolint:paralleltest // t.Setenv
+// Direct routes to anything but the bastion (IPs, dotted hostnames, and
+// artifacts with --no-proxy-jump) produce exactly the relaxed vector
+// buildInternalSSHCommand gives.
+func TestBuildSSHCommandForRouteDirectMatchesBuildInternalSSHCommand(t *testing.T) { //nolint:paralleltest // t.Setenv
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
 
 	for _, host := range []string{"100.109.226.53", "10.64.64.11", "jump.lab.example.org"} {
@@ -289,7 +291,35 @@ func TestBuildSSHCommandForRouteDirectMatchesBuildSSHCommand(t *testing.T) { //n
 		command := []string{"hostname"}
 
 		got := buildSSHCommandForRoute(sshRoute{Host: host}, "ubuntu", "/tmp/key", "-v", sshArgs, command)
-		assert.Equal(t, buildSSHCommand(host, "ubuntu", "/tmp/key", "-v", sshArgs, command), got)
+		assert.Equal(t, buildInternalSSHCommand(host, "ubuntu", "/tmp/key", "-v", sshArgs, command), got)
 		assert.NotContains(t, got, "ProxyCommand")
 	}
+}
+
+// The bastion as the destination gets its host key checked against the
+// real known_hosts, ahead of any option the operator passes.
+func TestBuildSSHCommandForRouteBastionChecksHostKey(t *testing.T) { //nolint:paralleltest // t.Setenv
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	key := "/home/op/.local/share/ocfp/ocfp-cf1-lab/ssh/id_ed25519"
+	route := sshRoute{Host: "100.109.226.53", HostIsBastion: true}
+
+	got := buildSSHCommandForRoute(route, "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{})
+
+	expected := []string{
+		"ssh",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=" + filepath.Join(home, ".ssh", "known_hosts"),
+		"-o", "LogLevel=ERROR",
+		"-o", "IdentitiesOnly=yes",
+		"-i", key,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=6",
+		"ubuntu@100.109.226.53",
+	}
+	assert.Equal(t, expected, got)
+	assert.Equal(t, buildBastionSSHCommand("100.109.226.53", "ubuntu", key, "-o StrictHostKeyChecking=no", []string{}, []string{}), got)
 }

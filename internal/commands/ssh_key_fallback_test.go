@@ -92,16 +92,18 @@ func TestResolveOperatorSSHKeyEmptyBlocKeyStaysAnError(t *testing.T) { //nolint:
 }
 
 func TestBuildSSHCommandWithoutKeyLeavesAuthToTheUser(t *testing.T) { //nolint:paralleltest // t.Setenv
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("SSH_AUTH_SOCK", "")
 
-	got := buildSSHCommand("100.109.226.53", "ubuntu", "", "", []string{}, nil)
+	got := buildBastionSSHCommand("100.109.226.53", "ubuntu", "", "", []string{}, nil)
 	joined := strings.Join(got, " ")
 
 	assert.NotContains(t, got, "-i")
 	assert.NotContains(t, joined, "IdentitiesOnly")
 	// Host-key handling is exactly what the keyed path sends.
-	assert.Contains(t, joined, "-o UserKnownHostsFile=/dev/null")
-	assert.Contains(t, joined, "-o StrictHostKeyChecking=no")
+	assert.Contains(t, joined, "-o StrictHostKeyChecking=accept-new")
+	assert.Contains(t, joined, "-o UserKnownHostsFile="+filepath.Join(home, ".ssh", "known_hosts"))
 	assert.Equal(t, "ubuntu@100.109.226.53", got[len(got)-1])
 }
 

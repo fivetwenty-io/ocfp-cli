@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
@@ -81,8 +82,14 @@ The command automatically:
 - Finds the bloc's SSH key in standard locations
 - Uses that key to establish the connection, or your own SSH setup when the bloc key is absent
 
+The bastion's host key is checked against ~/.ssh/known_hosts, the file ocfp's own SSH client uses.
+A bastion seen for the first time has its key recorded, and a bastion whose key has changed is
+refused. If the bastion was rebuilt on purpose, remove the stale entry with ssh-keygen -R <address>
+and connect again. Hosts behind the bastion, such as the artifacts VM, are rebuilt often and are
+reached without a host key check.
+
 The artifacts hop runs as an explicit ProxyCommand through the bastion with the same key and user,
-so a rebuilt bastion's new host key never blocks the connection. Pass --no-proxy-jump to connect to
+and that hop checks the bastion's host key in the same way. Pass --no-proxy-jump to connect to
 the artifacts VM directly when you are already on its network, for example on the bastion itself.
 
 You can execute remote commands, use SSH port forwarding, and pass SSH-specific options.
@@ -138,7 +145,7 @@ batch mode and fails instead of waiting.`,
   ocfp ssh --bloc production --key /path/to/key.pem
 
   # Pass additional SSH options
-  ocfp ssh --bloc production --ssh-options "-o StrictHostKeyChecking=no"`,
+  ocfp ssh --bloc production --ssh-options "-o ServerAliveInterval=60"`,
 		Args: cobra.MinimumNArgs(0),
 		RunE: runSSH,
 	}
@@ -362,10 +369,12 @@ func setupSSHProvider(ctx context.Context, sshCfg *sshConfig) (*config.Config, c
 
 // sshRoute is where the final ssh hop connects. Host is the address it
 // dials, and Bastion, when set, is the bastion address that hop is proxied
-// through.
+// through. HostIsBastion marks a route whose destination is the bastion
+// itself, whose host key is checked.
 type sshRoute struct {
-	Host    string
-	Bastion string
+	Host          string
+	Bastion       string
+	HostIsBastion bool
 }
 
 // sshRouteResolver supplies the bloc lookups resolveSSHRoute needs, so the
@@ -388,7 +397,7 @@ func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noP
 			return sshRoute{}, err
 		}
 
-		return sshRoute{Host: ip, Bastion: ""}, nil
+		return sshRoute{Host: ip, Bastion: "", HostIsBastion: true}, nil
 	case sshTargetArtifacts:
 		artifactsIP, err := resolver.artifactsIP(ctx)
 		if err != nil {
@@ -396,7 +405,7 @@ func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noP
 		}
 
 		if noProxyJump {
-			return sshRoute{Host: artifactsIP, Bastion: ""}, nil
+			return sshRoute{Host: artifactsIP, Bastion: "", HostIsBastion: false}, nil
 		}
 
 		bastionIP, err := resolver.bastionIP(ctx)
@@ -404,12 +413,12 @@ func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noP
 			return sshRoute{}, fmt.Errorf("resolve bastion jump host: %w", err)
 		}
 
-		return sshRoute{Host: artifactsIP, Bastion: bastionIP}, nil
+		return sshRoute{Host: artifactsIP, Bastion: bastionIP, HostIsBastion: false}, nil
 	case sshTargetAddress:
-		return sshRoute{Host: target, Bastion: ""}, nil
+		return sshRoute{Host: target, Bastion: "", HostIsBastion: false}, nil
 	}
 
-	return sshRoute{Host: target, Bastion: ""}, nil
+	return sshRoute{Host: target, Bastion: "", HostIsBastion: false}, nil
 }
 
 // lookupArtifactsIPForSSH resolves the artifacts VM's private IP with
@@ -661,13 +670,14 @@ var sshKeepaliveOptions = []string{
 	"-o", "ServerAliveCountMax=6",
 }
 
-// addSSHStandardOptions adds standard SSH options to the command. The
-// host-key options are the same with or without a key. With a key, auth is
-// pinned to it by -i and IdentitiesOnly; without one, both are left out so
-// the user's ssh-agent, default keys, and ssh config apply.
-func addSSHStandardOptions(cmd []string, keyPath string) []string {
-	cmd = append(cmd, "-o", "UserKnownHostsFile=/dev/null")
-	cmd = append(cmd, "-o", "StrictHostKeyChecking=no")
+// addSSHStandardOptions adds standard SSH options to the command. hostKey
+// holds the host-key options for the destination, and they come first so
+// they win over any the operator passes, as ssh keeps the first value it
+// sees. They are the same with or without a key. With a key, auth is pinned
+// to it by -i and IdentitiesOnly; without one, both are left out so the
+// user's ssh-agent, default keys, and ssh config apply.
+func addSSHStandardOptions(cmd []string, keyPath string, hostKey []string) []string {
+	cmd = append(cmd, hostKey...)
 	cmd = append(cmd, "-o", "LogLevel=ERROR")
 
 	if keyPath != "" {
@@ -743,15 +753,30 @@ func filterSSHArgs(sshArgs []string) []string {
 	return result
 }
 
-// buildSSHCommand constructs the SSH command with all options.
-func buildSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+// buildBastionSSHCommand constructs the SSH command for a session whose
+// destination is the bastion itself. The bastion's host key is checked
+// against the real known_hosts: a first contact is recorded and a changed
+// key is refused.
+func buildBastionSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+	return buildSSHCommand(host, user, keyPath, bastionssh.BastionHostKeyOptions(), extraOptions, sshArgs, command)
+}
+
+// buildInternalSSHCommand constructs the SSH command for a host other than
+// the bastion, such as a VM behind it, whose host key is not checked.
+func buildInternalSSHCommand(host, user, keyPath, extraOptions string, sshArgs, command []string) []string {
+	return buildSSHCommand(host, user, keyPath, bastionssh.InternalHostKeyOptions(), extraOptions, sshArgs, command)
+}
+
+// buildSSHCommand validates its inputs and constructs the SSH command with
+// the given host-key options.
+func buildSSHCommand(host, user, keyPath string, hostKey []string, extraOptions string, sshArgs, command []string) []string {
 	// Validate inputs
 	err := validateSSHInputs(host, user, keyPath)
 	if err != nil {
 		return []string{"ssh", "--help"} // Return safe command
 	}
 
-	return assembleSSHCommand(host, user, keyPath, nil, extraOptions, sshArgs, command)
+	return assembleSSHCommand(host, user, keyPath, hostKey, nil, extraOptions, sshArgs, command)
 }
 
 // buildSSHCommandForRoute is buildSSHCommandForRouteWith for this process,
@@ -766,11 +791,13 @@ func stdinIsTerminal() bool {
 }
 
 // buildSSHCommandForRouteWith constructs the SSH command for a resolved route.
-// A direct route is exactly buildSSHCommand. A route through the bastion adds
-// the explicit ProxyCommand hop that bootstrap uses to reach the artifacts VM,
-// with the same key and user on both hops, and keeps every final-hop option
-// (agent forwarding, --ssh-options, the filtered flags, and the bash -lc
-// command wrapping) unchanged.
+// A direct route to the bastion is exactly buildBastionSSHCommand, and any
+// other direct route is buildInternalSSHCommand. A route through the bastion
+// adds the explicit ProxyCommand hop that bootstrap uses to reach the
+// artifacts VM, which checks the bastion's host key, with the same key and
+// user on both hops. Its final hop keeps the relaxed host-key options and
+// every other option (agent forwarding, --ssh-options, the filtered flags,
+// and the bash -lc command wrapping) unchanged.
 //
 // Without a key the jump hop is a separate ssh that could prompt for a
 // passphrase or password. It gets BatchMode=yes when the outer options turn
@@ -778,7 +805,11 @@ func stdinIsTerminal() bool {
 // interactive run.
 func buildSSHCommandForRouteWith(route sshRoute, user, keyPath, extraOptions string, sshArgs, command []string, stdinTerminal bool) []string {
 	if route.Bastion == "" {
-		return buildSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
+		if route.HostIsBastion {
+			return buildBastionSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
+		}
+
+		return buildInternalSSHCommand(route.Host, user, keyPath, extraOptions, sshArgs, command)
 	}
 
 	// The ProxyCommand string runs through a shell, so the bastion address,
@@ -795,7 +826,7 @@ func buildSSHCommandForRouteWith(route sshRoute, user, keyPath, extraOptions str
 	batchMode := !stdinTerminal || sshOptionsSetBatchMode(filterSSHOptions(extraOptions), filterSSHArgs(sshArgs))
 	hop := []string{"-o", "ProxyCommand=" + bootstrap.BastionProxyCommand(keyPath, user, route.Bastion, batchMode)}
 
-	return assembleSSHCommand(route.Host, user, keyPath, hop, extraOptions, sshArgs, command)
+	return assembleSSHCommand(route.Host, user, keyPath, bastionssh.InternalHostKeyOptions(), hop, extraOptions, sshArgs, command)
 }
 
 // sshOptionsSetBatchMode reports whether the first BatchMode in the given
@@ -841,13 +872,13 @@ func splitSSHOption(opt string) (name, value string) {
 }
 
 // assembleSSHCommand builds the ssh argument vector from inputs the caller
-// has already validated. hopOptions carries any bastion hop and sits after
-// the standard options.
-func assembleSSHCommand(host, user, keyPath string, hopOptions []string, extraOptions string, sshArgs, command []string) []string {
+// has already validated. hostKey holds the destination's host-key options,
+// and hopOptions carries any bastion hop and sits after the standard options.
+func assembleSSHCommand(host, user, keyPath string, hostKey, hopOptions []string, extraOptions string, sshArgs, command []string) []string {
 	cmd := []string{"ssh"}
 
 	// Add standard options
-	cmd = addSSHStandardOptions(cmd, keyPath)
+	cmd = addSSHStandardOptions(cmd, keyPath, hostKey)
 
 	// Add the bastion hop, if any
 	cmd = append(cmd, hopOptions...)

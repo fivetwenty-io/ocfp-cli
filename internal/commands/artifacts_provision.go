@@ -475,7 +475,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 		envB64, artifactsRemoteScript, artifactsRemoteLog,
 	)
 
-	sshCmd := buildSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
+	sshCmd := buildInternalSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Running artifacts provision on %s (RustFS install + bucket creation)", host)
@@ -486,7 +486,7 @@ func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envStrin
 	}
 
 	// Best-effort cleanup of the remote script.
-	cleanup := buildSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
+	cleanup := buildInternalSSHCommand(host, user, keyOpt, proxyOpt, []string{}, []string{})
 	cleanup = append(cleanup, "rm -f "+artifactsRemoteScript)
 	_ = executeSSH(context.Background(), cleanup)
 

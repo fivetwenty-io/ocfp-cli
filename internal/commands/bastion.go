@@ -495,7 +495,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 		envB64, remoteScript, logPath,
 	)
 
-	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd := buildInternalSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, remote)
 
 	log.Infof("Executing %s on bastion", operationName)
@@ -509,7 +509,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 }
 
 func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
-	sshCmd := buildSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
+	sshCmd := buildInternalSSHCommand(ctx.IP, ctx.User, ctx.SSHKeyOption, "", []string{}, []string{})
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
 	_ = executeSSH(context.Background(), sshCmd) // best effort
 }
