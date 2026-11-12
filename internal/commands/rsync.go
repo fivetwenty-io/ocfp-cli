@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -386,13 +387,17 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 	// Add progress indicator
 	cmd = append(cmd, "--progress")
 
-	// Add SSH options
-	sshCmd := "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR"
+	// The remote end is the bastion, so ssh checks its host key against the
+	// known_hosts file the Go client uses. rsync splits the -e command into
+	// words itself and honours quotes, so a path with a space is quoted.
+	sshArgs := append([]string{"ssh"}, bastionssh.BastionHostKeyOptions()...)
+	sshArgs = append(sshArgs, "-o", "LogLevel=ERROR")
+
 	if keyPath != "" {
-		sshCmd += " -i " + keyPath
+		sshArgs = append(sshArgs, "-i", keyPath)
 	}
 
-	cmd = append(cmd, "-e", sshCmd)
+	cmd = append(cmd, "-e", bastionssh.ShellJoin(sshArgs))
 
 	// Add exclude patterns
 	for _, pattern := range config.exclude {
