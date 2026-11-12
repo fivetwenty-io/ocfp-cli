@@ -382,3 +382,21 @@ func TestLocalExecutorDryRunNarrowModesRunNothing(t *testing.T) {
 		})
 	}
 }
+
+// A real upload whose checksum probe fails gets no result back, and it must
+// go on to the upload and report that failure rather than dereference the
+// missing result.
+func TestUploadOCFPBinarySurvivesAFailedChecksumProbe(t *testing.T) {
+	cfg := dryRunBloc(t)
+	build := dryRunWorkstation(t, cfg)
+	t.Setenv("OCFP_CLI_SOURCE", "local")
+	t.Setenv("OCFP_BINARY_PATH", build)
+
+	client := &unconnectedSSHClient{}
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{OCFPOnly: true}, client)
+
+	err := m.uploadOCFPBinary(context.Background())
+	require.ErrorIs(t, err, ssh.ErrSSHClientNotConnected)
+	assert.Contains(t, err.Error(), "failed to transfer OCFP binary")
+	assert.Contains(t, client.recorded(), "transfer: "+build+" -> /tmp/ocfp-upload")
+}
