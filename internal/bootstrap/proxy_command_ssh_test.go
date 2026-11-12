@@ -48,6 +48,7 @@ func proxyCommandInnerArgv(t *testing.T, proxyCommand string) []string {
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=yes",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "ProxyCommand="+proxyCommand,
 		"-p", "2222",
 		"ubuntu@artifacts.invalid", "true")
