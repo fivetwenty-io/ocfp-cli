@@ -141,6 +141,9 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 	// Silence usage on execution errors
 	cmd.SilenceUsage = true
 
+	// Settle the dry run once, before anything reads it.
+	f.dryRun = f.resolveDryRun(cmd)
+
 	ctx := context.Background()
 	log := logger.Get()
 
@@ -172,6 +175,18 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	return f.executeInitialization(ctx, cmd, cfg, component)
+}
+
+// resolveDryRun settles whether this run is a dry run. An explicit
+// --dry-run wins, either way. Without one, the init.dry_run setting in the
+// config file decides, so a config that asks for a dry run never gets a
+// real one.
+func (f *initFlags) resolveDryRun(cmd *cobra.Command) bool {
+	if flag := cmd.Flags().Lookup("dry-run"); flag != nil && flag.Changed {
+		return f.dryRun
+	}
+
+	return viper.GetBool("init.dry_run")
 }
 
 // getComponent determines which component to initialize.
