@@ -36,8 +36,9 @@ versioned and will gain fields.
 A --dir that is not the default as written, but that leads to the default
 directory or to a directory under it, is refused and exits 1. So is a --dir
 that names a symbolic link to a directory that does not exist yet, and any
---dir but the default as written when the default directory fails its own
-check.
+--dir but the default as written when a directory or link above the nearest
+existing directory on the default directory's path fails the ownership and
+mode check.
 
 A refusal names its code on stderr and exits 2. Any other failure exits 1.`,
 	}

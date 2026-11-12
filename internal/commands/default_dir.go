@@ -19,8 +19,11 @@ import (
 // default that sits behind a link keeps working. Any other value is refused
 // when it is def or lies under it, as inside decides.
 //
-// When def fails its own check, every value but def as written is refused,
-// because there is then no safe way to tell where def is.
+// When a directory or link above the nearest existing directory on def's
+// path fails the safedir check, every value but def as written is refused,
+// because there is then no safe way to tell where def is. That directory
+// itself, and def, are left to the owner store, which checks them when it
+// uses them.
 func refuseDefaultReach(flag, value, def string) error {
 	if filepath.Clean(value) == filepath.Clean(def) {
 		return nil
@@ -58,7 +61,8 @@ func refuseDefaultReach(flag, value, def string) error {
 // The owner directory in use is located without the safedir check, because
 // the owner store makes that check itself and refuses an unsafe directory,
 // with its own code, before the job makes anything under the spool root.
-// When def is not the owner directory in use and fails its own check, the
+// When def is not the owner directory in use, and a directory or link above
+// the nearest existing directory on its path fails the safedir check, the
 // spool root is refused, because there is then no safe way to tell where def
 // is.
 func refuseSpoolOverlap(spoolRoot, ownerDir, def string) error {
@@ -125,7 +129,8 @@ func locate(path string) (located, error) {
 }
 
 // locateChecked locates path as locate does and also checks every directory
-// above the nearest existing one with safedir, refusing what safedir refuses.
+// and link above the nearest existing directory with safedir, refusing what
+// safedir refuses. It does not check that directory itself.
 func locateChecked(path string) (located, error) {
 	l, at, err := locateFrom(path)
 	if err != nil {

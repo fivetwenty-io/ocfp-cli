@@ -62,8 +62,10 @@ default directory or to a directory under it, is refused before the request
 is read, and the command exits 1. So is a --spool-root that leads to the
 owner directory in use or to the default directory, to a directory under
 either, or to a directory that holds either. A flag that names a symbolic
-link to a directory that does not exist yet is refused the same way, and so
-is any flag when the directory it is compared with fails its own check.`,
+link to a directory that does not exist yet is refused the same way. So are
+a custom --owner-dir, and a --spool-root used with one, when a directory or
+link above the nearest existing directory on the default directory's path
+fails the ownership and mode check.`,
 		Example:       `  ocfp job exec --spool-root /data/ocfp-jobs < request.json`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
