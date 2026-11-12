@@ -181,15 +181,21 @@ func isAlnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 func isSep(r rune) bool { return r == '.' || r == '-' || r == '_' || r == ' ' }
 
-// isInvisible reports whether r renders as nothing and could sit inside a
-// term to split it. That covers format characters (Cf), control characters
-// (Cc) other than tab, line feed, and carriage return, the variation
-// selectors, and the combining grapheme joiner.
+// isInvisible reports whether r renders as nothing, or close to it, and
+// could sit inside a term to split it. That covers format characters (Cf),
+// control characters (Cc) other than tab, line feed, and carriage return,
+// the variation selectors, the combining grapheme joiner, the Hangul
+// fillers, the Braille blank, the Mongolian free variation selectors, the
+// Khmer inherent vowels, the object replacement character, and the line
+// and paragraph separators.
 func isInvisible(r rune) bool {
 	switch {
 	case r == '\t' || r == '\n' || r == '\r':
 		return false
-	case r == 0x034f, r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef:
+	case r == 0x034f, r == 0x115f, r == 0x1160, r == 0x17b4, r == 0x17b5,
+		r >= 0x180b && r <= 0x180d, r == 0x180f, r == 0x2028, r == 0x2029,
+		r == 0x2800, r == 0x3164, r == 0xffa0, r == 0xfffc,
+		r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef:
 		return true
 	}
 
@@ -197,10 +203,16 @@ func isInvisible(r rune) bool {
 }
 
 // normalize folds the whole of s with NFKC, lowercases it, drops invisible
-// characters, and drops separators that sit between two single letters. It returns the folded
-// runes and, for each, the one-based column in s of the start of the input
-// segment that produced it.
-func normalize(s string) ([]rune, []int) {
+// characters, and drops separators that sit between two single letters. It
+// returns the folded runes and, for each, the one-based column in s of the
+// start of the input segment that produced it.
+func normalize(s string) ([]rune, []int) { return normalizeWith(s, false) }
+
+// normalizeWith is normalize, except that when space is true it replaces
+// each invisible character with a space in place of dropping it. The
+// space keeps the word break that the character made, so a whole-word term
+// beside the character still matches.
+func normalizeWith(s string, space bool) ([]rune, []int) {
 	var (
 		runes []rune
 		cols  []int
@@ -214,7 +226,11 @@ func normalize(s string) ([]rune, []int) {
 
 		for _, r := range string(it.Next()) {
 			if isInvisible(r) {
-				continue
+				if !space {
+					continue
+				}
+
+				r = ' '
 			}
 
 			runes = append(runes, unicode.ToLower(r))
@@ -241,8 +257,34 @@ func normalize(s string) ([]rune, []int) {
 
 // scanLine reports each term at most once for the line, at its first match.
 func scanLine(terms []term, text string) []finding {
-	runes, cols := normalize(text)
+	var out []finding
 
+	seen := map[int]int{}
+
+	for _, space := range []bool{false, true} {
+		runes, cols := normalizeWith(text, space)
+
+		for _, f := range findTerms(terms, runes, cols) {
+			if i, ok := seen[f.term]; ok {
+				if f.col < out[i].col {
+					out[i].col = f.col
+				}
+
+				continue
+			}
+
+			seen[f.term] = len(out)
+			out = append(out, f)
+		}
+	}
+
+	sort.SliceStable(out, func(a, b int) bool { return out[a].col < out[b].col })
+
+	return out
+}
+
+// findTerms reports each term at most once, at its first match in runes.
+func findTerms(terms []term, runes []rune, cols []int) []finding {
 	var out []finding
 
 	for _, t := range terms {
@@ -266,8 +308,6 @@ func scanLine(terms []term, text string) []finding {
 			break
 		}
 	}
-
-	sort.SliceStable(out, func(a, b int) bool { return out[a].col < out[b].col })
 
 	return out
 }

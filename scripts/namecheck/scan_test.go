@@ -1560,6 +1560,26 @@ func TestScanFindsTermsSplitByInvisibleCharacters(t *testing.T) {
 		"variation selector 17":     "\U000e0100",
 		"variation selector 256":    "\U000e01ef",
 		"combining grapheme joiner": "\u034f",
+		"tag begin":                 "\U000e0001",
+		"tag space":                 "\U000e0020",
+		"tag cancel":                "\U000e007f",
+		"delete":                    "\x7f",
+		"arabic letter mark":        "\u061c",
+		"mongolian vowel separator": "\u180e",
+		"hangul choseong filler":    "\u115f",
+		"hangul jungseong filler":   "\u1160",
+		"hangul filler":             "\u3164",
+		"halfwidth hangul filler":   "\uffa0",
+		"braille blank":             "\u2800",
+		"mongolian fvs 1":           "\u180b",
+		"mongolian fvs 2":           "\u180c",
+		"mongolian fvs 3":           "\u180d",
+		"mongolian fvs 4":           "\u180f",
+		"khmer inherent vowel aq":   "\u17b4",
+		"khmer inherent vowel aa":   "\u17b5",
+		"object replacement":        "\ufffc",
+		"line separator":            "\u2028",
+		"paragraph separator":       "\u2029",
 	}
 	for name, sep := range splitters {
 		t.Run(name, func(t *testing.T) {
@@ -1656,5 +1676,68 @@ func TestScanOrdinaryTextWithTabsAndNewlinesBehavesAsBefore(t *testing.T) {
 	clean := writeFile(t, "c.txt", "plain\ttext\r\nwith\nbreaks\n")
 	if code, out, errs := runScan(t, getenv, clean); code != 0 || out != "" || errs != "" {
 		t.Fatalf("code %d out %q err %q, want clean", code, out, errs)
+	}
+}
+
+func TestScanFindsWholeWordTermBesideInvisibleCharacter(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+
+	// A character that renders as nothing still breaks a word, so a
+	// whole-word term next to one must match, before and after.
+	for name, sep := range map[string]string{
+		"zero width space": "\u200b",
+		"vertical tab":     "\v",
+		"soft hyphen":      "\u00ad",
+		"form feed":        "\f",
+		"hangul filler":    "\u3164",
+	} {
+		for pos, c := range map[string]struct {
+			text string
+			col  int
+		}{
+			"before": {"foo" + sep + "zebracorp tail", 5},
+			"after":  {"head zebracorp" + sep + "foo", 6},
+		} {
+			t.Run(name+" "+pos, func(t *testing.T) {
+				t.Parallel()
+				p := writeFile(t, "f.txt", "first line\n"+c.text+"\n")
+				code, out, errs := runScan(t, getenv, p)
+				want := "CLIENT_NAME_FOUND " + p + ":2:" + itoa(c.col) + " term 1\n"
+				if code != 1 || out != want {
+					t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+				}
+				for _, leak := range []string{"zebracorp", "zebra"} {
+					if strings.Contains(strings.ToLower(out+errs), leak) {
+						t.Fatalf("output leaks %q: %q %q", leak, out, errs)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestScanReportsTermOnceWhenBothPassesFindIt(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits are not meaningful on windows")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	p := writeFile(t, "f.txt", "x zebracorp \u200b y\n")
+	code, out, errs := runScan(t, getenv, p)
+	want := "CLIENT_NAME_FOUND " + p + ":1:3 term 1\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestNormalizeWithSpaceKeepsWordBreaks(t *testing.T) {
+	t.Parallel()
+	got, cols := normalizeWith("ab\u200bcd\vef", true)
+	if string(got) != "ab cd ef" || len(cols) != len(got) {
+		t.Fatalf("got %q with %d columns", string(got), len(cols))
 	}
 }
