@@ -1,9 +1,14 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 )
 
 // testHome points HOME at a temporary directory, so the bastion hop names a
@@ -205,5 +210,88 @@ func TestBuildArtifactsProvisionSSHArgs_SharesBastionProxyCommand(t *testing.T) 
 
 	if !found {
 		t.Errorf("provision args must hop through BastionProxyCommand %q; args: %v", want, args)
+	}
+}
+
+// fakeHostKeySSH puts an ssh on PATH that records each argv to a log and,
+// for any remote command other than the readiness probe "true" (or for every
+// command when refuseProbe is set), prints OpenSSH's changed-key refusal
+// and exits 255. It returns the log's path.
+func fakeHostKeySSH(t *testing.T, refuseProbe bool) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	argvLog := filepath.Join(dir, "argv.log")
+
+	probe := `[ "$last" = true ] && exit 0`
+	if refuseProbe {
+		probe = ":"
+	}
+
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> '" + argvLog + "'\n" +
+		"for last; do :; done\n" +
+		probe + "\n" +
+		"echo '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @' >&2\n" +
+		"echo 'Host key verification failed.' >&2\n" +
+		"exit 255\n"
+
+	err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o700) //nolint:gosec // test executable
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir)
+
+	return argvLog
+}
+
+func argvLines(t *testing.T, path string) []string {
+	t.Helper()
+
+	data, err := os.ReadFile(path) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// A refused bastion key cannot change by waiting, so the readiness loop
+// stops at once with an error that matches ErrHostKeyMismatch.
+func TestWaitArtifactsSSHReadyStopsOnABastionHostKeyRefusal(t *testing.T) {
+	knownHosts := testHome(t)
+	argvLog := fakeHostKeySSH(t, true)
+
+	m := &Manager{}
+
+	err := m.waitArtifactsSSHReady(context.Background(), testProvisionConn())
+	if !errors.Is(err, ssh.ErrHostKeyMismatch) {
+		t.Fatalf("waitArtifactsSSHReady() = %v, want an error matching ErrHostKeyMismatch", err)
+	}
+
+	if !strings.Contains(err.Error(), "ssh-keygen -R 100.109.226.53 -f "+knownHosts) {
+		t.Errorf("error %q does not name the bastion's known_hosts entry", err)
+	}
+
+	lines := argvLines(t, argvLog)
+	if len(lines) != 1 {
+		t.Fatalf("ssh ran %d times, want once: %q", len(lines), lines)
+	}
+
+	if !strings.Contains(lines[0], "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="+knownHosts+" ") {
+		t.Errorf("ssh was not given the strict bastion hop: %s", lines[0])
+	}
+}
+
+func TestProvisionArtifactsOverSSHReportsABastionHostKeyRefusal(t *testing.T) {
+	testHome(t)
+	fakeHostKeySSH(t, false)
+
+	m := &Manager{}
+
+	err := m.provisionArtifactsOverSSH(context.Background(), testProvisionConn(), "echo provisioned\n")
+	if !errors.Is(err, ssh.ErrHostKeyMismatch) {
+		t.Fatalf("provisionArtifactsOverSSH() = %v, want an error matching ErrHostKeyMismatch", err)
 	}
 }

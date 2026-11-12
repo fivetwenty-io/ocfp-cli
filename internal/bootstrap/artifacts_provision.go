@@ -172,6 +172,11 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 
 	err = cmd.Run()
 	if err != nil {
+		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, ssh.DefaultSSHPort, err)
+		if hostKeyErr != nil {
+			return fmt.Errorf("provision script did not run: %w", hostKeyErr)
+		}
+
 		return fmt.Errorf("provision script failed: %w (stderr tail: %s)", err, tailString(stderr.String(), 800))
 	}
 
@@ -185,12 +190,23 @@ func (m *Manager) waitArtifactsSSHReady(ctx context.Context, conn artifactsProvi
 
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		err := exec.CommandContext(probeCtx, "ssh", artifactsSSHArgs(conn, "true")...).Run() // #nosec G204 -- args are CLI/config-constructed, not user-tainted
+		probe := exec.CommandContext(probeCtx, "ssh", artifactsSSHArgs(conn, "true")...) // #nosec G204 -- args are CLI/config-constructed, not user-tainted
+
+		var stderr bytes.Buffer
+
+		probe.Stderr = &stderr
+		err := probe.Run()
 
 		cancel()
 
 		if err == nil {
 			return nil
+		}
+
+		// A refused bastion key does not change by waiting, so stop now.
+		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, ssh.DefaultSSHPort, err)
+		if hostKeyErr != nil {
+			return hostKeyErr
 		}
 
 		if time.Now().After(deadline) {
