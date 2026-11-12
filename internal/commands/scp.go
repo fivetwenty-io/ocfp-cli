@@ -183,6 +183,12 @@ func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) ([]string, 
 	processedSource := processSCPPath(scpCfg.Source, bastionIP, scpCfg.User)
 	processedDest := processSCPPath(scpCfg.Destination, bastionIP, scpCfg.User)
 
+	// scp runs the program -S names in place of ssh, which would drop the
+	// host key options, so that option is refused.
+	if option := findShortOrLongOption(strings.Fields(scpCfg.Options), 'S', "", scpShortOptionsWithValues); option != "" {
+		return nil, fmt.Errorf("%w: %q; leave it out and ocfp runs ssh itself", ErrSCPProgramOption, option)
+	}
+
 	hostKey, err := bastionssh.BastionHostKeyOptions()
 	if err != nil {
 		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
@@ -191,6 +197,10 @@ func prepareSCPCommand(scpCfg *scpConfig, bastionIP, keyPath string) ([]string, 
 	return buildSCPCommand(processedSource, processedDest, keyPath,
 		hostKey, scpCfg.Recursive, scpCfg.Options), nil
 }
+
+// scpShortOptionsWithValues are scp's options that take a value, either
+// attached or as the next argument.
+const scpShortOptionsWithValues = "cDFiJloPSX"
 
 // getBastionIPForSCP retrieves the bastion host's public IP address (reusing logic).
 func getBastionIPForSCP(ctx context.Context, provider cpi.Provider, blocName string) (string, error) {
