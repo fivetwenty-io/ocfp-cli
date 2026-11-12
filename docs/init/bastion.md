@@ -628,6 +628,8 @@ A full dry run lists the files that init would write, and then each phase it wou
 
 A dry run also leaves the resume checkpoints on our workstation as it found them. When a real run has failed partway, we can preview the bloc with `--dry-run` and still pick up from the failed step with `--resume` afterwards.
 
+The other `ocfp init` components check the bastion before they start as well. In a real run, `ocfp init all`, `aws`, `gcp`, `pve`, `pg`, `cf`, and `bosh` each run the same SSH check, and they stop when the bastion can't be reached. With `--dry-run`, each of them logs the check it would make instead of running it, so a dry run never writes the bastion's host key to our `~/.ssh/known_hosts` and never logs in to the bastion. Their prerequisite step also logs the deployment directory it would create under `~/deployments` instead of creating it.
+
 ### Force Re-initialization
 ```bash
 # Completely re-provision bastion

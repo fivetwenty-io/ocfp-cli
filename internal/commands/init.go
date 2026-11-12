@@ -276,10 +276,10 @@ func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *conf
 		return nil
 	}
 
-	// The bastion check runs ssh against the bastion, and a dry run of
-	// init bastion never connects to it.
-	if f.dryRun && component == RoleBastion {
-		logger.Get().Infow("DRY RUN: Would check SSH connectivity to the bastion", "bloc", cfg.Name)
+	// Every component's check runs ssh against the bastion, and a dry run
+	// never connects to it.
+	if f.dryRun {
+		previewPrerequisites(cfg, component)
 
 		return nil
 	}
@@ -515,20 +515,10 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 		return fmt.Errorf("bastion check failed: %w", err)
 	}
 
-	// Check for required local tools for CF/BOSH operations
-	if component == "cf" || component == "bosh" || component == KeywordAll {
-		requiredTools := []string{"bosh", "cf", "credhub", "uaa"}
-		for _, tool := range requiredTools {
-			_, err := exec.LookPath(tool)
-			if err != nil {
-				log.Warnw("Required tool not found in PATH", "tool", tool)
-			}
-		}
-	}
+	checkLocalTools(component)
 
 	// Check for deployment directories
-	home, _ := homeDir()
-	deploymentDir := filepath.Join(home, "deployments", cfg.Name)
+	deploymentDir := prerequisiteDeploymentDir(cfg)
 
 	_, err = os.Stat(deploymentDir) // #nosec -- path components are from trusted config
 	if os.IsNotExist(err) {
@@ -541,6 +531,57 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	}
 
 	return nil
+}
+
+// previewPrerequisites is the dry-run form of validatePrerequisites. It
+// logs the bastion connectivity check instead of running it, because the
+// check runs ssh with accept-new, which records the bastion's host key in
+// our known_hosts on first contact and logs in to the bastion. It still
+// looks for the local tools, which changes nothing, and logs the deployment
+// directory it would create instead of creating it.
+func previewPrerequisites(cfg *config.Config, component string) {
+	log := logger.Get()
+	log.Infow("DRY RUN: Would check SSH connectivity to the bastion", "bloc", cfg.Name, "component", component)
+
+	// Bastion init checks only the connection, because it installs its
+	// tools on the bastion.
+	if component == RoleBastion {
+		return
+	}
+
+	checkLocalTools(component)
+
+	deploymentDir := prerequisiteDeploymentDir(cfg)
+
+	_, err := os.Stat(deploymentDir) // #nosec -- path components are from trusted config
+	if os.IsNotExist(err) {
+		log.Infow("DRY RUN: Would create deployment directory", "path", deploymentDir)
+	}
+}
+
+// checkLocalTools warns about each tool that CF and BOSH init need and that
+// isn't on our PATH.
+func checkLocalTools(component string) {
+	if component != "cf" && component != "bosh" && component != KeywordAll {
+		return
+	}
+
+	log := logger.Get()
+
+	for _, tool := range []string{"bosh", "cf", "credhub", "uaa"} {
+		_, err := exec.LookPath(tool)
+		if err != nil {
+			log.Warnw("Required tool not found in PATH", "tool", tool)
+		}
+	}
+}
+
+// prerequisiteDeploymentDir returns the workstation directory that the
+// prerequisite check makes sure exists for the bloc.
+func prerequisiteDeploymentDir(cfg *config.Config) string {
+	home, _ := homeDir()
+
+	return filepath.Join(home, "deployments", cfg.Name)
 }
 
 // checkBastionConnectivity verifies bastion host is accessible. It checks
