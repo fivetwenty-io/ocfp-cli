@@ -1,14 +1,18 @@
 package bastion
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/deployments"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
@@ -399,4 +403,98 @@ func TestUploadOCFPBinarySurvivesAFailedChecksumProbe(t *testing.T) {
 	require.ErrorIs(t, err, ssh.ErrSSHClientNotConnected)
 	assert.Contains(t, err.Error(), "failed to transfer OCFP binary")
 	assert.Contains(t, client.recorded(), "transfer: "+build+" -> /tmp/ocfp-upload")
+}
+
+// A dry run of the full phase list previews what it would write. It used to
+// read each file's current copy over the unconnected client, which always
+// failed, so every file was reported as one init would create. The preview
+// must leave the bastion alone and say that it did not read it.
+func TestDryRunFullPhaseListNeverReachesTheBastion(t *testing.T) {
+	for _, parallel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+
+			var out bytes.Buffer
+
+			// One worker still runs every parallel phase list, and it keeps
+			// the workers' shared progress bookkeeping, which they update
+			// without a lock, out of this test.
+			client := &unconnectedSSHClient{}
+			m, fetches, logs := dryRunManager(t, cfg,
+				&ProvisioningOptions{DryRun: true, Parallel: parallel, MaxWorkers: 1, ProgressOut: &out}, client)
+
+			require.NoError(t, m.syncAndRun(context.Background()))
+			assert.Empty(t, client.recorded(), "a dry run must not send anything to the bastion")
+			assert.Empty(t, fetches.accounts())
+			assert.Contains(t, loggedDryRun(logs), "DRY RUN: Would execute phase")
+
+			preview := out.String()
+			assert.Contains(t, preview, "a dry run does not read the bastion's copies")
+			assert.Contains(t, preview, "~ create ~/.tmux.conf (mode 644) unless it is there",
+				"the path is the bastion user's, not one under the workstation's home")
+			assert.NotContains(t, preview, os.Getenv("HOME"))
+			assert.NotContains(t, preview, "+ create", "a file the run never read is not one it would create")
+			assert.Contains(t, preview, "~ write /etc/profile.d/ocfp.sh", "the system files are part of the preview")
+		})
+	}
+}
+
+// The preview lists the managed config files and then the system files
+// init writes, without reading the bastion for either.
+func TestDryRunPreviewShowsConfigAndSystemFiles(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	client := &unconnectedSSHClient{}
+	m, _, _ := dryRunManager(t, dryRunBloc(t), &ProvisioningOptions{DryRun: true, ProgressOut: &out}, client)
+
+	m.previewConfigChanges()
+	assert.Empty(t, client.recorded(), "the preview must not read the bastion")
+
+	preview := out.String()
+	configAt := strings.Index(preview, "configuration files init would write")
+	systemAt := strings.Index(preview, "system files init would write")
+	require.GreaterOrEqual(t, configAt, 0, preview)
+	require.Greater(t, systemAt, configAt, "the system files come after the config files")
+
+	assert.Contains(t, preview, "a dry run does not read the bastion's copies")
+	assert.Contains(t, preview, "~ write /etc/profile.d/ocfp.sh")
+	assert.Contains(t, preview, "/etc/environment (entries init sets)")
+	assert.Contains(t, preview, "+OCFP_BLOC=")
+	assert.NotContains(t, preview, "+ create")
+}
+
+// The config-file preview lists what the real script writes. The script
+// writes an enabled file even when it is empty, and it only sets a mode
+// when the file has one.
+func TestConfigFilePreviewMatchesTheScript(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	writeConfigFilePreview(&out, []provision.ConfigFile{
+		{Name: "empty", Path: "${HOME}/.empty", Enabled: true, Mode: 0o600},
+		{Name: "nomode", Path: "$HOME/.nomode", Content: "x", Enabled: true},
+		{Name: "kept", Path: "${HOME}/.kept", Content: "x", Enabled: true, CheckExists: true, Mode: 0o644},
+		{Name: "off", Path: "${HOME}/.off", Content: "x", Mode: 0o644},
+	})
+
+	assert.Equal(t, "~ write ~/.empty (mode 600)\n"+
+		"~ write ~/.nomode\n"+
+		"~ create ~/.kept (mode 644) unless it is there\n", out.String())
+}
+
+// Without a progress writer there is nowhere to print the preview, and the
+// dry run must finish rather than write to nothing.
+func TestDryRunFullPhaseListWithoutProgressOutput(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+
+	client := &unconnectedSSHClient{}
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, client)
+
+	require.NoError(t, m.syncAndRun(context.Background()))
+	assert.Empty(t, client.recorded())
 }

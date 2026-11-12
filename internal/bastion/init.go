@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -233,7 +234,7 @@ func (m *Manager) runModeOrPhases(ctx context.Context) error {
 	}
 
 	if m.options.DryRun {
-		m.previewConfigChanges(ctx)
+		m.previewConfigChanges()
 	}
 
 	return m.executeInitializationPhases(ctx)
@@ -1232,91 +1233,71 @@ func (m *Manager) validateOverrides() {
 	}
 }
 
-// previewConfigChanges shows diffs for managed config files in dry-run.
-func (m *Manager) previewConfigChanges(ctx context.Context) {
+// dryRunNotReadNote heads each dry-run preview section. A dry run never
+// connects to the bastion, so the preview lists what init would write and
+// cannot compare it with what is there.
+const dryRunNotReadNote = "a dry run does not read the bastion's copies"
+
+// previewConfigChanges prints the managed config files a full init would
+// write, and then the system files. It needs a progress writer to print
+// to, and does nothing without one.
+func (m *Manager) previewConfigChanges() {
+	if m.options.ProgressOut == nil {
+		return
+	}
+
 	cfm := provision.NewConfigFileManager(m.config.Provider, m.config)
-	files := cfm.GetConfigFiles()
 
-	if len(files) == 0 || m.options.ProgressOut == nil {
-		m.previewSystemChanges(ctx)
+	_, _ = fmt.Fprintf(m.options.ProgressOut, "\n== Dry-run: configuration files init would write (%s) ==\n", dryRunNotReadNote)
+	writeConfigFilePreview(m.options.ProgressOut, cfm.GetConfigFiles())
 
-		return
-	}
+	m.previewSystemChanges()
+}
 
-	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== Dry-run: configuration file changes ==")
+// writeConfigFilePreview lists the managed config files the way the
+// config-file script handles them. The script writes every enabled file,
+// an empty one included, and sets a mode only when the file has one.
+func writeConfigFilePreview(out io.Writer, files []provision.ConfigFile) {
 	for _, file := range files {
-		m.previewFileChange(ctx, file)
-	}
-}
-
-// previewSystemChanges shows system-level changes in dry-run mode.
-func (m *Manager) previewSystemChanges(ctx context.Context) {
-	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== Dry-run: system file changes ==")
-	m.previewProfileChanges(ctx)
-	m.previewEnvironmentChanges(ctx)
-	m.previewAPTRepositories(ctx)
-}
-
-// previewFileChange shows the diff for a single configuration file.
-func (m *Manager) previewFileChange(ctx context.Context, file provision.ConfigFile) {
-	path := m.expandPathVariables(file.Path)
-	current := m.readFileContent(ctx, path)
-
-	if file.Content == "" {
-		return
-	}
-
-	m.outputFileDiff(path, current, file.Content, os.FileMode(file.Mode))
-}
-
-// expandPathVariables expands environment variables in file paths.
-func (m *Manager) expandPathVariables(path string) string {
-	path = strings.ReplaceAll(path, "${HOME}", "$HOME")
-	path = strings.ReplaceAll(path, "${USER}", "$USER")
-	path = strings.ReplaceAll(path, "$HOME", os.Getenv("HOME"))
-
-	return path
-}
-
-// readFileContent reads file content from remote or local filesystem.
-func (m *Manager) readFileContent(ctx context.Context, path string) string {
-	if m.sshClient != nil {
-		res, execErr := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("cat '%s' 2>/dev/null || true", path))
-		if execErr == nil {
-			return res.Stdout
+		if !file.Enabled {
+			continue
 		}
 
-		return ""
-	}
+		target := bastionDisplayPath(file.Path)
+		if file.Mode != 0 {
+			target = fmt.Sprintf("%s (mode %o)", target, os.FileMode(file.Mode))
+		}
 
-	data, readErr := os.ReadFile(path) // #nosec G304 - path is validated above
-	if readErr == nil {
-		return string(data)
-	}
+		// A file marked CheckExists is only created, so a copy already on
+		// the bastion is left as it is.
+		if file.CheckExists {
+			_, _ = fmt.Fprintf(out, "~ create %s unless it is there\n", target)
 
-	return ""
+			continue
+		}
+
+		_, _ = fmt.Fprintf(out, "~ write %s\n", target)
+	}
 }
 
-// outputFileDiff outputs the diff between current and desired file content.
-func (m *Manager) outputFileDiff(path, current, desired string, mode os.FileMode) {
-	if current == "" {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "\n+ create %s (mode %o)\n", path, mode)
-
-		return
-	}
-
-	if current == desired {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "\n= no change %s\n", path)
-
-		return
-	}
-
-	text := unifiedDiff(path+" (current)", path+" (proposed)", current, desired)
-	_, _ = fmt.Fprintf(m.options.ProgressOut, "\n%s\n", text)
+// bastionDisplayPath writes a managed file's path the way it reads on the
+// bastion. The home directory is the bastion user's, not the workstation's,
+// so it stays as ~ rather than being expanded here.
+func bastionDisplayPath(path string) string {
+	return strings.NewReplacer("${HOME}", "~", "$HOME", "~", "${USER}", "$USER").Replace(path)
 }
 
-// previewProfileChanges shows diffs for /etc/profile.d/ocfp.sh changes.
-func (m *Manager) previewProfileChanges(ctx context.Context) {
+// previewSystemChanges prints the system files a full init would write.
+func (m *Manager) previewSystemChanges() {
+	_, _ = fmt.Fprintf(m.options.ProgressOut, "\n== Dry-run: system files init would write (%s) ==\n", dryRunNotReadNote)
+	m.previewProfileChanges()
+	m.previewEnvironmentChanges()
+	m.previewAPTRepositories()
+}
+
+// previewProfileChanges shows the /etc/profile.d/ocfp.sh that init writes
+// in place of whatever is there.
+func (m *Manager) previewProfileChanges() {
 	envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
 	// Build expected profile content
 	var builder strings.Builder
@@ -1326,63 +1307,33 @@ func (m *Manager) previewProfileChanges(ctx context.Context) {
 		fmt.Fprintf(&builder, "export %s='%s'\n", k, v)
 	}
 
-	desired := builder.String()
-	current := ""
+	_, _ = fmt.Fprintln(m.options.ProgressOut, "~ write /etc/profile.d/ocfp.sh")
 
-	if m.sshClient != nil {
-		res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/profile.d/ocfp.sh 2>/dev/null || true")
-		if err == nil {
-			current = res.Stdout
-		}
-	}
-
-	switch {
-	case current == "":
-		_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/profile.d/ocfp.sh")
-	case current != desired:
-		if text := unifiedDiff("/etc/profile.d/ocfp.sh (current)", "/etc/profile.d/ocfp.sh (proposed)", current, desired); text != "" {
-			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-		}
-	default:
-		_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/profile.d/ocfp.sh")
+	text := unifiedDiff("/etc/profile.d/ocfp.sh (bastion copy, not read)", "/etc/profile.d/ocfp.sh (what init writes)",
+		"", builder.String())
+	if text != "" {
+		_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 	}
 }
 
-// previewEnvironmentChanges shows diffs for /etc/environment changes.
-func (m *Manager) previewEnvironmentChanges(ctx context.Context) {
+// previewEnvironmentChanges shows the entries init sets in /etc/environment.
+// Init keeps the file's other lines, and the dry run cannot list them.
+func (m *Manager) previewEnvironmentChanges() {
 	envMgr := provision.NewEnvironmentManager(m.config.Provider, m.config)
-	envVars := envMgr.GetSystemEnvironmentVarsForPreview()
-	current := ""
+	proposed := m.buildProposedEnvironment("", envMgr.GetSystemEnvironmentVarsForPreview())
 
-	if m.sshClient != nil {
-		res, err := m.sshClient.ExecuteCommand(ctx, "cat /etc/environment 2>/dev/null || true")
-		if err == nil {
-			current = res.Stdout
-		}
-	}
-
-	proposed := m.buildProposedEnvironment(current, envVars)
 	_, _ = fmt.Fprintln(m.options.ProgressOut, "\n== /etc/environment changes ==")
 
-	switch {
-	case strings.TrimSpace(current) == "":
-		// Treat as create
-		if text := unifiedDiff("/etc/environment (current)", "/etc/environment (proposed)", "", proposed); text != "" {
-			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-		} else {
-			_, _ = fmt.Fprintln(m.options.ProgressOut, "+ create /etc/environment")
-		}
-	case current != proposed:
-		if text := unifiedDiff("/etc/environment (current)", "/etc/environment (proposed)", current, proposed); text != "" {
-			_, _ = fmt.Fprintln(m.options.ProgressOut, text)
-		}
-	default:
-		_, _ = fmt.Fprintln(m.options.ProgressOut, "= no change /etc/environment")
+	text := unifiedDiff("/etc/environment (bastion copy, not read)", "/etc/environment (entries init sets)",
+		"", proposed)
+	if text != "" {
+		_, _ = fmt.Fprintln(m.options.ProgressOut, text)
 	}
 }
 
-// previewAPTRepositories shows planned changes for APT repositories.
-func (m *Manager) previewAPTRepositories(ctx context.Context) {
+// previewAPTRepositories shows the APT keys and repository lines init would
+// add, each only when the bastion lacks it.
+func (m *Manager) previewAPTRepositories() {
 	repos := m.provConfig.GetAPTRepositories()
 	if len(repos) == 0 {
 		return
@@ -1395,59 +1346,14 @@ func (m *Manager) previewAPTRepositories(ctx context.Context) {
 			continue
 		}
 
-		m.previewAPTRepoGPGKey(ctx, repo)
-		m.previewAPTRepoSourceLine(ctx, repo)
+		if repo.GPGKey.Dest != "" {
+			_, _ = fmt.Fprintf(m.options.ProgressOut, "~ install key %s unless it is there\n", repo.GPGKey.Dest)
+		}
+
+		if repo.SourceFile != "" && repo.SourceLine != "" {
+			_, _ = fmt.Fprintf(m.options.ProgressOut, "~ add the repo line to %s unless it is there\n", repo.SourceFile)
+		}
 	}
-}
-
-// previewAPTRepoGPGKey checks and reports GPG key status for an APT repository.
-func (m *Manager) previewAPTRepoGPGKey(ctx context.Context, repo provision.APTRepository) {
-	if repo.GPGKey.Dest == "" {
-		return
-	}
-
-	exists := m.fileExistsOnRemote(ctx, repo.GPGKey.Dest)
-	if exists {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "= key exists %s\n", repo.GPGKey.Dest)
-	} else {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "+ install key %s\n", repo.GPGKey.Dest)
-	}
-}
-
-// previewAPTRepoSourceLine checks and reports source line status for an APT repository.
-func (m *Manager) previewAPTRepoSourceLine(ctx context.Context, repo provision.APTRepository) {
-	if repo.SourceFile == "" || repo.SourceLine == "" {
-		return
-	}
-
-	present := m.sourceLineExistsOnRemote(ctx, repo.SourceFile, repo.SourceLine)
-	if present {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "= repo line present in %s\n", repo.SourceFile)
-	} else {
-		_, _ = fmt.Fprintf(m.options.ProgressOut, "+ write repo line to %s\n", repo.SourceFile)
-	}
-}
-
-// fileExistsOnRemote checks if a file exists on the remote system.
-func (m *Manager) fileExistsOnRemote(ctx context.Context, path string) bool {
-	if m.sshClient == nil {
-		return false
-	}
-
-	_, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("test -f '%s'", path))
-
-	return err == nil
-}
-
-// sourceLineExistsOnRemote checks if a source line exists in a file on the remote system.
-func (m *Manager) sourceLineExistsOnRemote(ctx context.Context, file, line string) bool {
-	if m.sshClient == nil {
-		return false
-	}
-
-	_, err := m.sshClient.ExecuteCommand(ctx, fmt.Sprintf("grep -qF '%s' '%s'", line, file))
-
-	return err == nil
 }
 
 // runPhasesSequential executes phases one by one (internal helper).
