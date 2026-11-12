@@ -336,24 +336,33 @@ func (pr *ProgressReporter) ReportFinalSummary(success bool, duration time.Durat
 	pr.finalize(finalSummary(success, duration, phases, errors))
 }
 
-// ReportDryRunSummary reports the final summary of a dry run. The renderers
-// say that it was a dry run and that nothing changed, and count the phases
-// as previewed rather than completed.
-func (pr *ProgressReporter) ReportDryRunSummary(success bool, duration time.Duration, phases int, errors int) {
-	summary := finalSummary(success, duration, phases, errors)
-	summary.DryRun = true
-
-	pr.finalize(summary)
+// ReportDryRunSummary reports the final summary of a dry run that
+// finished. The renderers say that it was a dry run and that nothing
+// changed. Of the total steps, it counts the ones the run previewed as
+// previewed rather than completed, and the ones a resumed run skipped as
+// skipped.
+func (pr *ProgressReporter) ReportDryRunSummary(duration time.Duration, total, previewed, skipped int) {
+	pr.finalize(output.Summary{
+		TotalPhases:     total,
+		CompletedPhases: previewed,
+		FailedPhases:    0,
+		SkippedPhases:   skipped,
+		Duration:        duration,
+		Success:         true,
+		DryRun:          true,
+	})
 }
 
 // ReportDryRunFailure reports the final summary of a dry run that stopped
 // at a step the real run would fail at. Of the total steps, it counts the
-// previewed ones before that step and the one it stopped at as failed.
-func (pr *ProgressReporter) ReportDryRunFailure(duration time.Duration, total, previewed int) {
+// ones the run previewed before that step, the ones a resumed run skipped,
+// and the one it stopped at as failed.
+func (pr *ProgressReporter) ReportDryRunFailure(duration time.Duration, total, previewed, skipped int) {
 	pr.finalize(output.Summary{
 		TotalPhases:     total,
 		CompletedPhases: previewed,
 		FailedPhases:    1,
+		SkippedPhases:   skipped,
 		Duration:        duration,
 		Success:         false,
 		DryRun:          true,
