@@ -596,7 +596,7 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 
 	err = cmd.Run()
 	if err != nil {
-		hostKeyErr := bastionssh.SystemSSHHostKeyFailure(stderr.String(), bastionIP, bastionssh.DefaultSSHPort, err)
+		hostKeyErr := bastionssh.SystemSSHHostKeyFailure(stderr.String(), bastionIP, err)
 		if hostKeyErr != nil {
 			return hostKeyErr
 		}
