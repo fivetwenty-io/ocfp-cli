@@ -298,9 +298,14 @@ func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *conf
 	}
 
 	// Every component's check runs ssh against the bastion, and a dry run
-	// never connects to it.
+	// never connects to it, so it makes only the checks that read.
 	if f.dryRun {
-		f.wouldCreate = previewPrerequisites(cfg, component)
+		wouldCreate, err := previewPrerequisites(cfg, component)
+		if err != nil {
+			return fmt.Errorf("prerequisite check failed: %w", err)
+		}
+
+		f.wouldCreate = wouldCreate
 
 		return nil
 	}
@@ -559,30 +564,18 @@ func getInitExamples() string {
 
 // validatePrerequisites checks that required infrastructure is in place.
 func validatePrerequisites(ctx context.Context, cfg *config.Config, component string) error {
-	log := logger.Get()
+	log := initLogger()
 	log.Infow("Validating prerequisites", "component", component)
 
-	// For bastion initialization, only check SSH connectivity
-	// Tools will be installed ON the bastion during provisioning
-	if component == RoleBastion {
-		err := checkBastionConnectivity(ctx, cfg)
-		if errors.Is(err, bastionssh.ErrHostKeyMismatch) {
-			// A changed host key is never a reason to carry on: the
-			// provisioning connection would refuse the same key.
-			return fmt.Errorf("bastion check failed: %w", err)
-		}
-
-		if err != nil {
-			log.Warnw("Bastion connectivity check failed, will attempt provisioning anyway", "error", err)
-		}
-
-		return nil
+	err := settleBastionCheck(component, checkBastionConnectivity(ctx, cfg))
+	if err != nil {
+		return err
 	}
 
-	// For other components, check bastion is already provisioned and accessible
-	err := checkBastionConnectivity(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("bastion check failed: %w", err)
+	// Bastion init checks only the connection, because its tools are
+	// installed on the bastion during provisioning.
+	if component == RoleBastion {
+		return nil
 	}
 
 	checkLocalTools(component)
@@ -603,35 +596,60 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	return nil
 }
 
-// previewPrerequisites is the dry-run form of validatePrerequisites. It
-// logs the bastion connectivity check instead of running it, because the
-// check runs ssh with accept-new, which records the bastion's host key in
-// our known_hosts on first contact and logs in to the bastion. It still
-// looks for the local tools, which changes nothing, and logs the deployment
-// directory it would create instead of creating it, and returns that
-// directory, so the component's checks count it as present.
-func previewPrerequisites(cfg *config.Config, component string) []string {
-	log := logger.Get()
-	log.Infow("DRY RUN: Would check SSH connectivity to the bastion", "bloc", cfg.Name, "component", component)
-
-	// Bastion init checks only the connection, because it installs its
-	// tools on the bastion.
-	if component == RoleBastion {
+// settleBastionCheck turns the result of the bastion connectivity check
+// into the prerequisite step's result for component. Bastion init carries
+// on after any failure but a changed host key, because provisioning may be
+// what makes the bastion reachable. Every other component needs a working
+// bastion, so any failure stops it.
+func settleBastionCheck(component string, err error) error {
+	if err == nil {
 		return nil
+	}
+
+	if component == RoleBastion && !errors.Is(err, bastionssh.ErrHostKeyMismatch) {
+		initLogger().Warnw("Bastion connectivity check failed, will attempt provisioning anyway", "error", err)
+
+		return nil
+	}
+
+	// A changed host key is never a reason to carry on, because the
+	// provisioning connection would refuse the same key.
+	return fmt.Errorf("bastion check failed: %w", err)
+}
+
+// previewPrerequisites is the dry-run form of validatePrerequisites. It
+// makes the checks of the bastion connectivity check that only read, and
+// refuses where they refuse, but it doesn't run ssh, because ssh with
+// accept-new records the bastion's host key in our known_hosts on first
+// contact and logs in to the bastion. It logs what it left unchecked. It
+// still looks for the local tools, which changes nothing, and logs the
+// deployment directory it would create instead of creating it, and returns
+// that directory, so the component's checks count it as present.
+func previewPrerequisites(cfg *config.Config, component string) ([]string, error) {
+	log := initLogger()
+	log.Infow("Validating prerequisites", "component", component)
+
+	err := settleBastionCheck(component, previewBastionConnectivity(cfg))
+	if err != nil {
+		return nil, err
+	}
+
+	if component == RoleBastion {
+		return nil, nil
 	}
 
 	checkLocalTools(component)
 
 	deploymentDir := prerequisiteDeploymentDir(cfg)
 
-	_, err := os.Stat(deploymentDir) // #nosec -- path components are from trusted config
+	_, err = os.Stat(deploymentDir) // #nosec -- path components are from trusted config
 	if os.IsNotExist(err) {
 		log.Infow("DRY RUN: Would create deployment directory", "path", deploymentDir)
 
-		return []string{deploymentDir}
+		return []string{deploymentDir}, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // checkLocalTools warns about each tool that CF and BOSH init need and that
@@ -663,7 +681,7 @@ func prerequisiteDeploymentDir(cfg *config.Config) string {
 // the bastion's host key against the known_hosts file the Go client uses,
 // and a changed key returns an error that matches ErrHostKeyMismatch.
 func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
-	log := logger.Get()
+	log := initLogger()
 
 	// Get bastion IP using proper resolution
 	bastionIP, err := resolveBastionIPForCheck(ctx, cfg)
@@ -673,49 +691,14 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 
-	// Find SSH key for bastion
-	keyPath, err := findSSHKey(cfg.Name, cfg)
-	if err != nil {
-		log.Warnw("Could not find SSH key for bastion, skipping connectivity check", "error", err)
-
-		return nil
+	args, err := bastionCheckArgs(cfg, bastionIP)
+	if err != nil || args == nil {
+		return err
 	}
-
-	// Try SSH connection with timeout
-	err = security.ValidateInput(cfg.Bastion.SSHUser, validUserPattern)
-	if err != nil {
-		return fmt.Errorf("invalid SSH user: %w", err)
-	}
-
-	err = security.ValidateInput(bastionIP, validDNSPattern)
-	if err != nil {
-		return fmt.Errorf("invalid bastion IP: %w", err)
-	}
-
-	err = security.ValidateInput(keyPath, validFilePathPattern)
-	if err != nil {
-		return fmt.Errorf("invalid key path: %w", err)
-	}
-
-	// The host key options go first, because ssh keeps the first value it
-	// sees for an option.
-	args, err := bastionssh.BastionHostKeyOptions()
-	if err != nil {
-		return fmt.Errorf("cannot check the bastion's host key: %w", err)
-	}
-
-	args = append(args,
-		"-i", keyPath,
-		"-o", "ConnectTimeout=30",
-		"-o", "LogLevel=ERROR",
-		"-o", "IdentitiesOnly=yes",
-		"-o", "IdentityAgent=none",
-		fmt.Sprintf("%s@%s", cfg.Bastion.SSHUser, bastionIP),
-		"echo", "connected")
 
 	var stderr bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 - input validated above
+	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 - input validated by bastionCheckArgs
 	cmd.Stderr = &stderr
 
 	err = cmd.Run()
@@ -731,6 +714,80 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 	log.Info("Bastion connectivity verified")
 
 	return nil
+}
+
+// previewBastionConnectivity is the dry-run form of
+// checkBastionConnectivity. It makes the same checks up to the point where
+// the real check runs ssh, and returns the same errors, and then logs that
+// it didn't check the connection or the host key. It takes the bastion's
+// IP from the config only, because the real check otherwise probes the
+// bastion at the cached address and records the address it finds, and
+// without one it logs that it checked nothing of the connection.
+func previewBastionConnectivity(cfg *config.Config) error {
+	log := initLogger()
+
+	if cfg.BastionIP == "" {
+		log.Infow("DRY RUN: Did not check the bastion's IP, SSH key, connectivity, or host key, because finding its IP probes the bastion and records the address it finds",
+			"bloc", cfg.Name)
+
+		return nil
+	}
+
+	args, err := bastionCheckArgs(cfg, cfg.BastionIP)
+	if err != nil || args == nil {
+		return err
+	}
+
+	log.Infow("DRY RUN: Did not check SSH connectivity or the bastion's host key, because that connects to the bastion",
+		"bloc", cfg.Name, "user", cfg.Bastion.SSHUser, "host", cfg.BastionIP)
+
+	return nil
+}
+
+// bastionCheckArgs makes the checks of the connectivity check that only
+// read, and returns the ssh arguments that check the bastion at bastionIP.
+// Without a bloc SSH key it warns and returns no arguments, because the
+// check is skipped then. It fails on an SSH user, bastion IP, or key path
+// that isn't safe to pass to ssh, and on a known_hosts path that ssh would
+// read as a different file.
+func bastionCheckArgs(cfg *config.Config, bastionIP string) ([]string, error) {
+	keyPath, err := findSSHKey(cfg.Name, cfg)
+	if err != nil {
+		initLogger().Warnw("Could not find SSH key for bastion, skipping connectivity check", "error", err)
+
+		return nil, nil
+	}
+
+	err = security.ValidateInput(cfg.Bastion.SSHUser, validUserPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSH user: %w", err)
+	}
+
+	err = security.ValidateInput(bastionIP, validDNSPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid bastion IP: %w", err)
+	}
+
+	err = security.ValidateInput(keyPath, validFilePathPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key path: %w", err)
+	}
+
+	// The host key options go first, because ssh keeps the first value it
+	// sees for an option.
+	args, err := bastionssh.BastionHostKeyOptions()
+	if err != nil {
+		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
+	}
+
+	return append(args,
+		"-i", keyPath,
+		"-o", "ConnectTimeout=30",
+		"-o", "LogLevel=ERROR",
+		"-o", "IdentitiesOnly=yes",
+		"-o", "IdentityAgent=none",
+		fmt.Sprintf("%s@%s", cfg.Bastion.SSHUser, bastionIP),
+		"echo", "connected"), nil
 }
 
 // resolveBastionIPForCheck resolves the bastion IP for connectivity checking.
