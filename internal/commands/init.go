@@ -1103,6 +1103,17 @@ func (m bastionInitMode) text() bastionModeText {
 	}
 }
 
+// doneLine is the line printed and logged when a mode finishes. A dry run
+// changed nothing, so its line says the dry run finished rather than that
+// the work it skipped was done.
+func (t bastionModeText) doneLine(dryRun bool) string {
+	if dryRun {
+		return "Dry run of the " + t.failed + " finished without changing anything"
+	}
+
+	return t.done
+}
+
 // failedHeading is the failure name with a capital first letter, for the line
 // printed to the operator. The error itself keeps the lower-case form.
 func (t bastionModeText) failedHeading() string {
@@ -1153,11 +1164,13 @@ func runBastionInit(ctx context.Context, cfg *config.Config, mode bastionInitMod
 		return fmt.Errorf("%s failed: %w", text.failed, err)
 	}
 
+	done := text.doneLine(params.dryRun)
+
 	if mode != bastionModeFull {
-		_, _ = fmt.Fprintf(os.Stdout, "✅ %s\n\n", text.done)
+		_, _ = fmt.Fprintf(os.Stdout, "✅ %s\n\n", done)
 	}
 
-	log.Info(text.done)
+	log.Info(done)
 
 	return nil
 }

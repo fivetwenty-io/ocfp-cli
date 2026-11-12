@@ -33,3 +33,18 @@ func TestInitBastionRealRunChecksConnectivity(t *testing.T) {
 	_, err := os.Stat(logPath)
 	assert.NoError(t, err, "a real run must run the ssh check")
 }
+
+// A dry run's closing line says the dry run finished, not that the work it
+// skipped was done. A real run's line is unchanged.
+func TestBastionInitDoneLine(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []bastionInitMode{
+		bastionModeFull, bastionModeGenesis, bastionModeOCFP, bastionModeConfig, bastionModeVaultBootUnit,
+	} {
+		text := mode.text()
+		assert.Equal(t, text.done, text.doneLine(false), mode.String())
+		assert.Equal(t, "Dry run of the "+text.failed+" finished without changing anything",
+			text.doneLine(true), mode.String())
+	}
+}

@@ -271,6 +271,12 @@ func (le *LocalExecutor) executeLocalPhases(ctx context.Context, manager *Manage
 
 	manager.progress.CompletedSteps = len(phases)
 
+	if manager.isDryRun() {
+		le.log.Info(dryRunFinishedMessage)
+
+		return nil
+	}
+
 	le.log.Info("Local bastion initialization completed successfully")
 
 	return nil
