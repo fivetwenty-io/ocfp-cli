@@ -1,7 +1,6 @@
 package jobexec
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 // The files in a spool directory. A run writes every record of its stream to
@@ -259,29 +260,10 @@ func (s Spool) readJSON(name string, v any) (bool, error) {
 		return false, fmt.Errorf("spool: %s is larger than %d bytes", name, maxSpoolJSON)
 	}
 
-	err = decodeStrict(data, v)
+	err = strictjson.Decode(data, v)
 	if err != nil {
-		return false, fmt.Errorf("spool: %s does not decode: %s", name, quote(err.Error()))
+		return false, fmt.Errorf("spool: %s: %w", name, err)
 	}
 
 	return true, nil
-}
-
-// decodeStrict decodes exactly one JSON value into v, refusing unknown fields
-// and anything after the value.
-func decodeStrict(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-
-	err := dec.Decode(v)
-	if err != nil {
-		return err
-	}
-
-	_, err = dec.Token()
-	if !errors.Is(err, io.EOF) {
-		return errors.New("data after the JSON value")
-	}
-
-	return nil
 }

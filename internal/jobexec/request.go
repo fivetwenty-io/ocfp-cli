@@ -4,16 +4,14 @@
 package jobexec
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 // RequestFormatV1 is the only signed job request format this package reads.
@@ -70,49 +68,15 @@ func RequestSigningBytes(payload []byte) []byte {
 	return append(msg, payload...)
 }
 
-// requestFields lists the JSON names of Request's fields.
-func requestFields() []string {
-	return []string{
-		"wireContract", "jobId", "verb", "installationId", "instanceId",
-		"epoch", "env", "interactive", "issuedAt",
-	}
-}
-
-// decodeRequest decodes a job request payload, refusing anything that two
-// JSON readers could read differently. The payload must be valid UTF-8 and
-// hold exactly one JSON object with nothing after it but white space. No key
-// may repeat within an object, and no key may equal a field's name only when
-// case is ignored, because the standard decoder keeps the last of two equal
-// keys and matches names without regard to case. No string may hold U+FFFD,
-// because the standard decoder writes that character in place of a bad
-// escape, and checkStrings says why that refuses a real U+FFFD too. It
-// returns the top-level keys that name no field, so the caller can refuse
-// them once it has checked the wire contract.
+// decodeRequest decodes a job request payload with strictjson, which refuses
+// anything that two JSON readers could read differently, and then refuses a
+// string that holds U+FFFD, which checkStrings explains. It returns the
+// top-level keys that name no field, so the caller can refuse them once it
+// has checked the wire contract.
 func decodeRequest(payload []byte) (Request, []string, error) {
-	if !utf8.Valid(payload) {
-		return Request{}, nil, errors.New("not valid UTF-8")
-	}
-
-	trimmed := bytes.TrimLeft(payload, " \t\r\n")
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return Request{}, nil, errors.New("not a JSON object")
-	}
-
 	var req Request
 
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-
-	err := dec.Decode(&req)
-	if err != nil {
-		return Request{}, nil, errors.New("does not decode: " + quote(err.Error()))
-	}
-
-	_, err = dec.Token()
-	if !errors.Is(err, io.EOF) {
-		return Request{}, nil, errors.New("data after the JSON object")
-	}
-
-	unknown, err := checkRequestKeys(trimmed)
+	unknown, err := strictjson.DecodeWithUnknown(payload, &req)
 	if err != nil {
 		return Request{}, nil, err
 	}
@@ -123,130 +87,6 @@ func decodeRequest(payload []byte) (Request, []string, error) {
 	}
 
 	return req, unknown, nil
-}
-
-// checkRequestKeys walks the payload's keys. It refuses a key that repeats
-// within any object, and a top-level key that equals a field's name only when
-// case is ignored, and it returns the top-level keys that name no field.
-func checkRequestKeys(data []byte) ([]string, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, errors.New("does not decode: " + quote(err.Error()))
-	}
-
-	if tok != json.Delim('{') {
-		return nil, errors.New("not a JSON object")
-	}
-
-	var unknown []string
-
-	seen := map[string]bool{}
-
-	for dec.More() {
-		key, err := nextKey(dec, seen, "")
-		if err != nil {
-			return nil, err
-		}
-
-		known, err := matchField(key)
-		if err != nil {
-			return nil, err
-		}
-
-		if !known {
-			unknown = append(unknown, key)
-		}
-
-		err = walkValue(dec, key+".")
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return unknown, nil
-}
-
-// nextKey reads the next key of an object and refuses it when seen already
-// holds it.
-func nextKey(dec *json.Decoder, seen map[string]bool, path string) (string, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return "", errors.New("does not decode: " + quote(err.Error()))
-	}
-
-	key, ok := tok.(string)
-	if !ok {
-		return "", errors.New("an object key is not a string")
-	}
-
-	if seen[key] {
-		return "", fmt.Errorf("key %s repeats", quote(path+key))
-	}
-
-	seen[key] = true
-
-	return key, nil
-}
-
-// matchField reports whether key names a field of Request. It refuses a key
-// that equals a field's name only when case is ignored.
-func matchField(key string) (bool, error) {
-	for _, name := range requestFields() {
-		if name == key {
-			return true, nil
-		}
-
-		if strings.EqualFold(name, key) {
-			return false, fmt.Errorf("key %s differs from the field %q only in case", quote(key), name)
-		}
-	}
-
-	return false, nil
-}
-
-// walkValue reads one value and refuses a key that repeats within any object
-// inside it.
-func walkValue(dec *json.Decoder, path string) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return errors.New("does not decode: " + quote(err.Error()))
-	}
-
-	switch tok {
-	case json.Delim('{'):
-		seen := map[string]bool{}
-
-		for dec.More() {
-			key, err := nextKey(dec, seen, path)
-			if err != nil {
-				return err
-			}
-
-			err = walkValue(dec, path+key+".")
-			if err != nil {
-				return err
-			}
-		}
-	case json.Delim('['):
-		for dec.More() {
-			err := walkValue(dec, path+"[].")
-			if err != nil {
-				return err
-			}
-		}
-	default:
-		return nil
-	}
-
-	_, err = dec.Token()
-	if err != nil {
-		return errors.New("does not decode: " + quote(err.Error()))
-	}
-
-	return nil
 }
 
 // checkStrings refuses a request whose strings hold U+FFFD, which the
