@@ -225,6 +225,24 @@ func (m *Manager) logDryRun(would string, keysAndValues ...any) {
 	m.log.Infow("DRY RUN: Would "+would, keysAndValues...)
 }
 
+// dryRunFinishedMessage closes a dry run, which changes nothing and so must
+// not claim that the work it skipped was done.
+const dryRunFinishedMessage = "DRY RUN: Finished without changing anything"
+
+// logFinished logs the closing line of a run. A real run logs done with its
+// fields, or nothing when done is empty. A dry run logs that it finished.
+func (m *Manager) logFinished(done string, keysAndValues ...any) {
+	if m.isDryRun() {
+		m.log.Info(dryRunFinishedMessage)
+
+		return
+	}
+
+	if done != "" {
+		m.log.Infow(done, keysAndValues...)
+	}
+}
+
 // runModeOrPhases runs the narrow mode the options ask for, or else the full
 // phase list unless the bastion is already provisioned. A narrow mode runs
 // before the provisioned check because a provisioned bastion is exactly the
@@ -312,7 +330,7 @@ func (m *Manager) runOCFPOnlyMode(ctx context.Context) error {
 		return fmt.Errorf("OCFP CLI setup failed: %w", err)
 	}
 
-	m.log.Info("OCFP CLI installation/update completed successfully")
+	m.logFinished("OCFP CLI installation/update completed successfully")
 
 	return nil
 }
@@ -326,7 +344,7 @@ func (m *Manager) runConfigOnlyMode(ctx context.Context) error {
 		return fmt.Errorf("config sync failed: %w", err)
 	}
 
-	m.log.Info("Configuration sync completed successfully")
+	m.logFinished("Configuration sync completed successfully")
 
 	return nil
 }
@@ -342,7 +360,7 @@ func (m *Manager) runVaultBootUnitOnlyMode(ctx context.Context) error {
 		return fmt.Errorf("vault boot unit install failed: %w", err)
 	}
 
-	m.log.Info("Inception vault boot unit installed and enabled")
+	m.logFinished("Inception vault boot unit installed and enabled")
 
 	return nil
 }
@@ -372,19 +390,26 @@ func (m *Manager) runGenesisOnlyMode(ctx context.Context) error {
 	}
 
 	// Create Genesis configuration file
-	return m.createConfigFiles(ctx)
+	err := m.createConfigFiles(ctx)
+	if err != nil {
+		return err
+	}
+
+	m.logFinished("")
+
+	return nil
 }
 
 // upgradeGenesisFromSource performs Genesis upgrade from source repository.
 func (m *Manager) upgradeGenesisFromSource(ctx context.Context, genesisConfig config.Genesis) error {
-	m.log.Info("Upgrading Genesis from source")
-
 	version, branch, repo := m.extractGenesisConfig(genesisConfig)
 
 	if m.skipForDryRun("build and install Genesis from source on the bastion",
 		"repo", repo, "branch", branch, "version", version) {
 		return nil
 	}
+
+	m.log.Info("Upgrading Genesis from source")
 
 	upgradeScript := m.buildGenesisUpgradeScript(version, branch, repo)
 
@@ -478,11 +503,11 @@ log_success "Genesis upgraded successfully to version %s"`, repo, branch, repo, 
 
 // upgradeGenesisBinary performs Genesis upgrade from binary download.
 func (m *Manager) upgradeGenesisBinary(ctx context.Context, override config.ToolOverride) error {
-	m.log.Info("Upgrading Genesis from binary download")
-
 	if m.skipForDryRun("download and install Genesis on the bastion", "url", override.URL) {
 		return nil
 	}
+
+	m.log.Info("Upgrading Genesis from binary download")
 
 	upgradeScript := fmt.Sprintf(`set -e
 
@@ -1076,7 +1101,7 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 		m.reporter.ReportFinalSummary(true, duration, len(phases), len(m.progress.Errors))
 	}
 
-	m.log.Infow("Bastion initialization completed successfully",
+	m.logFinished("Bastion initialization completed successfully",
 		"duration", duration.String(),
 		"total_phases", len(phases),
 		"errors_encountered", len(m.progress.Errors))

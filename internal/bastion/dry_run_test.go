@@ -647,3 +647,44 @@ func TestRealUploadReportsTheRemoteCheckFirst(t *testing.T) {
 	assert.Contains(t, out.String(), "Checking remote binary")
 	assert.Empty(t, client.recorded())
 }
+
+// A dry run changes nothing, so it must not log that the work was done or
+// is under way. It says that the dry run finished instead.
+func TestDryRunNeverClaimsTheWorkIsDone(t *testing.T) {
+	tests := []struct {
+		name string
+		opts ProvisioningOptions
+	}{
+		{name: "--ocfp", opts: ProvisioningOptions{OCFPOnly: true}},
+		{name: "--genesis", opts: ProvisioningOptions{GenesisOnly: true}},
+		{name: "--config", opts: ProvisioningOptions{ConfigOnly: true}},
+		{name: "--vault-boot-unit", opts: ProvisioningOptions{VaultBootUnitOnly: true}},
+		{name: "the full list", opts: ProvisioningOptions{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+
+			opts := tc.opts
+			opts.DryRun = true
+
+			m, _, logs := dryRunManager(t, cfg, &opts, &unconnectedSSHClient{})
+			require.NoError(t, m.syncAndRun(context.Background()))
+
+			var messages []string
+			for _, entry := range logs.All() {
+				messages = append(messages, entry.Message)
+			}
+
+			for _, message := range messages {
+				assert.NotContains(t, message, "completed successfully")
+				assert.NotContains(t, message, "installed and enabled")
+				assert.NotContains(t, message, "Upgrading Genesis")
+			}
+
+			assert.Contains(t, messages, "DRY RUN: Finished without changing anything")
+		})
+	}
+}
