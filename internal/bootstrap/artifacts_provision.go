@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 )
@@ -49,41 +49,41 @@ type artifactsProvisionConn struct {
 }
 
 // artifactsSSHArgs builds the ssh argument vector to run remoteCmd on the
-// artifacts VM by hopping through the bastion. Host-key checking is disabled
-// against an ephemeral known-hosts file because both the bastion and the
-// artifacts VM are recreated on each bootstrap (their host keys churn), which
-// would otherwise trip accept-new.
+// artifacts VM by hopping through the bastion. The artifacts VM is recreated
+// on each bootstrap and its host key churns, so the final hop to it keeps the
+// relaxed host-key options of every host behind the bastion.
 //
 // The bastion hop is expressed as an explicit ProxyCommand rather than
-// `-o ProxyJump=…` because OpenSSH's implicit ProxyJump spawns an inner ssh
-// that does NOT inherit the outer command-line `-o` options — so the jump hop
-// would fall back to default strict host-key checking against the operator's
-// real ~/.ssh/known_hosts and fail the moment a rebuilt bastion presents a new
-// host key. The ProxyCommand re-passes the same relaxed host-key flags to the
-// jump hop so a churned bastion key never blocks provisioning.
+// `-o ProxyJump=…` because options given with -o apply only to the
+// destination: the inner ssh ProxyJump spawns takes its host-key checking
+// from the user's ssh config instead. The ProxyCommand states the bastion's
+// checking itself, so the bastion's key is always checked against the real
+// known_hosts however the user's ssh config is set up.
 func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 	proxyCommand := BastionProxyCommand(c.KeyPath, c.User, c.BastionHost, true)
 
-	return []string{
-		"-i", c.KeyPath,
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=" + os.DevNull,
+	args := []string{"-i", c.KeyPath, "-o", "BatchMode=yes"}
+	args = append(args, ssh.InternalHostKeyOptions()...)
+
+	return append(args,
 		"-o", "IdentitiesOnly=yes",
-		"-o", "ConnectTimeout=" + artifactsSSHConnectTimeout,
-		"-o", "ProxyCommand=" + proxyCommand,
-		c.User + "@" + c.ArtifactsHost,
+		"-o", "ConnectTimeout="+artifactsSSHConnectTimeout,
+		"-o", "ProxyCommand="+proxyCommand,
+		c.User+"@"+c.ArtifactsHost,
 		remoteCmd,
-	}
+	)
 }
 
 // BastionProxyCommand returns the ssh ProxyCommand that reaches a host behind
-// the bloc bastion. It relays through the bastion with -W and re-passes the
-// relaxed host-key options to the jump hop, which `-o ProxyJump=…` would not
-// do (see artifactsSSHArgs). The jump hop authenticates with the same key and
-// login user as the final hop, and keyPath, user, and bastionHost are
-// interpolated into a string ssh runs through a shell, so callers must pass
-// validated values.
+// the bloc bastion. It relays through the bastion with -W and gives the jump
+// hop the bastion's own host-key options, accept-new against the real
+// known_hosts, which `-o ProxyJump=…` would leave to the user's ssh config
+// (see artifactsSSHArgs). A bastion seen for the first time is recorded, and
+// one whose key has changed is refused. The jump hop authenticates with the
+// same key and login user as the final hop, and keyPath, user, and
+// bastionHost are interpolated into a string ssh runs through a shell, so
+// callers must pass validated values. The inner ssh reads the user's ssh
+// config as usual, so settings such as a port for the bastion still apply.
 //
 // An empty keyPath leaves authentication to the operator's own ssh setup.
 // The jump hop then drops -i and IdentitiesOnly, so the agent, the default
@@ -93,6 +93,10 @@ func artifactsSSHArgs(c artifactsProvisionConn, remoteCmd string) []string {
 // password prompt can reach a person but never stalls a script. With a key
 // the jump hop is always in batch mode and batchMode is ignored.
 func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) string {
+	// ssh expands %-tokens in a ProxyCommand before the shell sees it, so a
+	// literal percent sign in the known_hosts path is doubled.
+	hostKey := strings.ReplaceAll(ssh.ShellJoin(ssh.BastionHostKeyOptions()), "%", "%%")
+
 	if keyPath == "" {
 		batch := ""
 		if batchMode {
@@ -100,14 +104,14 @@ func BastionProxyCommand(keyPath, user, bastionHost string, batchMode bool) stri
 		}
 
 		return fmt.Sprintf(
-			"ssh %s-o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-			batch, os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
+			"ssh %s%s -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+			batch, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
 		)
 	}
 
 	return fmt.Sprintf(
-		"ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=%s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
-		keyPath, os.DevNull, artifactsSSHConnectTimeout, user, bastionHost,
+		"ssh -i %s -o BatchMode=yes %s -o IdentitiesOnly=yes -o LogLevel=ERROR -o ConnectTimeout=%s -W %%h:%%p %s@%s",
+		keyPath, hostKey, artifactsSSHConnectTimeout, user, bastionHost,
 	)
 }
 
