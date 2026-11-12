@@ -11,6 +11,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress/progresstest"
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 type fixedClock struct{}
@@ -252,10 +253,7 @@ type exitShape struct {
 func decodeStrict(t *testing.T, b []byte, v any) {
 	t.Helper()
 
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(v); err != nil {
+	if err := strictjson.Decode(b, v); err != nil {
 		t.Fatal(err)
 	}
 }

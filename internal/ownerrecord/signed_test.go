@@ -12,6 +12,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord/ownerrecordtest"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 func liveRecord() ownerrecord.Record {
@@ -594,4 +595,155 @@ func FuzzOpen(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestOwnerRecordUsesTheSharedHelper replays the fixtures and payloads
+// built from them through Parse, Open, and HandoverRefusal. The was column
+// holds the code each row got from the decoder this package carried before
+// strictjson, and want holds the code it gets now. The two differ only where
+// the shared helper refuses more, and an empty code means the row opens.
+func TestOwnerRecordUsesTheSharedHelper(t *testing.T) {
+	t.Parallel()
+
+	const opens progress.Code = ""
+
+	other := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+
+	good := seal(t, liveRecord()).Payload
+
+	handover := liveRecord()
+	handover.Mode = ownerrecord.ModeHandover
+	handover.Relocation = &ownerrecord.Relocation{ID: "reloc-fixture-01", TargetInstanceID: "instance-fixture-b"}
+	handoverPayload, err := json.Marshal(handover)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replace := func(payload []byte, old, repl string) []byte {
+		t.Helper()
+
+		if bytes.Count(payload, []byte(old)) != 1 {
+			t.Fatalf("%q is not in %s exactly once", old, payload)
+		}
+
+		return bytes.Replace(payload, []byte(old), []byte(repl), 1)
+	}
+
+	t.Run("fixtures", func(t *testing.T) {
+		t.Parallel()
+
+		for name, want := range map[string]progress.Code{
+			"record-v1.json":               opens,
+			"record-newer-fields-v1.json":  opens,
+			"record-handover-v1.json":      opens,
+			"record-bad-signature-v1.json": progress.CodeRequestUnsigned,
+		} {
+			sf, err := ownerrecord.Parse(ownerrecordtest.Fixture(name))
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+
+			_, err = ownerrecord.Open(sf)
+			wantOpenCode(t, name, err, want)
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		payload   []byte
+		key       ed25519.PrivateKey
+		was, want progress.Code
+	}{
+		{"invalid UTF-8 in the installation id", replace(good, `"inst-fixture-01"`, "\"inst-\xff-01\""), nil, opens, progress.CodeJobRequestInvalid},
+		{"invalid UTF-8 in a newer field", replace(good, `{"installationId"`, "{\"futureField\":\"\xff\",\"installationId\""), nil, opens, progress.CodeJobRequestInvalid},
+		{"invalid UTF-8 in a newer key", replace(good, `{"installationId"`, "{\"\xff\":1,\"installationId\""), nil, opens, progress.CodeJobRequestInvalid},
+		// A lone surrogate is valid UTF-8 and still decodes to U+FFFD. The
+		// shared helper does not refuse it, so the row still opens.
+		{"lone surrogate in the installation id", replace(good, `"inst-fixture-01"`, `"inst-\ud800-01"`), nil, opens, opens},
+		{"case variant inside a newer field", replace(good, `{"installationId"`, `{"futureField":{"MODE":1},"installationId"`), nil, opens, opens},
+		{"case variant in the relocation", replace(handoverPayload, `{"id"`, `{"ID":"x","id"`), nil, progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		{"repeated key in a newer field", replace(good, `{"installationId"`, `{"futureField":[{"a":1,"a":2}],"installationId"`), nil, progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		{"trailing data", append(bytes.Clone(good), 'x'), nil, progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		{"newer field under another key", replace(good, `{"installationId"`, `{"futureField":1,"installationId"`), other, progress.CodeRequestUnsigned, progress.CodeRequestUnsigned},
+		{"repeated key under another key", replace(good, `{"installationId"`, `{"mode":"live","installationId"`), other, progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		// The UTF-8 check now runs before the payload is decoded, and the
+		// payload is decoded before its signature is checked.
+		{"invalid UTF-8 under another key", replace(good, `"inst-fixture-01"`, "\"inst-\xff-01\""), other, progress.CodeRequestUnsigned, progress.CodeJobRequestInvalid},
+		// HandoverRefusal answers a hand-over that its new owner did not
+		// sign. It decodes with the same helper as Open.
+		{"handover under another key", handoverPayload, other, progress.CodeOwnerHandover, progress.CodeOwnerHandover},
+		{"handover with invalid UTF-8 under another key", replace(handoverPayload, `"inst-fixture-01"`, "\"inst-\xff-01\""), other, progress.CodeOwnerHandover, progress.CodeJobRequestInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			key := ownerrecordtest.TestKey()
+			if tc.key != nil {
+				key = tc.key
+			}
+
+			sf := ownerrecord.Signed{
+				Format:    ownerrecord.FormatV1,
+				Payload:   tc.payload,
+				Signature: ed25519.Sign(key, ownerrecord.SigningBytes(tc.payload)),
+			}
+
+			_, err := ownerrecord.Open(sf)
+			wantOpenCode(t, "Open", ownerrecord.HandoverRefusal(sf, err), tc.want)
+
+			// A payload that the shared helper refuses is refused before
+			// its signature is checked.
+			if _, herr := strictjson.DecodeWithUnknown(tc.payload, new(ownerrecord.Record)); herr != nil {
+				wantOpenCode(t, "Open", err, progress.CodeJobRequestInvalid)
+			}
+		})
+	}
+
+	doc, err := json.Marshal(seal(t, liveRecord()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		doc       []byte
+		was, want progress.Code
+	}{
+		{"signed form", doc, opens, opens},
+		{"unknown field", replace(doc, `{"format"`, `{"extra":1,"format"`), progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		{"invalid UTF-8 in an unknown key", replace(doc, `{"format"`, "{\"\xff\":1,\"format\""), progress.CodeJobRequestInvalid, progress.CodeJobRequestInvalid},
+		{"repeated format", replace(doc, `{"format"`, `{"format":2,"format"`), opens, progress.CodeJobRequestInvalid},
+		{"repeated payload", replace(doc, `{"format"`, `{"payload":"","format"`), opens, progress.CodeJobRequestInvalid},
+		{"format in another case", replace(doc, `{"format"`, `{"Format"`), opens, progress.CodeJobRequestInvalid},
+	} {
+		t.Run("parse "+tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ownerrecord.Parse(tc.doc)
+			wantOpenCode(t, "Parse", err, tc.want)
+
+			if herr := strictjson.Decode(tc.doc, new(ownerrecord.Signed)); herr != nil {
+				wantOpenCode(t, "Parse", err, progress.CodeJobRequestInvalid)
+			}
+		})
+	}
+}
+
+// wantOpenCode checks that err is nil when code is empty, and otherwise that
+// it is a refusal with code.
+func wantOpenCode(t *testing.T, what string, err error, code progress.Code) {
+	t.Helper()
+
+	if code == "" {
+		if err != nil {
+			t.Fatalf("%s: got %v, want no error", what, err)
+		}
+
+		return
+	}
+
+	r, ok := progress.AsRefusal(err)
+	if !ok || r.Code != code {
+		t.Fatalf("%s: got %v, want a %s refusal", what, err, code)
+	}
 }

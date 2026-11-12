@@ -1,14 +1,9 @@
 package ownerrecord
 
 import (
-	"bytes"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
-	"strings"
-	"time"
 )
 
 // smallOrder lists the encodings, with the sign bit cleared, of the Edwards25519
@@ -86,134 +81,4 @@ func belowP(y [ed25519.PublicKeySize]byte) bool {
 	}
 
 	return y[0] < 0xed
-}
-
-// fieldSet holds the JSON names of a struct's fields and, for fields that are
-// themselves structs, their own names.
-type fieldSet struct {
-	names    []string
-	children map[string]*fieldSet
-}
-
-var recordFields = fieldsOf(reflect.TypeFor[Record]())
-
-func fieldsOf(t reflect.Type) *fieldSet {
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-
-	fs := &fieldSet{children: map[string]*fieldSet{}}
-
-	for i := range t.NumField() {
-		f := t.Field(i)
-
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" || name == "-" {
-			continue
-		}
-
-		fs.names = append(fs.names, name)
-
-		ft := f.Type
-		for ft.Kind() == reflect.Pointer {
-			ft = ft.Elem()
-		}
-
-		if ft.Kind() == reflect.Struct && ft != reflect.TypeFor[time.Time]() {
-			fs.children[name] = fieldsOf(ft)
-		}
-	}
-
-	return fs
-}
-
-// checkKeys refuses a JSON document that repeats a key within one object, or
-// that holds a key equal to a known field's name only when case is ignored.
-// The standard decoder keeps the last of two equal keys and matches names
-// without regard to case, so either would let two readers see different
-// records in the same signed bytes.
-func checkKeys(data []byte, fs *fieldSet) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-
-	return walk(dec, fs, "")
-}
-
-func walk(dec *json.Decoder, fs *fieldSet, path string) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-
-	switch tok {
-	case json.Delim('{'):
-		seen := map[string]bool{}
-
-		for dec.More() {
-			kt, err := dec.Token()
-			if err != nil {
-				return err
-			}
-
-			key, _ := kt.(string)
-			if seen[key] {
-				return fmt.Errorf("key %q repeats in %s", path+key, objectName(path))
-			}
-
-			seen[key] = true
-
-			child, err := fs.match(key, path)
-			if err != nil {
-				return err
-			}
-
-			if err := walk(dec, child, path+key+"."); err != nil {
-				return err
-			}
-		}
-
-		_, err := dec.Token()
-
-		return err
-	case json.Delim('['):
-		for dec.More() {
-			if err := walk(dec, nil, path+"[]."); err != nil {
-				return err
-			}
-		}
-
-		_, err := dec.Token()
-
-		return err
-	}
-
-	return nil
-}
-
-// match returns the field set for key's value, or an error when key equals a
-// known name only when case is ignored.
-func (fs *fieldSet) match(key, path string) (*fieldSet, error) {
-	if fs == nil {
-		return nil, nil
-	}
-
-	for _, n := range fs.names {
-		if n == key {
-			return fs.children[n], nil
-		}
-
-		if strings.EqualFold(n, key) {
-			return nil, fmt.Errorf("key %q differs from the field %q only in case", path+key, path+n)
-		}
-	}
-
-	return nil, nil
-}
-
-func objectName(path string) string {
-	if path == "" {
-		return "the record"
-	}
-
-	return strings.TrimSuffix(path, ".")
 }

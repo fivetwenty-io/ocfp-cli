@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"unicode/utf8"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 // FormatV1 is the only signed owner record format this package reads or
@@ -100,8 +100,9 @@ func seal(r Record, sign func(msg []byte) ([]byte, error), open func(Signed) (Re
 //
 // Open refuses, with a *progress.Refusal, a format other than FormatV1
 // (JOB_REQUEST_INVALID), a signature of the wrong length (REQUEST_UNSIGNED), a
-// payload that is not exactly one JSON object or that repeats a key or spells
-// a field's name in another case (JOB_REQUEST_INVALID), an owner public key
+// payload that is not valid UTF-8, that is not exactly one JSON object, or
+// that repeats a key or spells a field's name in another case
+// (JOB_REQUEST_INVALID), an owner public key
 // that is not a canonical Ed25519 key of large order (JOB_REQUEST_INVALID), a
 // signature that does not verify over SigningBytes(sf.Payload) with that key
 // (REQUEST_UNSIGNED), a record whose fields are not valid (JOB_REQUEST_INVALID),
@@ -206,19 +207,19 @@ func HandoverRefusal(sf Signed, openErr error) error {
 }
 
 // decodePayload decodes a record payload, refusing anything that two JSON
-// readers could read differently.
+// readers could read differently. Fields that a newer writer added are
+// decoded past, because the signature covers them and nothing here reads
+// them.
 func decodePayload(payload []byte, r *Record) error {
-	if err := decodeObject(payload, r, false); err != nil {
-		return err
-	}
+	_, err := strictjson.DecodeWithUnknown(payload, r)
 
-	return checkKeys(payload, recordFields)
+	return err
 }
 
 // Parse decodes the stored or sent form of a signed owner record. It refuses,
 // with a *progress.Refusal, anything but exactly one JSON object with a
-// format, and any field it does not know. Parse does not verify the record;
-// call Open for that.
+// format, any field it does not know, and anything else strictjson.Decode
+// refuses. Parse does not verify the record; call Open for that.
 func Parse(data []byte) (Signed, error) {
 	var doc struct {
 		Format    *int   `json:"format"`
@@ -226,7 +227,7 @@ func Parse(data []byte) (Signed, error) {
 		Signature []byte `json:"signature"`
 	}
 
-	if err := decodeObject(data, &doc, true); err != nil {
+	if err := strictjson.Decode(data, &doc); err != nil {
 		return Signed{}, invalid("signed owner record: %v", err)
 	}
 
@@ -235,30 +236,6 @@ func Parse(data []byte) (Signed, error) {
 	}
 
 	return Signed{Format: *doc.Format, Payload: doc.Payload, Signature: doc.Signature}, nil
-}
-
-// decodeObject decodes data, which must hold exactly one JSON object and
-// nothing after it but white space, into v.
-func decodeObject(data []byte, v any, strict bool) error {
-	trimmed := bytes.TrimLeft(data, " \t\r\n")
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return errors.New("not a JSON object")
-	}
-
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-	if strict {
-		dec.DisallowUnknownFields()
-	}
-
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("data after the JSON object")
-	}
-
-	return nil
 }
 
 func (r Record) validate() error {
@@ -283,6 +260,9 @@ func (r Record) validate() error {
 		return fmt.Errorf("owner %w", err)
 	}
 
+	// A payload that Open reads has passed the UTF-8 check already. These
+	// checks are for Seal, whose record comes from Go strings that may hold
+	// any bytes, and which json.Marshal would encode as U+FFFD.
 	for name, v := range map[string]string{
 		"installation id":   r.InstallationID,
 		"owner instance id": r.OwnerInstanceID,

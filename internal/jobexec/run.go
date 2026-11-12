@@ -13,6 +13,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
@@ -228,9 +229,11 @@ func readRequest(r io.Reader) (SignedRequest, error) {
 
 	var sr SignedRequest
 
-	err := decodeStrict(line, &sr)
+	// strictjson escapes and bounds the input it quotes, so its message
+	// is passed on as it is.
+	err := strictjson.Decode(line, &sr)
 	if err != nil {
-		return SignedRequest{}, invalid("job request does not decode: " + quote(err.Error()))
+		return SignedRequest{}, invalid("job request line: " + err.Error())
 	}
 
 	return sr, nil

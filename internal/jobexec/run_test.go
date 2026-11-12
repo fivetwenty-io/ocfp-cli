@@ -19,6 +19,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress/progresstest"
+	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
@@ -145,10 +146,7 @@ func records(t *testing.T, stream []byte) []progress.Record {
 
 		var r progress.Record
 
-		dec := json.NewDecoder(bytes.NewReader(line))
-		dec.DisallowUnknownFields()
-
-		if err := dec.Decode(&r); err != nil {
+		if err := strictjson.Decode(line, &r); err != nil {
 			t.Fatalf("stream line %q: %v", line, err)
 		}
 
@@ -173,10 +171,7 @@ func bodyOf[T any](t *testing.T, r progress.Record) T {
 
 	var v T
 
-	dec := json.NewDecoder(bytes.NewReader(r.Body))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&v); err != nil {
+	if err := strictjson.Decode(r.Body, &v); err != nil {
 		t.Fatalf("%s body %s: %v", r.Kind, r.Body, err)
 	}
 
@@ -258,10 +253,7 @@ func fixturePlaceholders(t *testing.T, r progress.Record) progress.Record {
 
 		var out noopOutput
 
-		dec := json.NewDecoder(strings.NewReader(l.Line))
-		dec.DisallowUnknownFields()
-
-		if err := dec.Decode(&out); err != nil {
+		if err := strictjson.Decode([]byte(l.Line), &out); err != nil {
 			t.Fatalf("log line %q: %v", l.Line, err)
 		}
 
@@ -332,10 +324,7 @@ func TestRunNoopStreams(t *testing.T) {
 func decodeStrictFile(t *testing.T, path string, v any) {
 	t.Helper()
 
-	dec := json.NewDecoder(bytes.NewReader(readFile(t, path)))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(v); err != nil {
+	if err := strictjson.Decode(readFile(t, path), v); err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
 }
@@ -361,10 +350,7 @@ func wantExitShape(t *testing.T, raw []byte, code int) {
 
 	var e Exit
 
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&e); err != nil {
+	if err := strictjson.Decode(raw, &e); err != nil {
 		t.Fatal(err)
 	}
 
