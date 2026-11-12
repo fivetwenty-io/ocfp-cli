@@ -3,6 +3,7 @@ package bastion
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/deployments"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/provision"
@@ -494,4 +496,112 @@ func TestDryRunFullPhaseListWithoutProgressOutput(t *testing.T) {
 
 	require.NoError(t, m.syncAndRun(context.Background()))
 	assert.Empty(t, client.recorded())
+}
+
+// seedCheckpoints writes the resume checkpoint an earlier real run of the
+// bloc left after it failed, and a stale one from another bloc that a
+// finished real run would clean up. It returns the files and their bytes.
+func seedCheckpoints(t *testing.T, cfg *config.Config) map[string]string {
+	t.Helper()
+
+	dir := checkpointsDir()
+	seeds := map[string]CheckpointData{
+		"bastion-" + cfg.Name + "-" + cfg.Provider + ".json": {
+			BlocName:        cfg.Name,
+			Provider:        cfg.Provider,
+			StartTime:       time.Now().Add(-time.Hour),
+			LastUpdate:      time.Now().Add(-time.Minute),
+			TotalSteps:      30,
+			CompletedSteps:  2,
+			CurrentStep:     "cloudinit_dropins",
+			CompletedPhases: map[string]bool{"ssh_agent_forwarding": true, "bastion_keys": true},
+			FailedPhases:    map[string]string{"cloudinit_dropins": "the drop-in sync failed"},
+			Version:         "1.0",
+		},
+		"bastion-oldbloc-pve.json": {
+			BlocName:   "oldbloc",
+			Provider:   "pve",
+			StartTime:  time.Now().Add(-30 * 24 * time.Hour),
+			LastUpdate: time.Now().Add(-30 * 24 * time.Hour),
+			Version:    "1.0",
+		},
+	}
+
+	files := make(map[string]string, len(seeds))
+
+	for name, seed := range seeds {
+		data, err := json.MarshalIndent(seed, "", "  ")
+		require.NoError(t, err)
+		writeDryRunFile(t, filepath.Join(dir, name), string(data))
+		files[name] = string(data)
+	}
+
+	return files
+}
+
+// readCheckpoints returns every file in the checkpoints directory and its
+// bytes.
+func readCheckpoints(t *testing.T) map[string]string {
+	t.Helper()
+
+	dir := checkpointsDir()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	files := make(map[string]string, len(entries))
+
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		require.NoError(t, err)
+
+		files[entry.Name()] = string(data)
+	}
+
+	return files
+}
+
+// A dry run must leave the checkpoints on disk as it found them. The
+// parallel workers saved a checkpoint for each step they only logged, and
+// the end of the run cleared the bloc's checkpoint and removed old ones,
+// so a dry run wiped the resume point of an earlier failed real run.
+func TestDryRunLeavesCheckpointsAlone(t *testing.T) {
+	for _, parallel := range []bool{false, true} {
+		for _, resume := range []bool{false, true} {
+			t.Run(fmt.Sprintf("parallel=%t,resume=%t", parallel, resume), func(t *testing.T) {
+				cfg := dryRunBloc(t)
+				dryRunWorkstation(t, cfg)
+
+				seeded := seedCheckpoints(t, cfg)
+
+				client := &unconnectedSSHClient{}
+				m, _, _ := dryRunManager(t, cfg,
+					&ProvisioningOptions{DryRun: true, Parallel: parallel, Resume: resume}, client)
+
+				if resume {
+					checkpoint, err := m.checkpointManager.Load()
+					require.NoError(t, err)
+					require.NotNil(t, checkpoint)
+
+					m.progress = m.checkpointManager.RestoreProgress(checkpoint)
+				}
+
+				require.NoError(t, m.syncAndRun(context.Background()))
+				assert.Empty(t, client.recorded())
+				assert.Equal(t, seeded, readCheckpoints(t), "a dry run must not change the checkpoints")
+			})
+		}
+	}
+}
+
+// A real run that finishes still clears the bloc's resume checkpoint and
+// removes checkpoints more than a week old.
+func TestFinishedRealRunClearsCheckpoints(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+	seedCheckpoints(t, cfg)
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, &unconnectedSSHClient{})
+
+	m.clearCheckpoints()
+	assert.Empty(t, readCheckpoints(t))
 }
