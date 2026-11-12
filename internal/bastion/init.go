@@ -34,6 +34,9 @@ const (
 	// Worker pool defaults.
 	defaultWorkerCount = 3
 
+	// A finished run removes checkpoints older than this.
+	checkpointMaxAge = 7 * 24 * time.Hour
+
 	// Git clone/update configuration.
 	gitBackoffInitial = 2 * time.Second
 	gitMaxAttempts    = 4
@@ -1051,17 +1054,7 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 	m.progress.CompletedSteps = len(phases)
 	duration := time.Since(m.progress.StartTime)
 
-	// Clear checkpoint on successful completion
-	err := m.checkpointManager.Clear()
-	if err != nil {
-		m.log.Warnw("Failed to clear checkpoint", "error", err)
-	}
-
-	// Cleanup old checkpoints (older than 7 days)
-	err = m.checkpointManager.CleanupOldCheckpoints(7 * 24 * time.Hour)
-	if err != nil {
-		m.log.Warnw("Failed to cleanup old checkpoints", "error", err)
-	}
+	m.clearCheckpoints()
 
 	// Report final success
 	if m.reporter != nil {
@@ -1075,6 +1068,27 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 
 	// Reboot if requested after successful initialization
 	m.performRebootIfRequested(ctx)
+}
+
+// clearCheckpoints removes the bloc's resume checkpoint once a run has
+// finished, along with any checkpoint more than a week old. A dry run
+// finishes without doing the work, so it leaves every checkpoint for the
+// real run it belongs to.
+func (m *Manager) clearCheckpoints() {
+	if m.skipForDryRun("clear this bloc's resume checkpoint and remove checkpoints older than a week",
+		"dir", m.checkpointManager.checkpointDir) {
+		return
+	}
+
+	err := m.checkpointManager.Clear()
+	if err != nil {
+		m.log.Warnw("Failed to clear checkpoint", "error", err)
+	}
+
+	err = m.checkpointManager.CleanupOldCheckpoints(checkpointMaxAge)
+	if err != nil {
+		m.log.Warnw("Failed to cleanup old checkpoints", "error", err)
+	}
 }
 
 // performRebootIfRequested reboots the bastion if the RebootAfterInit option is set.
@@ -1451,14 +1465,17 @@ func (m *Manager) phaseWorker(ctx context.Context, tasks <-chan task, errs chan<
 			m.reporter.ReportPhaseStart(task.name, 0, 0)
 		}
 
-		var err error
-
+		// A dry run only logs each step, as the sequential runner does, and
+		// it records nothing in the checkpoint.
 		if m.options.DryRun {
 			m.log.Infow("DRY RUN: Would execute phase", "phase", task.name)
-		} else {
-			err = m.errorHandler.ExecuteWithRetry(ctx, task.name, func() error { return task.fn(ctx) })
+
+			errs <- nil
+
+			continue
 		}
 
+		err := m.errorHandler.ExecuteWithRetry(ctx, task.name, func() error { return task.fn(ctx) })
 		if err == nil {
 			m.checkpointManager.MarkPhaseCompleted(m.progress, task.name)
 
