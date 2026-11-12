@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
@@ -456,7 +457,7 @@ func renderEnvAssignments(env map[string]string) string {
 func runArtifactsRemoteScript(user, host, keyOpt, proxyOpt, scriptPath, envString string, log logger.Logger) error {
 	dest := fmt.Sprintf("%s@%s:%s", user, host, artifactsRemoteScript)
 
-	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, false, proxyOpt)
+	scpCmd := buildSCPCommand(scriptPath, dest, keyOpt, bastionssh.InternalHostKeyOptions(), false, proxyOpt)
 
 	log.Infof("Copying artifacts provision script to %s", host)
 
