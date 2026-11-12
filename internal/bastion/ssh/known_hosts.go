@@ -81,6 +81,13 @@ func isUnknownHost(err error) bool {
 // ssh also expands ${NAME} in these values and has no escape for it; a
 // caller that cannot accept that checks the path with
 // checkSSHConfigPath first.
+//
+// The doubled % relies on OpenSSH 8.4 or later, the first release to
+// expand tokens in UserKnownHostsFile. An older ssh, such as 8.2 on
+// Ubuntu 20.04 or 8.0 on RHEL 8, reads the value literally, so a home
+// directory holding % would point it at a file that does not exist. We
+// keep the doubling, because operator hosts and bastions run newer
+// releases, and without it a newer ssh would expand the %.
 func sshConfigPath(path string) string {
 	path = strings.ReplaceAll(path, "%", "%%")
 
