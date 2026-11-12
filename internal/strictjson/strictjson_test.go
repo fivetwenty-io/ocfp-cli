@@ -245,21 +245,46 @@ func TestDecodeMessagesAreSafe(t *testing.T) {
 
 	long := strings.Repeat("1", 500)
 
-	for _, in := range []string{
-		`{"count":1` + long + `}`,
-		`{"name":` + long + `}`,
-		"{\"\\u001b[2J\":1,\"\\u001b[2J\":2}",
-		"{\"name\":\"a\",\"x\\u001b\\n" + long + "\":1}",
-		"{\"COUNT\\u001b\":1}",
-	} {
+	decode := func(in string) error {
 		var v doc
 
-		err := strictjson.Decode([]byte(in), &v)
+		return strictjson.Decode([]byte(in), &v)
+	}
+
+	withUnknown := func(in string) error {
+		var v doc
+
+		_, err := strictjson.DecodeWithUnknown([]byte(in), &v)
+
+		return err
+	}
+
+	for _, tc := range []struct {
+		in     string
+		decode func(string) error
+		phrase string
+	}{
+		{`{"count":1` + long + `}`, decode, "does not decode"},
+		{`{"name":` + long + `}`, decode, "does not decode"},
+		{"{\"name\":\"a\",\"x\\u001b\\n" + long + "\":1}", decode, "unknown field"},
+		{"{\"COUNT\\u001b\":1}", decode, "unknown field"},
+		// The standard decoder accepts these, so the message comes from
+		// the walker's own quoting.
+		{`{"labels":{"\u001b[2J":"a","\u001b[2J":"b"}}`, decode, "repeats"},
+		{`{"\u001b[2J":1,"\u001b[2J":2}`, withUnknown, "repeats"},
+		{`{"labels":{"x\u001b\n` + long + `":"a","x\u001b\n` + long + `":"b"}}`, decode, "repeats"},
+		{`{"x\u001b\n` + long + `":1,"x\u001b\n` + long + `":2}`, withUnknown, "repeats"},
+	} {
+		err := tc.decode(tc.in)
 		if err == nil {
-			t.Fatalf("Decode accepted %q", in)
+			t.Fatalf("%q was accepted", tc.in)
 		}
 
 		msg := err.Error()
+		if !strings.Contains(msg, tc.phrase) {
+			t.Errorf("message %q does not hold %q", msg, tc.phrase)
+		}
+
 		if strings.ContainsAny(msg, "\x1b\n\r") || !utf8.ValidString(msg) {
 			t.Errorf("message %q holds raw control text", msg)
 		}
@@ -267,6 +292,65 @@ func TestDecodeMessagesAreSafe(t *testing.T) {
 		if strings.Contains(msg, strings.Repeat("1", 100)) {
 			t.Errorf("message %q echoes input without a bound", msg)
 		}
+	}
+}
+
+func TestDecodeChecksMapElements(t *testing.T) {
+	t.Parallel()
+
+	var v struct {
+		M map[string]inner `json:"m"`
+	}
+
+	err := strictjson.Decode([]byte(`{"m":{"k":{"ID":"x"}}}`), &v)
+	if err == nil || !strings.Contains(err.Error(), "only in case") {
+		t.Fatalf("Decode = %v, want a case variant inside a map element refused", err)
+	}
+}
+
+// custom decodes itself and takes any object.
+type custom struct {
+	Name int `json:"name"`
+}
+
+func (c *custom) UnmarshalJSON([]byte) error {
+	c.Name = 1
+
+	return nil
+}
+
+func TestDecodeLeavesSelfDecodingTypesAlone(t *testing.T) {
+	t.Parallel()
+
+	var v struct {
+		C custom `json:"c"`
+	}
+
+	// The keys differ, so only a check against custom's own field names
+	// could refuse them, and custom decides for itself what it reads.
+	err := strictjson.Decode([]byte(`{"c":{"NAME":1,"name":2}}`), &v)
+	if err != nil || v.C.Name != 1 {
+		t.Fatalf("Decode = %+v, %v; want the value handed to UnmarshalJSON", v, err)
+	}
+}
+
+type withSecret struct {
+	A      int `json:"a"`
+	secret int
+}
+
+func TestDecodeIgnoresUnexportedFields(t *testing.T) {
+	t.Parallel()
+
+	var v withSecret
+
+	unknown, err := strictjson.DecodeWithUnknown([]byte(`{"a":1,"secret":2}`), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(unknown, []string{"secret"}) || v.A != 1 || v.secret != 0 {
+		t.Fatalf("unknown = %q, value %+v; want secret unknown and left unset", unknown, v)
 	}
 }
 
