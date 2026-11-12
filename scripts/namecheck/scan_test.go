@@ -1278,3 +1278,255 @@ func tagChain(t *testing.T, repo string, n int) string {
 	}
 	return gitIn(t, repo, "rev-parse", fmt.Sprintf("refs/tags/t%d", n))
 }
+
+func TestScanDecodesDeclaredEncoding(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	// The message is Latin-1 text. The byte 0xE9 is an e with an acute
+	// accent there, and it is not valid UTF-8 on its own.
+	msg := writeFile(t, "msg.txt", "Visit caf\xe9zebra today\n")
+	gitIn(t, repo, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "-F", msg)
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+	if enc := gitIn(t, repo, "cat-file", "commit", "HEAD"); !strings.Contains(enc, "\nencoding ISO-8859-1\n") {
+		t.Fatalf("the test commit lacks an encoding header: %q", enc)
+	}
+
+	code, out, errs := runIn(t, repo, getenv, "--history")
+	want := "CLIENT_NAME_FOUND commit " + head + " message term 3\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestScanReadsMergetagHeaders(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	gitIn(t, repo, "commit", "-q", "-m", "First")
+	gitIn(t, repo, "checkout", "-q", "-b", "side")
+	add("b.txt", "side\n")
+	gitIn(t, repo, "commit", "-q", "-m", "Side work")
+	side := gitIn(t, repo, "rev-parse", "HEAD")
+	gitIn(t, repo, "checkout", "-q", "main")
+	add("c.txt", "main\n")
+	gitIn(t, repo, "commit", "-q", "-m", "Main work")
+	main := gitIn(t, repo, "rev-parse", "HEAD")
+	tree := gitIn(t, repo, "rev-parse", "HEAD^{tree}")
+
+	// Git writes a mergetag header when a merge takes in a signed tag. The
+	// header carries the tag object, one space in front of each line. The
+	// test writes the same shape by hand, with a tag message that holds a
+	// term.
+	obj := "tree " + tree + "\nparent " + main + "\nparent " + side + "\n" +
+		"author t <t@example.com> 1700000000 +0000\n" +
+		"committer t <t@example.com> 1700000000 +0000\n" +
+		"mergetag object " + side + "\n" +
+		" type commit\n tag v1\n tagger t <t@example.com> 1700000000 +0000\n" +
+		" \n release for zebracorp\n" +
+		"\nJoin the branches\n"
+	objFile := writeFile(t, "merge-object.txt", obj)
+	head := gitIn(t, repo, "hash-object", "-t", "commit", "-w", objFile)
+	gitIn(t, repo, "update-ref", "refs/heads/main", head)
+
+	code, out, errs := runIn(t, repo, getenv, "--history")
+	want := "CLIENT_NAME_FOUND commit " + head + " message term 1\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+// koi8r is a name git accepts for a commit encoding and the scanner does not
+// know.
+const koi8r = "KOI8R"
+
+func TestScanFailsOnUnknownEncoding(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	msg := writeFile(t, "msg.txt", "Visit caf\xe9zebra today\n")
+	gitIn(t, repo, "-c", "i18n.commitEncoding="+koi8r, "commit", "-q", "-F", msg)
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+
+	code, out, errs := runIn(t, repo, getenv, "--history")
+	want := "CLIENT_NAME_UNREADABLE commit " + head + " encoding <withheld, 5 bytes>\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestScanUnknownEncodingStillScansRawText(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	msg := writeFile(t, "msg.txt", "Mention zebracorp here\n")
+	gitIn(t, repo, "-c", "i18n.commitEncoding="+koi8r, "commit", "-q", "-F", msg)
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+
+	code, out, errs := runIn(t, repo, getenv, "--history")
+	want := "CLIENT_NAME_FOUND commit " + head + " message term 1\n" +
+		"CLIENT_NAME_UNREADABLE commit " + head + " encoding <withheld, 5 bytes>\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+func TestScanKeepsRawTextBesideDecodedText(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	// The message is UTF-8 text under a Latin-1 header. Decoded as Latin-1,
+	// the accented letter turns into two other characters, so only the raw
+	// text still holds the term.
+	msg := writeFile(t, "msg.txt", "Visit caf\u00e9zebra today\n")
+	gitIn(t, repo, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "-F", msg)
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+
+	code, out, errs := runIn(t, repo, getenv, "--history")
+	want := "CLIENT_NAME_FOUND commit " + head + " message term 3\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q err %q, want %q", code, out, errs, want)
+	}
+}
+
+// commitWithHeader writes a root commit by hand, so that the encoding header
+// can hold any bytes. An empty header leaves the commit without one.
+func commitWithHeader(t *testing.T, repo, header, message string) string {
+	t.Helper()
+	tree := gitIn(t, repo, "write-tree")
+	obj := "tree " + tree + "\n" +
+		"author t <t@example.com> 1700000000 +0000\n" +
+		"committer t <t@example.com> 1700000000 +0000\n"
+	if header != "" {
+		obj += "encoding " + header + "\n"
+	}
+	obj += "\n" + message
+	hash := gitIn(t, repo, "hash-object", "-t", "commit", "-w", writeFile(t, "commit-object.txt", obj))
+	gitIn(t, repo, "update-ref", "refs/heads/main", hash)
+
+	return hash
+}
+
+// scanOneCommit scans the history of a repository with one staged file and
+// one hand-written commit, and returns the exit code and the output.
+func scanOneCommit(t *testing.T, header, message string) (string, int, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" || !haveGit() {
+		t.Skip("needs unix modes and git")
+	}
+	getenv := setupConfig(t, testTerms(t), 0o600)
+	repo, add := newRepo(t)
+	add("a.txt", "clean\n")
+	hash := commitWithHeader(t, repo, header, message)
+	code, out, errs := runIn(t, repo, getenv, "--history")
+
+	return hash, code, out + errs
+}
+
+func TestScanFailsOnEncodingsThatLoseBytes(t *testing.T) {
+	t.Parallel()
+	// The library knows a decoder for each name, and none of them is
+	// trusted. The first four turn every byte into a replacement character.
+	for _, name := range []string{"replacement", "iso-2022-kr", "hz-gb-2312", "x-user-defined", "KOI8-R", "UTF-16"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hash, code, out := scanOneCommit(t, name, "Visit caf\xe9zebra today\n")
+			want := "CLIENT_NAME_UNREADABLE commit " + hash + " encoding <withheld, " + strconv.Itoa(len(name)) + " bytes>\n"
+			if code != 1 || out != want {
+				t.Fatalf("code %d out %q, want %q", code, out, want)
+			}
+		})
+	}
+}
+
+func TestScanFailsOnInvalidUTF8UnderUTF8OrNoHeader(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct{ header, want string }{
+		"declared": {"UTF-8", "<withheld, 5 bytes>"},
+		"absent":   {"", "<absent>"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hash, code, out := scanOneCommit(t, c.header, "Visit caf\xe9zebra today\n")
+			want := "CLIENT_NAME_UNREADABLE commit " + hash + " encoding " + c.want + "\n"
+			if code != 1 || out != want {
+				t.Fatalf("code %d out %q, want %q", code, out, want)
+			}
+		})
+	}
+}
+
+func TestScanPassesValidTextUnderTrustedEncodings(t *testing.T) {
+	t.Parallel()
+	for _, header := range []string{"", "UTF-8", "windows-1252", "ISO-8859-15", "US-ASCII"} {
+		t.Run("header "+header, func(t *testing.T) {
+			t.Parallel()
+			_, code, out := scanOneCommit(t, header, "A plain message\n")
+			if code != 0 || out != "" {
+				t.Fatalf("code %d out %q, want a clean pass", code, out)
+			}
+		})
+	}
+}
+
+func TestScanFailureLineNeverEchoesTheHeader(t *testing.T) {
+	t.Parallel()
+	// Each header holds a made-up term, spelled in UTF-8, in Latin-1 bytes,
+	// and plain. None may reach the output.
+	for name, header := range map[string]string{
+		"utf8":   "caf\u00e9zebra",
+		"latin1": "caf\xe9zebra",
+		"plain":  "zebracorp",
+		"escape": "\x1b[31mred",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hash, code, out := scanOneCommit(t, header, "A plain message\n")
+			want := "CLIENT_NAME_UNREADABLE commit " + hash + " encoding <withheld, " + strconv.Itoa(len(header)) + " bytes>\n"
+			if code != 1 || out != want {
+				t.Fatalf("code %d out %q, want %q", code, out, want)
+			}
+		})
+	}
+}
+
+func TestScanRetriesEncodingNameWithHyphens(t *testing.T) {
+	t.Parallel()
+	hash, code, out := scanOneCommit(t, "ISO_8859_1", "Visit caf\xe9zebra today\n")
+	want := "CLIENT_NAME_FOUND commit " + hash + " message term 3\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q, want %q", code, out, want)
+	}
+}
+
+func TestScanFailsOnReplacementCharacterFromTrustedDecoder(t *testing.T) {
+	t.Parallel()
+	// Byte 0xAA has no meaning in windows-1253, so its decoder writes a
+	// replacement character in its place.
+	hash, code, out := scanOneCommit(t, "windows-1253", "Visit caf\xaa today\n")
+	want := "CLIENT_NAME_UNREADABLE commit " + hash + " encoding <withheld, 12 bytes>\n"
+	if code != 1 || out != want {
+		t.Fatalf("code %d out %q, want %q", code, out, want)
+	}
+}
