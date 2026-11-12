@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // mkdirMode makes dir and gives it mode, whatever the umask.
@@ -46,7 +47,7 @@ func TestPrepareRootRefusesAWritableAncestor(t *testing.T) {
 
 			root := filepath.Join(shared, "spool")
 
-			if err := prepareRoot(root); err == nil {
+			if _, err := prepareRoot(root); err == nil {
 				t.Fatalf("prepareRoot accepted a root under a %s directory", mode)
 			}
 
@@ -57,7 +58,7 @@ func TestPrepareRootRefusesAWritableAncestor(t *testing.T) {
 
 			deeper := filepath.Join(mine, "spool")
 
-			if err := prepareRoot(deeper); err == nil {
+			if _, err := prepareRoot(deeper); err == nil {
 				t.Fatalf("prepareRoot accepted a root two levels under a %s directory", mode)
 			}
 
@@ -85,7 +86,7 @@ func TestPrepareRootAcceptsAStickyAncestor(t *testing.T) {
 
 	root := filepath.Join(shared, "spool")
 
-	if err := prepareRoot(root); err != nil {
+	if _, err := prepareRoot(root); err != nil {
 		t.Fatalf("prepareRoot refused a root under a sticky directory: %v", err)
 	}
 }
@@ -104,7 +105,7 @@ func TestPrepareRootFollowsAncestorLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareRoot(filepath.Join(unsafe, "spool")); err == nil {
+	if _, err := prepareRoot(filepath.Join(unsafe, "spool")); err == nil {
 		t.Fatal("prepareRoot accepted a root whose link resolves through a writable directory")
 	}
 
@@ -118,7 +119,7 @@ func TestPrepareRootFollowsAncestorLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareRoot(filepath.Join(safe, "spool")); err != nil {
+	if _, err := prepareRoot(filepath.Join(safe, "spool")); err != nil {
 		t.Fatalf("prepareRoot refused a root whose link resolves through private directories: %v", err)
 	}
 
@@ -127,7 +128,7 @@ func TestPrepareRootFollowsAncestorLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareRoot(filepath.Join(up, "spool")); err == nil {
+	if _, err := prepareRoot(filepath.Join(up, "spool")); err == nil {
 		t.Fatal("prepareRoot accepted a root whose link climbs into a writable directory")
 	}
 }
@@ -145,7 +146,7 @@ func TestPrepareRootRefusesALinkLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareRoot(filepath.Join(base, "a", "spool")); err == nil {
+	if _, err := prepareRoot(filepath.Join(base, "a", "spool")); err == nil {
 		t.Fatal("prepareRoot accepted a root under a link loop")
 	}
 }
@@ -180,5 +181,61 @@ func TestCreateSpoolCleansTheRoot(t *testing.T) {
 
 	if _, err := os.Lstat(filepath.Join(base, "spool", "job-clean")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("CreateSpool made a job under a root others can write: %v", err)
+	}
+}
+
+// A spool root reached through a link that this user owns is used where the
+// link leads when the spool is made. Repointing the link afterwards must not
+// move the spool's writes somewhere that was never checked.
+func TestCreateSpoolUsesTheResolvedRoot(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	first := filepath.Join(base, "first")
+	mkdirMode(t, first, 0o700)
+
+	second := filepath.Join(base, "second")
+	mkdirMode(t, second, 0o700)
+	mkdirMode(t, filepath.Join(second, "spool"), 0o700)
+	mkdirMode(t, filepath.Join(second, "spool", "job-link"), 0o700)
+
+	link := filepath.Join(base, "current")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+
+	s, created, err := CreateSpool(filepath.Join(link, "spool"), "job-link")
+	if err != nil || !created {
+		t.Fatalf("CreateSpool through a private link = %v, %v; want created", created, err)
+	}
+
+	realFirst, err := filepath.EvalSymlinks(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := filepath.Join(realFirst, "spool", "job-link"); s.Dir != want {
+		t.Fatalf("spool dir = %q, want the resolved %q", s.Dir, want)
+	}
+
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(second, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.WriteStatus(Status{State: StateRunning, PID: 1, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Lstat(filepath.Join(first, "spool", "job-link", statusFile)); err != nil {
+		t.Fatalf("the status is not in the spool that was checked: %v", err)
+	}
+
+	if _, err := os.Lstat(filepath.Join(second, "spool", "job-link", statusFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the status followed the repointed link: %v", err)
 	}
 }

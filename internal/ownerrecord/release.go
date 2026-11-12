@@ -67,7 +67,7 @@ func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (er
 		return err
 	}
 
-	f, err := s.lock(ctx, lockExclusive)
+	f, dir, err := s.lock(ctx, lockExclusive)
 	if err != nil {
 		return err
 	}
@@ -78,9 +78,9 @@ func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (er
 		}
 	}()
 
-	s.sweepTemps()
+	s.sweepTemps(dir)
 
-	cur, err := s.readSigned()
+	cur, err := s.readSigned(dir)
 	if err != nil {
 		return err
 	}
@@ -98,13 +98,13 @@ func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (er
 		return err
 	}
 
-	path := filepath.Join(s.dir, RecordFile)
+	path := filepath.Join(dir, RecordFile)
 
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove owner record: %w", err)
 	}
 
-	return s.syncDirectory(s.dir)
+	return s.syncDirectory(dir)
 }
 
 // checkRelease checks that proof is stored's owner's release proof for

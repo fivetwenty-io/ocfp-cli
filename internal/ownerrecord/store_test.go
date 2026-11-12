@@ -950,9 +950,18 @@ func TestReplaceSyncsTheNewDirectorysParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The store works in the directory with the links above it resolved,
+	// which on macOS moves a temporary directory from /var to /private/var.
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realDir := filepath.Join(realParent, "owner")
+
 	// The first write makes the directory, so the parent's entry for it is
 	// flushed before the record's rename is.
-	if want := []string{parent, dir}; !slices.Equal(synced, want) {
+	if want := []string{realParent, realDir}; !slices.Equal(synced, want) {
 		t.Errorf("the first write synced %v, want %v", synced, want)
 	}
 
@@ -962,7 +971,7 @@ func TestReplaceSyncsTheNewDirectorysParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := []string{dir}; !slices.Equal(synced, want) {
+	if want := []string{realDir}; !slices.Equal(synced, want) {
 		t.Errorf("a later write synced %v, want %v", synced, want)
 	}
 }

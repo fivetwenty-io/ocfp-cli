@@ -222,3 +222,112 @@ func TestStoreWithAMissingDirectory(t *testing.T) {
 		t.Fatalf("Read under a missing parent = %v, want ErrNoRecord", err)
 	}
 }
+
+// storedGeneration opens the record in dir and returns its generation.
+func storedGeneration(t *testing.T, dir string) uint64 {
+	t.Helper()
+
+	r, err := ownerrecord.Open(mustParse(t, readFile(t, recordPath(dir))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return r.Generation
+}
+
+// A store whose parent is reached through a link that this user owns, as a
+// home directory on a data disk is, works where the link leads.
+func TestStoreThroughALinkedParent(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	data := filepath.Join(base, "data")
+	if err := os.Mkdir(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(data, filepath.Join(base, "home")); err != nil {
+		t.Fatal(err)
+	}
+
+	s := ownerrecord.NewDirStore(filepath.Join(base, "home", "owner"))
+
+	if err := s.Replace(t.Context(), nil, liveAt(t, 7)); err != nil {
+		t.Fatalf("Replace through a private link: %v", err)
+	}
+
+	if got := storedGeneration(t, filepath.Join(data, "owner")); got != 7 {
+		t.Fatalf("stored generation = %d, want 7", got)
+	}
+
+	if _, r, err := s.Read(t.Context()); err != nil || r.Generation != 7 {
+		t.Fatalf("Read through a private link = generation %d, %v; want 7", r.Generation, err)
+	}
+
+	owner := liveRecord()
+	owner.Generation = 7
+
+	if err := s.Release(t.Context(), 7, sealRelease(t, owner)); err != nil {
+		t.Fatalf("Release through a private link: %v", err)
+	}
+
+	if _, err := os.Lstat(recordPath(filepath.Join(data, "owner"))); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Release left the record: %v", err)
+	}
+}
+
+// Once Replace has checked the store and taken its lock, it works in that
+// directory. Repointing a link above it partway through must not send the
+// record to a directory that was neither checked nor locked.
+func TestReplaceWritesWhereItChecked(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+
+	for _, d := range []string{first, second} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := ownerrecord.NewDirStore(filepath.Join(d, "owner")).Replace(t.Context(), nil, liveAt(t, 7)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := readFile(t, recordPath(filepath.Join(second, "owner")))
+
+	link := filepath.Join(base, "current")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+
+	s := ownerrecord.NewDirStore(filepath.Join(link, "owner"))
+
+	ownerrecord.SetTempWriter(s, func(f *os.File, b []byte) (int, error) {
+		if err := os.Remove(link); err != nil {
+			return 0, err
+		}
+
+		if err := os.Symlink(second, link); err != nil {
+			return 0, err
+		}
+
+		return f.Write(b)
+	})
+
+	if err := s.Replace(t.Context(), genPtr(7), liveAt(t, 8)); err != nil {
+		t.Fatalf("Replace after the link moved: %v", err)
+	}
+
+	if got := storedGeneration(t, filepath.Join(first, "owner")); got != 8 {
+		t.Fatalf("the checked store holds generation %d, want 8", got)
+	}
+
+	if !bytes.Equal(readFile(t, recordPath(filepath.Join(second, "owner"))), before) {
+		t.Fatal("the record reached the directory the link was moved to")
+	}
+}
