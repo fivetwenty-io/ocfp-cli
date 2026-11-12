@@ -490,7 +490,7 @@ deployments:
     mode: dev                                        # stays local and symlinked into repo
 ```
 
-- When `deployments.url` is set, the bastion clones (or updates) that repository under `~/ocfp/deployments` during dry runs and real provisioning.
+- When `deployments.url` is set, the bastion clones (or updates) that repository under `~/ocfp/deployments` during real provisioning.
 - Deployments marked `mode: dev` still use kits under `~/ocfp/kits/<name>`; the bastion keeps a `dev/` symlink inside the global repository so workflows remain unchanged.
 - Without a global URL, all deployments default to `dev` mode, matching the legacy behaviour.
 

@@ -69,6 +69,10 @@ type Manager struct {
 	reporter          *ProgressReporter // Shared reporter for all phases
 	log               logger.Logger
 	githubToken       string // Cached GitHub token for bastion API calls
+	// The bastion.keys lookups for GitHub and GitLab accounts. Nil means
+	// the HTTP lookups, so a Manager built without them still fetches.
+	fetchGitHubKeys ssh.KeyFetchFunc
+	fetchGitLabKeys ssh.KeyFetchFunc
 }
 
 // task represents a phase execution task.
@@ -132,6 +136,8 @@ func NewManager(ctx context.Context, cfg *config.Config, opts *ProvisioningOptio
 		deploymentModes:   deployments.NewResolver(cfg),
 		log:               logger.Get(),
 		githubToken:       resolveGitHubToken(ctx, logger.Get()),
+		fetchGitHubKeys:   fetchGitHubKeysHTTP,
+		fetchGitLabKeys:   fetchGitLabKeysHTTP,
 	}
 }
 
@@ -149,9 +155,18 @@ func (m *Manager) Initialize(ctx context.Context) error {
 
 	defer m.closeSSHClient()
 
+	return m.syncAndRun(ctx)
+}
+
+// syncAndRun is the part of Initialize that follows the connection. It
+// converges the pieces every init keeps in step on the bastion, provisioned
+// or not, and then runs the narrow mode or the phase list. A dry run never
+// connects, so each step it calls logs what it would do on the bastion
+// instead of sending a command.
+func (m *Manager) syncAndRun(ctx context.Context) error {
 	// Always run SSH agent forwarding and bastion key sync — these are
 	// idempotent and must execute even when the bastion is already provisioned.
-	err = m.setupSSHAgentForwarding(ctx)
+	err := m.setupSSHAgentForwarding(ctx)
 	if err != nil {
 		m.log.Warnw("SSH agent forwarding setup failed", "error", err)
 	}
@@ -176,6 +191,26 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	m.syncShellPathOrder(ctx)
 
 	return m.runModeOrPhases(ctx)
+}
+
+// isDryRun reports whether the options ask for a dry run.
+func (m *Manager) isDryRun() bool {
+	return m.options != nil && m.options.DryRun
+}
+
+// skipForDryRun reports whether this is a dry run, and when it is, logs what
+// the caller would have done on the bastion. A dry run never connects, so a
+// step that talks to the bastion checks this before its first remote
+// command. A command sent anyway would fail on the unconnected client, or,
+// when init runs on the bastion itself, change the host.
+func (m *Manager) skipForDryRun(would string, keysAndValues ...any) bool {
+	if !m.isDryRun() {
+		return false
+	}
+
+	m.log.Infow("DRY RUN: Would "+would, keysAndValues...)
+
+	return true
 }
 
 // runModeOrPhases runs the narrow mode the options ask for, or else the full
@@ -1678,6 +1713,11 @@ func (m *Manager) setHostname(ctx context.Context, desired string) {
 }
 
 func (m *Manager) setupSSHAgentForwarding(ctx context.Context) error {
+	if m.skipForDryRun("enable SSH agent forwarding on the bastion",
+		"github_ssh_port", m.config.Bastion.EffectiveGitHubSSHPort()) {
+		return nil
+	}
+
 	m.log.Info("Configuring SSH agent forwarding")
 
 	// Step 1: Enable SSHD agent forwarding

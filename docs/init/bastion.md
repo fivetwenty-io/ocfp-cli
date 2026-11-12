@@ -22,7 +22,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 
 | Flag | What it does |
 |------|--------------|
-| `--dry-run` | Logs what each phase would do and changes nothing. |
+| `--dry-run` | Logs what each step would do and changes nothing. A dry run never connects to the bastion, so the steps that every init runs first, such as the SSH agent forwarding and the `authorized_keys` sync, log what they would do instead of reading or writing anything there. |
 | `--force` | Skips the confirmation prompt and reinstalls the ocfp CLI even when the bastion already has the wanted version. A full init run from a workstation still skips a bastion that has the provisioned marker. |
 | `--yes`, `-y` | Answers yes to the confirmation prompt and changes nothing else, so unlike `--force` it never reinstalls the ocfp CLI. Without a terminal on stdin, such as in a script or over a non-interactive ssh session, init can't ask, so it stops with an error that names this flag unless `--yes` or `--force` is set. |
 | `--resume` | Skips the phases that an earlier run finished. |
@@ -292,6 +292,8 @@ The short `github/` and `gitlab/` forms take the username exactly as written, so
 An entry that matches none of these, such as a bare username with no `github/` or `gitlab/` in front, prints a warning naming the bloc and the entry each time the config loads, so commands that only read the bloc keep working. `ocfp init bastion` treats the same entry as an error and stops before anything touches the bastion, so a bastion never comes up with a teammate's key quietly missing. A bare username is never guessed to be a GitHub or GitLab account. The warning and the error repeat only the first line of the value, cut short, so a private key pasted there by mistake is not printed.
 
 Keys already present in `authorized_keys` are skipped (deduplicated). A lookup that fails, such as a username GitHub does not know, logs a warning and the run continues with the other entries.
+
+A dry run reads every entry in the same way, so an entry that a real run would refuse fails the dry run too. It then logs how many direct keys it would make sure are present and which GitHub and GitLab accounts it would fetch keys for, and it doesn't fetch any keys or contact the bastion.
 
 ### Jumpbox Users (`jumpbox.users`)
 

@@ -1070,9 +1070,15 @@ func (m *Manager) configureBastionKeys(ctx context.Context) error {
 
 	m.log.Infow("Configuring bastion SSH authorized keys", "key_count", len(keys))
 
+	if m.isDryRun() {
+		return m.previewBastionKeys(ctx, keys)
+	}
+
 	keyManager := ssh.NewKeyManager()
 
-	resolved, err := ssh.ResolveKeySpecs(ctx, keys, fetchGitHubKeysHTTP, fetchGitLabKeysHTTP)
+	fetchGitHub, fetchGitLab := m.keyFetchers()
+
+	resolved, err := ssh.ResolveKeySpecs(ctx, keys, fetchGitHub, fetchGitLab)
 	if err != nil {
 		return fmt.Errorf("failed to resolve bastion key specs: %w", err)
 	}
@@ -1086,6 +1092,55 @@ func (m *Manager) configureBastionKeys(ctx context.Context) error {
 	block := keyManager.FormatAuthorizedKeysBlock(resolved, keys)
 
 	return m.appendNewKeysToBastion(ctx, block, len(resolved))
+}
+
+// previewBastionKeys is the key sync's dry run. It reads every entry the way
+// the real sync does, so an entry the real sync would refuse fails here too,
+// and it logs how many direct keys it would ensure and which GitHub and
+// GitLab accounts it would fetch keys for. It fetches nothing, so the dry
+// run stays off the network as well as off the bastion.
+func (m *Manager) previewBastionKeys(ctx context.Context, keys map[string]string) error {
+	var accounts []string
+
+	noteAccount := func(host string) ssh.KeyFetchFunc {
+		return func(_ context.Context, user string) ([]string, error) {
+			accounts = append(accounts, host+"/"+user)
+
+			return nil, nil
+		}
+	}
+
+	resolved, err := ssh.ResolveKeySpecs(ctx, keys, noteAccount("github"), noteAccount("gitlab"))
+	if err != nil {
+		return fmt.Errorf("failed to resolve bastion key specs: %w", err)
+	}
+
+	directKeys := 0
+	for _, lines := range resolved {
+		directKeys += len(lines)
+	}
+
+	m.log.Infow("DRY RUN: Would ensure the configured keys are in ~/.ssh/authorized_keys on the bastion",
+		"entries", len(keys),
+		"direct_keys", directKeys,
+		"fetched_accounts", accounts)
+
+	return nil
+}
+
+// keyFetchers returns the GitHub and GitLab lookups for bastion.keys, using
+// the HTTP ones for any the Manager was built without.
+func (m *Manager) keyFetchers() (ssh.KeyFetchFunc, ssh.KeyFetchFunc) {
+	fetchGitHub, fetchGitLab := m.fetchGitHubKeys, m.fetchGitLabKeys
+	if fetchGitHub == nil {
+		fetchGitHub = fetchGitHubKeysHTTP
+	}
+
+	if fetchGitLab == nil {
+		fetchGitLab = fetchGitLabKeysHTTP
+	}
+
+	return fetchGitHub, fetchGitLab
 }
 
 // appendNewKeysToBastion reads the bastion's authorized_keys, deduplicates,
