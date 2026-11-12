@@ -208,9 +208,14 @@ func (m *Manager) skipForDryRun(would string, keysAndValues ...any) bool {
 		return false
 	}
 
-	m.log.Infow("DRY RUN: Would "+would, keysAndValues...)
+	m.logDryRun(would, keysAndValues...)
 
 	return true
+}
+
+// logDryRun logs what a dry run would have done on the bastion.
+func (m *Manager) logDryRun(would string, keysAndValues ...any) {
+	m.log.Infow("DRY RUN: Would "+would, keysAndValues...)
 }
 
 // runModeOrPhases runs the narrow mode the options ask for, or else the full
@@ -368,6 +373,12 @@ func (m *Manager) upgradeGenesisFromSource(ctx context.Context, genesisConfig co
 	m.log.Info("Upgrading Genesis from source")
 
 	version, branch, repo := m.extractGenesisConfig(genesisConfig)
+
+	if m.skipForDryRun("build and install Genesis from source on the bastion",
+		"repo", repo, "branch", branch, "version", version) {
+		return nil
+	}
+
 	upgradeScript := m.buildGenesisUpgradeScript(version, branch, repo)
 
 	_, err := m.sshClient.ExecuteCommand(ctx, upgradeScript)
@@ -461,6 +472,10 @@ log_success "Genesis upgraded successfully to version %s"`, repo, branch, repo, 
 // upgradeGenesisBinary performs Genesis upgrade from binary download.
 func (m *Manager) upgradeGenesisBinary(ctx context.Context, override config.ToolOverride) error {
 	m.log.Info("Upgrading Genesis from binary download")
+
+	if m.skipForDryRun("download and install Genesis on the bastion", "url", override.URL) {
+		return nil
+	}
 
 	upgradeScript := fmt.Sprintf(`set -e
 
@@ -1972,6 +1987,10 @@ func (m *Manager) copyBootstrapState(ctx context.Context) error {
 		return fmt.Errorf("failed to stat bootstrap state file %s: %w", localStatePath, err)
 	}
 
+	if m.skipForDryRun("copy the bootstrap state to the bastion", "bloc", blocName, "local", localStatePath) {
+		return nil
+	}
+
 	remoteStatePath, err := m.getRemoteStatePath(ctx, blocName)
 	if err != nil {
 		return err
@@ -2687,6 +2706,11 @@ func (m *Manager) createFilteredConfig(configFileData *config.ConfigFile, config
 
 // transferConfigToBastion writes YAML config to temp file and transfers to bastion.
 func (m *Manager) transferConfigToBastion(ctx context.Context, yamlBytes []byte) error {
+	if m.skipForDryRun("copy the ocfp config, filtered to this bloc, to ~/.ocfp/config.yml on the bastion",
+		"bloc", m.config.Name, "bytes", len(yamlBytes)) {
+		return nil
+	}
+
 	// Create temp file for transfer
 	tmpFile, err := os.CreateTemp("", "ocfp-config-*.yml")
 	if err != nil {
@@ -2792,6 +2816,12 @@ func (m *Manager) copySSHKeys(ctx context.Context) error {
 	privateKeyPath := filepath.Join(homeDir, ".ssh", keyBaseName)
 	publicKeyPath := filepath.Join(homeDir, ".ssh", keyBaseName+".pub")
 
+	if m.isDryRun() {
+		m.previewSSHKeyCopy(privateKeyPath, publicKeyPath)
+
+		return nil
+	}
+
 	// Copy private key
 	_, err := os.Stat(privateKeyPath)
 	if err == nil {
@@ -2843,6 +2873,24 @@ func (m *Manager) copySSHKeys(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// previewSSHKeyCopy is the dry run of copySSHKeys. It names the key files
+// the real copy would send, which are the ones that exist here, and sends
+// nothing.
+func (m *Manager) previewSSHKeyCopy(paths ...string) {
+	var present []string
+
+	for _, path := range paths {
+		_, err := os.Stat(path)
+		if err == nil {
+			present = append(present, path)
+		}
+	}
+
+	if len(present) > 0 {
+		m.logDryRun("copy the bloc's bastion SSH keys to ~/.ssh on the bastion", "files", present)
+	}
 }
 
 // resolveGitHubToken checks for a GitHub token in the environment or via the gh CLI.

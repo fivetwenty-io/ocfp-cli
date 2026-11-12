@@ -349,6 +349,11 @@ func (m *Manager) uploadOCFPBinary(ctx context.Context) error {
 		return fmt.Errorf("failed to calculate local binary checksum: %w", err)
 	}
 
+	if m.skipForDryRun("upload the local ocfp build to the bastion",
+		"local", localBinaryPath, "checksum", localChecksum, "remote", remoteFinalPath) {
+		return nil
+	}
+
 	// Check if remote binary exists and get its checksum
 	remoteChecksumCmd := fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}' || echo ''", remoteFinalPath)
 
@@ -1120,7 +1125,7 @@ func (m *Manager) previewBastionKeys(ctx context.Context, keys map[string]string
 		directKeys += len(lines)
 	}
 
-	m.log.Infow("DRY RUN: Would ensure the configured keys are in ~/.ssh/authorized_keys on the bastion",
+	m.logDryRun("ensure the configured keys are in ~/.ssh/authorized_keys on the bastion",
 		"entries", len(keys),
 		"direct_keys", directKeys,
 		"fetched_accounts", accounts)
