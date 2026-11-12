@@ -392,7 +392,8 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 
 	// The remote end is the bastion, so ssh checks its host key against the
 	// known_hosts file the Go client uses. rsync splits the -e command into
-	// words itself and honours quotes, so a path with a space is quoted.
+	// words itself, not with a shell, so rsyncJoin quotes each word the way
+	// rsync reads it.
 	hostKey, err := bastionssh.BastionHostKeyOptions()
 	if err != nil {
 		return nil, fmt.Errorf("cannot check the bastion's host key: %w", err)
@@ -405,7 +406,7 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 		sshArgs = append(sshArgs, "-i", keyPath)
 	}
 
-	cmd = append(cmd, "-e", bastionssh.ShellJoin(sshArgs))
+	cmd = append(cmd, "-e", rsyncJoin(sshArgs))
 
 	// Add exclude patterns
 	for _, pattern := range config.exclude {
@@ -485,3 +486,29 @@ func executeRSync(ctx context.Context, rsyncCmd []string) error {
 
 	return nil
 }
+
+// rsyncJoin joins words into a command for rsync's -e. rsync splits that
+// command itself, not with a shell. Inside single quotes it takes every
+// character literally except the single quote, which it expects written
+// twice, so the shell's way of closing the quotes, escaping the quote, and
+// reopening them does not work. Words made only of safe characters are
+// left bare.
+func rsyncJoin(words []string) string {
+	quoted := make([]string, len(words))
+
+	for i, word := range words {
+		if word != "" && strings.Trim(word, rsyncSafeChars) == "" {
+			quoted[i] = word
+
+			continue
+		}
+
+		quoted[i] = "'" + strings.ReplaceAll(word, "'", "''") + "'"
+	}
+
+	return strings.Join(quoted, " ")
+}
+
+// rsyncSafeChars are the characters a word for rsync's -e may hold without
+// quotes.
+const rsyncSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
