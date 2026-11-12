@@ -286,6 +286,57 @@ func TestReplaceMustBeSignedByCurrentOwner(t *testing.T) {
 	}
 }
 
+// TestReplaceKeepsTheOrgAndBloc checks that a replacement signed by the
+// stored owner may not move the record to another org or bloc, and that a
+// release followed by a fresh write may.
+func TestReplaceKeepsTheOrgAndBloc(t *testing.T) {
+	t.Parallel()
+
+	s, dir, stored := createdStore(t)
+
+	at := func(gen uint64, org, bloc string) ownerrecord.Record {
+		r := liveRecord()
+		r.Generation, r.Org, r.Bloc = gen, org, bloc
+
+		return r
+	}
+
+	for _, r := range []ownerrecord.Record{
+		at(8, "org-other", "bloc-fixture"),
+		at(8, "org-fixture", "bloc-other"),
+		at(8, "org-other", "bloc-other"),
+	} {
+		wantRefusal(t, s.Replace(t.Context(), genPtr(7), seal(t, r)), progress.CodeOrgBlocMismatch)
+	}
+
+	if !bytes.Equal(readFile(t, recordPath(dir)), stored) {
+		t.Fatal("a refused replace changed the record")
+	}
+
+	same := at(8, "org-fixture", "bloc-fixture")
+	if err := s.Replace(t.Context(), genPtr(7), seal(t, same)); err != nil {
+		t.Fatalf("a replace for the same org and bloc = %v", err)
+	}
+
+	if err := s.Release(t.Context(), 8, sealRelease(t, same)); err != nil {
+		t.Fatalf("release = %v", err)
+	}
+
+	moved := at(1, "org-other", "bloc-other")
+	if err := s.Replace(t.Context(), nil, seal(t, moved)); err != nil {
+		t.Fatalf("a fresh write for another org and bloc after a release = %v", err)
+	}
+
+	_, got, err := s.Read(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Org != "org-other" || got.Bloc != "bloc-other" {
+		t.Errorf("after the fresh write the record serves %q/%q, want org-other/bloc-other", got.Org, got.Bloc)
+	}
+}
+
 func TestReplaceRefusesTheLastGeneration(t *testing.T) {
 	t.Parallel()
 

@@ -52,7 +52,9 @@ func newOwnerRecordWriteCmd(newStore ownerStoreFunc) *cobra.Command {
 
 Without --expect-generation the record is stored only when there is none
 yet. With it, the stored record must be at that generation, the new record
-must be at the next one, and both must name the same owner key.`,
+must be at the next one, and both must name the same owner key, org, and
+bloc. Moving the bastion to another org or bloc takes a release and then a
+write without --expect-generation.`,
 		Example: `  ocfp owner-record write < owner.json
   ocfp owner-record write --expect-generation 4 < owner.json`,
 		Args:          cobra.NoArgs,

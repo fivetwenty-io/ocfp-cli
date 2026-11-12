@@ -203,8 +203,10 @@ func (s *DirStore) RLock(ctx context.Context) (func() error, error) {
 // expect it refuses an existing record with OWNER_RECORD_EXISTS. Otherwise
 // it returns ErrRecordChanged when the stored record is not at generation
 // *expect, wrapping ErrNoRecord as well when there is no record. It refuses a
-// next whose owner key is not the stored record's with OWNER_MISMATCH, and
-// one whose generation is not *expect + 1 with JOB_REQUEST_INVALID. It
+// next whose owner key is not the stored record's with OWNER_MISMATCH, one
+// that names another org or bloc with ORG_BLOC_MISMATCH, and one whose
+// generation is not *expect + 1 with JOB_REQUEST_INVALID. Moving a host to
+// another org or bloc therefore takes a Release and a fresh write. It
 // replaces nothing while the stored record does not pass Open.
 //
 // A next whose stored form is larger than the store would read back is
@@ -300,6 +302,16 @@ func (s *DirStore) checkReplace(expect *uint64, next Record) error {
 		return &progress.Refusal{
 			Code:    progress.CodeOwnerMismatch,
 			Message: "the replacement is not signed by the stored record's owner key",
+		}
+	}
+
+	// Moving a host to another org or bloc takes a release and a fresh write,
+	// never a replace.
+	if next.Org != stored.Org || next.Bloc != stored.Bloc {
+		return &progress.Refusal{
+			Code: progress.CodeOrgBlocMismatch,
+			Message: fmt.Sprintf("the replacement names org %q and bloc %q, the stored record serves org %q and bloc %q",
+				next.Org, next.Bloc, stored.Org, stored.Bloc),
 		}
 	}
 
