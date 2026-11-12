@@ -103,8 +103,8 @@ type waitClock interface {
 // cannot keep a dead job running. The pid in status.json is only for people
 // to read. An attach writes nothing into the spool. A job whose lock is gone
 // without exit.json is orphaned, and the stream ends with a JOB_ORPHANED
-// error and a result with exit code 1 after the records it has. Run returns a plain error for an orphaned job, and for a
-// job whose exit code is not 0.
+// error and a result with exit code 1 after the records it has. Run returns
+// a plain error for an orphaned job, and for a job whose exit code is not 0.
 func Run(ctx context.Context, o Options) error {
 	o, err := o.withDefaults()
 	if err != nil {
