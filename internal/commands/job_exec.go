@@ -60,11 +60,10 @@ job succeeds and 1 for any other failure.
 An --owner-dir that is not the default as written, but that leads to the
 default directory or to a directory under it, is refused before the request
 is read, and the command exits 1. So is a --spool-root that leads to the
-owner directory in use or to a directory under it, that holds the owner
-directory in use, or that lies inside the default directory. A flag that
-names a symbolic link to a directory that does not exist yet is refused the
-same way, and so is any flag when the directory it is compared with fails
-its own check.`,
+owner directory in use or to the default directory, to a directory under
+either, or to a directory that holds either. A flag that names a symbolic
+link to a directory that does not exist yet is refused the same way, and so
+is any flag when the directory it is compared with fails its own check.`,
 		Example:       `  ocfp job exec --spool-root /data/ocfp-jobs < request.json`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,

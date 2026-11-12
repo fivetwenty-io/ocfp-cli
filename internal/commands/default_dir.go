@@ -50,9 +50,10 @@ func refuseDefaultReach(flag, value, def string) error {
 }
 
 // refuseSpoolOverlap refuses a spool root that shares a tree with the owner
-// directory in use, ownerDir, or that lies inside the default owner
-// directory def, so that job output never lands among an owner record's
-// files and a job's spool never takes the place of the owner directory.
+// directory in use, ownerDir, or with the default owner directory def. A
+// spool root is refused when it is either directory, lies inside it, or
+// holds it, so that job output never lands among an owner record's files
+// and a job's spool never takes the place of an owner directory.
 //
 // The owner directory in use is located without the safedir check, because
 // the owner store makes that check itself and refuses an unsafe directory,
@@ -88,6 +89,7 @@ func refuseSpoolOverlap(spoolRoot, ownerDir, def string) error {
 		{spool, owner, "--spool-root %s resolves into the owner directory %s", ownerDir},
 		{owner, spool, "--spool-root %s holds the owner directory %s", ownerDir},
 		{spool, d, "--spool-root %s resolves into the default owner directory %s", def},
+		{d, spool, "--spool-root %s holds the default owner directory %s", def},
 	}
 
 	for _, c := range checks {

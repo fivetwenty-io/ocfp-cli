@@ -417,6 +417,60 @@ func TestJobExecRefusesASpoolRootInTheOwnerDir(t *testing.T) {
 	}
 }
 
+// With a custom owner directory in use, a spool root that holds the default
+// owner directory is refused too, so that a job whose id is the default's
+// last name can never make the default its spool.
+func TestJobExecRefusesASpoolRootHoldingTheDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, withDefault := range []bool{false, true} {
+		name := "before the default exists"
+		if withDefault {
+			name = "with the default made"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newDefaultHost(t, true, withDefault)
+
+			owner := filepath.Join(h.home, "owner")
+			storeRecord(t, owner)
+
+			var before []os.DirEntry
+
+			if withDefault {
+				var err error
+
+				before, err = os.ReadDir(h.def)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			res := runCmd(t, newJobCmd(ownerrecord.NewDirStore, h.def),
+				bytes.NewReader(jobRequest(t, filepath.Base(h.def), ownerrecordtest.TestKey())),
+				"exec", "--spool-root", h.data, "--owner-dir", owner)
+			if res.code != 1 || !strings.Contains(res.stderr, "--spool-root") || !strings.Contains(res.stderr, "default owner directory") {
+				t.Fatalf("exit code = %d, stderr %q; want --spool-root refused for holding the default owner directory", res.code, res.stderr)
+			}
+
+			if res.stdout != "" {
+				t.Fatalf("a refused flag wrote a stream %q", res.stdout)
+			}
+
+			after, err := os.ReadDir(h.def)
+
+			switch {
+			case !withDefault && !errors.Is(err, fs.ErrNotExist):
+				t.Fatalf("a refused spool root made the default owner directory: %v", err)
+			case withDefault && (err != nil || len(after) != len(before)):
+				t.Fatalf("a refused spool root changed the default owner directory: %d entries, was %d, %v", len(after), len(before), err)
+			}
+		})
+	}
+}
+
 // A spool root outside the owner directory in use keeps working, including
 // one beside it whose name starts the same way.
 func TestJobExecAcceptsASpoolRootOutsideTheOwnerDir(t *testing.T) {
