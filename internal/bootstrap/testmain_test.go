@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
+	"github.com/fivetwenty-io/ocfp-cli/internal/knownhostsguard"
 )
 
 func TestMain(m *testing.M) {
@@ -30,7 +31,9 @@ func TestMain(m *testing.M) {
 	// Keep bastion creation away from the real ~/.ssh/known_hosts.
 	bootstrap.SetKnownHostsFile(filepath.Join(tmpDir, "ssh", "known_hosts"))
 
-	code := m.Run()
+	// Tests here run the system ssh, so the run fails if they touch the
+	// developer's own known_hosts.
+	code := knownhostsguard.Run(m)
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
 }
