@@ -33,13 +33,14 @@ func TestGenerateSSHConfig(t *testing.T) {
 				"HostName 203.0.113.10",
 				"User ubuntu",
 				"IdentityFile /home/user/.ocfp/prod/ssh/id_ed25519",
-				"StrictHostKeyChecking no",
-				"UserKnownHostsFile /dev/null",
+				"StrictHostKeyChecking accept-new",
 				"LogLevel ERROR",
 				"IdentitiesOnly yes",
 			},
 			checkAbsent: []string{
 				"ProxyJump",
+				"StrictHostKeyChecking no",
+				"UserKnownHostsFile",
 			},
 		},
 		{
@@ -152,6 +153,33 @@ func TestGenerateSSHConfigStructure(t *testing.T) {
 
 	// Second block should be internal host
 	assert.True(t, strings.HasPrefix(blocks[1], "Host prod-bosh"), "Second block should be bosh")
+}
+
+// TestGenerateSSHConfigChecksOnlyTheBastionHostKey proves the bastion block
+// checks its host key against the default known_hosts, which the internal
+// blocks also use for their ProxyJump hop, while the internal hosts behind
+// it stay unchecked.
+func TestGenerateSSHConfigChecksOnlyTheBastionHostKey(t *testing.T) {
+	t.Parallel()
+
+	result := generateSSHConfig(
+		"203.0.113.10",
+		"prod",
+		"ubuntu",
+		"/keys/id_ed25519",
+		map[string]string{"bosh": "10.0.0.5"},
+	)
+
+	blocks := strings.Split(strings.TrimSpace(result), "\n\n")
+	require.Len(t, blocks, 2)
+
+	assert.Contains(t, blocks[0], "    StrictHostKeyChecking accept-new\n")
+	assert.NotContains(t, blocks[0], "UserKnownHostsFile")
+	assert.NotContains(t, blocks[0], "StrictHostKeyChecking no")
+
+	assert.Contains(t, blocks[1], "    ProxyJump prod-bastion\n")
+	assert.Contains(t, blocks[1], "    StrictHostKeyChecking no\n")
+	assert.Contains(t, blocks[1], "    UserKnownHostsFile /dev/null\n")
 }
 
 func TestExtractInternalHosts(t *testing.T) {
