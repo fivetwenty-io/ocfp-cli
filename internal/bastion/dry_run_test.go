@@ -3,12 +3,16 @@ package bastion
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/deployments"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -212,4 +216,169 @@ func TestRealRunKeySyncStillNeedsTheBastion(t *testing.T) {
 		"a real run reads authorized_keys on the bastion")
 	assert.ElementsMatch(t, []string{"github/alice", "gitlab/bob"}, fetches.accounts(),
 		"a real run fetches the configured accounts")
+}
+
+// writeDryRunFile writes content to path, making its directory first.
+func writeDryRunFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+}
+
+// dryRunWorkstation gives the run a workstation of its own: an ocfp home
+// holding the bloc's config and bootstrap state, a home directory holding
+// the bloc's bastion key pair, and a local ocfp build. It returns the build's
+// path.
+func dryRunWorkstation(t *testing.T, cfg *config.Config) string {
+	t.Helper()
+
+	ocfpHome := t.TempDir()
+	home := t.TempDir()
+
+	t.Setenv("OCFP_HOME", ocfpHome)
+	t.Setenv("HOME", home)
+	t.Setenv("OCFP_CLI_SOURCE", "")
+	t.Setenv("OCFP_BINARY_PATH", "")
+	t.Setenv("OCFP_CLI_VERSION", "0.1.0")
+
+	configYAML, err := yaml.Marshal(&config.ConfigFile{Blocs: map[string]*config.Config{cfg.Name: cfg}})
+	require.NoError(t, err)
+	writeDryRunFile(t, filepath.Join(ocfpHome, "config.yml"), string(configYAML))
+
+	stateDir, err := state.GetStateDir(cfg.Name)
+	require.NoError(t, err)
+	writeDryRunFile(t, filepath.Join(stateDir, cfg.Name+".json"), "{}")
+
+	writeDryRunFile(t, filepath.Join(home, ".ssh", cfg.Name+"-bastion"), "private")
+	writeDryRunFile(t, filepath.Join(home, ".ssh", cfg.Name+"-bastion.pub"), "public")
+
+	build := filepath.Join(t.TempDir(), "ocfp-linux-amd64")
+	writeDryRunFile(t, build, "binary")
+
+	return build
+}
+
+// Every narrow mode must log what it would do in a dry run and send nothing
+// to the bastion. --genesis sent its upgrade script, --config read the
+// remote home and transferred files, and --ocfp with a local build probed
+// the remote checksum and dereferenced the missing result.
+func TestDryRunNarrowModesNeverReachTheBastion(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  ProvisioningOptions
+		setup func(t *testing.T, cfg *config.Config, build string)
+		want  []string
+	}{
+		{
+			name: "--ocfp from the release",
+			opts: ProvisioningOptions{OCFPOnly: true},
+			want: []string{"DRY RUN: Would execute script"},
+		},
+		{
+			name: "--ocfp from a local build",
+			opts: ProvisioningOptions{OCFPOnly: true},
+			setup: func(t *testing.T, _ *config.Config, build string) {
+				t.Helper()
+				t.Setenv("OCFP_CLI_SOURCE", "local")
+				t.Setenv("OCFP_BINARY_PATH", build)
+			},
+			want: []string{"DRY RUN: Would upload the local ocfp build to the bastion"},
+		},
+		{
+			name: "--genesis from source",
+			opts: ProvisioningOptions{GenesisOnly: true},
+			want: []string{"DRY RUN: Would build and install Genesis from source on the bastion"},
+		},
+		{
+			name: "--genesis from a binary",
+			opts: ProvisioningOptions{GenesisOnly: true},
+			setup: func(t *testing.T, cfg *config.Config, _ string) {
+				t.Helper()
+				cfg.Bastion.ToolOverrides["genesis"] = config.ToolOverride{URL: "https://example.invalid/genesis"}
+			},
+			want: []string{"DRY RUN: Would download and install Genesis on the bastion"},
+		},
+		{
+			name: "--config",
+			opts: ProvisioningOptions{ConfigOnly: true},
+			want: []string{
+				"DRY RUN: Would copy the ocfp config, filtered to this bloc, to ~/.ocfp/config.yml on the bastion",
+				"DRY RUN: Would copy the bloc's bastion SSH keys to ~/.ssh on the bastion",
+				"DRY RUN: Would copy the bootstrap state to the bastion",
+			},
+		},
+		{
+			name: "--vault-boot-unit",
+			opts: ProvisioningOptions{VaultBootUnitOnly: true},
+			want: []string{"DRY RUN: Would install and enable the inception vault boot unit"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			build := dryRunWorkstation(t, cfg)
+
+			if tc.setup != nil {
+				tc.setup(t, cfg, build)
+			}
+
+			opts := tc.opts
+			opts.DryRun = true
+
+			client := &unconnectedSSHClient{}
+			m, fetches, logs := dryRunManager(t, cfg, &opts, client)
+
+			require.NoError(t, m.syncAndRun(context.Background()))
+			assert.Empty(t, client.recorded(), "a dry run must not send anything to the bastion")
+			assert.Empty(t, fetches.accounts())
+
+			messages := loggedDryRun(logs)
+			for _, want := range tc.want {
+				assert.Contains(t, messages, want)
+			}
+		})
+	}
+}
+
+// On the bastion itself the client runs commands for real, so a dry run of
+// --genesis or of --ocfp with a local build changed the host it was only
+// meant to describe. Both must run nothing.
+func TestLocalExecutorDryRunNarrowModesRunNothing(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  ProvisioningOptions
+		setup func(t *testing.T, build string)
+	}{
+		{name: "--genesis", opts: ProvisioningOptions{GenesisOnly: true}},
+		{
+			name: "--ocfp from a local build",
+			opts: ProvisioningOptions{OCFPOnly: true},
+			setup: func(t *testing.T, build string) {
+				t.Helper()
+				t.Setenv("OCFP_CLI_SOURCE", "local")
+				t.Setenv("OCFP_BINARY_PATH", build)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			build := dryRunWorkstation(t, dryRunBloc(t))
+			if tc.setup != nil {
+				tc.setup(t, build)
+			}
+
+			opts := tc.opts
+			opts.DryRun = true
+
+			mock := &ocfpCLIMockSSHClient{}
+			le, m := localModeManager(&opts, mock)
+
+			require.NoError(t, le.run(context.Background(), m))
+			assert.Empty(t, mock.commands, "a dry run on the bastion must not run anything")
+			assert.Empty(t, mock.transfers)
+		})
+	}
 }

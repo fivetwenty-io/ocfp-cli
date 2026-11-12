@@ -35,7 +35,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 
 ### Narrow modes
 
-Each narrow flag runs one piece of init instead of the full phase list, and init refuses more than one of them at a time. A narrow mode runs before init looks for the provisioned marker, so it works on a bastion that init has already provisioned. It does the same work whether we run it from a workstation or on the bastion itself, with one exception for `--config`. The narrow modes ignore `--reboot` and `--resume`.
+Each narrow flag runs one piece of init instead of the full phase list, and init refuses more than one of them at a time. A narrow mode runs before init looks for the provisioned marker, so it works on a bastion that init has already provisioned. It does the same work whether we run it from a workstation or on the bastion itself, with one exception for `--config`. The narrow modes ignore `--reboot` and `--resume`. With `--dry-run`, each narrow mode logs what it would install or copy and sends nothing to the bastion, and when we run it on the bastion itself, it runs nothing there either.
 
 - `--genesis`
 
