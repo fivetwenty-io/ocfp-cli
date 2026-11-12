@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
@@ -188,11 +190,22 @@ func (f *initFlags) runInit(cmd *cobra.Command, args []string) error {
 // config file decides, so a config that asks for a dry run never gets a
 // real one.
 func (f *initFlags) resolveDryRun(cmd *cobra.Command) bool {
+	return settleDryRun(cmd, "init.dry_run")
+}
+
+// settleDryRun settles whether cmd makes a dry run. A --dry-run that the
+// command line gave wins, either way. Without one, the run is a dry run
+// when any of configKeys is true in the config file, so no key can turn
+// off a dry run that another asks for. "ocfp init" and "ocfp bastion init"
+// both settle their dry runs here, so they agree on every config.
+func settleDryRun(cmd *cobra.Command, configKeys ...string) bool {
 	if flag := cmd.Flags().Lookup("dry-run"); flag != nil && flag.Changed {
-		return f.dryRun
+		on, err := strconv.ParseBool(flag.Value.String())
+
+		return err == nil && on
 	}
 
-	return viper.GetBool("init.dry_run")
+	return slices.ContainsFunc(configKeys, viper.GetBool)
 }
 
 // getComponent determines which component to initialize.

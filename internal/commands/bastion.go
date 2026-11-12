@@ -25,7 +25,7 @@ func NewBastionCmd() *cobra.Command {
 		Short: "Bastion host management",
 		Long: `Manage bastion host operations and configuration.
 
-"bastion init" runs the same code as "ocfp init bastion", including three of its four modes (--genesis, --ocfp, and --vault-boot-unit, at most one) and its check for whether it runs on the bastion itself. It asks no confirmation, and --force means reinstall the ocfp CLI. The mode flags apply only to "bastion init".
+"bastion init" runs the same code as "ocfp init bastion", including three of its four modes (--genesis, --ocfp, and --vault-boot-unit, at most one) and its check for whether it runs on the bastion itself. It asks no confirmation, and --force means reinstall the ocfp CLI. Like "ocfp init bastion", it makes a dry run when the config file sets init.dry_run, and an explicit --dry-run=false wins over that. The config file's top-level dry-run key can only ask for a dry run, never turn off the one init.dry_run asks for. The mode flags apply only to "bastion init".
 
 The config-only mode is not offered here, because --config is the global flag that names the configuration file for every command, and "bastion init", "bastion provision", and "bastion recycle" all read it. To copy the workstation's configuration files to the bastion, run "ocfp init bastion --config".`,
 		Aliases:                []string{},
@@ -160,11 +160,21 @@ func bastionInit(cmd *cobra.Command) error {
 
 	// No prompt here, and --force keeps its meaning of reinstalling the CLI.
 	// runBastionInit logs the completion, so this does not log it again.
-	return runBastionInit(ctx, cfg, mode, bastionRunParams{
+	return runBastionInitFn(ctx, cfg, mode, bastionRunParams{
 		force:   viper.GetBool("bastion.init.force"),
-		dryRun:  viper.GetBool("dry-run"),
+		dryRun:  bastionInitDryRun(cmd),
 		verbose: false, parallel: false, resume: false, reboot: false,
 	})
+}
+
+// bastionInitDryRun settles whether "ocfp bastion init" makes a dry run,
+// by the rule "ocfp init bastion" uses. A --dry-run on the command line
+// wins either way. Without one, the config file's init.dry_run asks for a
+// dry run, and so does its top-level dry-run key, which this command has
+// always read. Neither key can turn off a dry run the other asks for, so a
+// config that asks for dry runs never gets a real one from either command.
+func bastionInitDryRun(cmd *cobra.Command) bool {
+	return settleDryRun(cmd, "init.dry_run", "dry-run")
 }
 
 func bastionProvision(cmd *cobra.Command, log logger.Logger) error {
