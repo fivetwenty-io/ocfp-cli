@@ -3,6 +3,7 @@ package commands
 import (
 	"testing"
 
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -177,7 +178,7 @@ func TestAddSSHStandardOptions(t *testing.T) {
 	t.Run("WithKeyAndAgent", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
 
-		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key")
+		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key", bastionssh.InternalHostKeyOptions())
 
 		assert.Contains(t, result, "-i", "Should include -i flag")
 		assert.Contains(t, result, "/path/to/key", "Should include key path")
@@ -188,7 +189,7 @@ func TestAddSSHStandardOptions(t *testing.T) {
 	t.Run("WithKeyNoAgent", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "")
 
-		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key")
+		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key", bastionssh.InternalHostKeyOptions())
 
 		assert.Contains(t, result, "-i", "Should include -i flag")
 		assert.Contains(t, result, "/path/to/key", "Should include key path")
@@ -198,7 +199,7 @@ func TestAddSSHStandardOptions(t *testing.T) {
 	t.Run("NoKeyWithAgent", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
 
-		result := addSSHStandardOptions([]string{"ssh"}, "")
+		result := addSSHStandardOptions([]string{"ssh"}, "", bastionssh.InternalHostKeyOptions())
 
 		assert.NotContains(t, result, "-i", "Should not include -i flag without key")
 		assert.Contains(t, result, "-A", "Should forward agent when SSH_AUTH_SOCK is set")
@@ -207,7 +208,7 @@ func TestAddSSHStandardOptions(t *testing.T) {
 	t.Run("NoKeyNoAgent", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "")
 
-		result := addSSHStandardOptions([]string{"ssh"}, "")
+		result := addSSHStandardOptions([]string{"ssh"}, "", bastionssh.InternalHostKeyOptions())
 
 		assert.NotContains(t, result, "-i", "Should not include -i flag without key")
 		assert.NotContains(t, result, "-A", "Should not forward agent without SSH_AUTH_SOCK")
@@ -216,18 +217,27 @@ func TestAddSSHStandardOptions(t *testing.T) {
 	t.Run("AlwaysIncludesStandardOptions", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "")
 
-		result := addSSHStandardOptions([]string{"ssh"}, "")
+		result := addSSHStandardOptions([]string{"ssh"}, "", bastionssh.InternalHostKeyOptions())
 
 		assert.Contains(t, result, "UserKnownHostsFile=/dev/null")
 		assert.Contains(t, result, "StrictHostKeyChecking=no")
 		assert.Contains(t, result, "LogLevel=ERROR")
 	})
 
+	t.Run("HostKeyOptionsComeFirst", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+
+		hostKey := []string{"-o", "StrictHostKeyChecking=accept-new"}
+		result := addSSHStandardOptions([]string{"ssh"}, "/path/to/key", hostKey)
+
+		assert.Equal(t, []string{"ssh", "-o", "StrictHostKeyChecking=accept-new"}, result[:3])
+	})
+
 	t.Run("IdentitiesOnlyOnlyWithKey", func(t *testing.T) {
 		t.Setenv("SSH_AUTH_SOCK", "")
 
-		assert.Contains(t, addSSHStandardOptions([]string{"ssh"}, "/path/to/key"), "IdentitiesOnly=yes")
-		assert.NotContains(t, addSSHStandardOptions([]string{"ssh"}, ""), "IdentitiesOnly=yes")
+		assert.Contains(t, addSSHStandardOptions([]string{"ssh"}, "/path/to/key", bastionssh.InternalHostKeyOptions()), "IdentitiesOnly=yes")
+		assert.NotContains(t, addSSHStandardOptions([]string{"ssh"}, "", bastionssh.InternalHostKeyOptions()), "IdentitiesOnly=yes")
 	})
 }
 
@@ -351,7 +361,7 @@ func TestBuildSSHCommandWithArguments(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := buildSSHCommand(tt.host, tt.user, tt.keyPath, tt.extraOpts, tt.sshArgs, tt.command)
+			result := buildInternalSSHCommand(tt.host, tt.user, tt.keyPath, tt.extraOpts, tt.sshArgs, tt.command)
 
 			for _, expected := range tt.expectContains {
 				assert.Contains(t, result, expected, "Expected command to contain: %s", expected)
