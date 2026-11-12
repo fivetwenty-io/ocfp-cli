@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,11 @@ type initFlags struct {
 	vaultBootUnit  bool
 	reboot         bool
 	secretsBackend string
+
+	// wouldCreate holds the directories a dry run's prerequisite step
+	// would have created, which the component's checks then count as
+	// present.
+	wouldCreate []string
 
 	// isTerminal reports whether stdin can answer the confirmation prompt.
 	// Nil means the real check on os.Stdin; tests replace it.
@@ -294,7 +300,7 @@ func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *conf
 	// Every component's check runs ssh against the bastion, and a dry run
 	// never connects to it.
 	if f.dryRun {
-		previewPrerequisites(cfg, component)
+		f.wouldCreate = previewPrerequisites(cfg, component)
 
 		return nil
 	}
@@ -349,31 +355,56 @@ func (f *initFlags) stdinIsTerminal() bool {
 }
 
 // executeInitialization performs the actual initialization based on component.
+// Bastion init and init all carry the dry run on themselves. Every other
+// component runs its steps through an initRun, which makes the same checks
+// in a dry run and logs each change instead of making it.
 func (f *initFlags) executeInitialization(ctx context.Context, cmd *cobra.Command, cfg *config.Config, component string) error {
-	// Bastion init and init all carry the dry run on themselves. Every
-	// other component would deploy or write files, so a dry run only
-	// checks its bloc name and logs the work.
-	if f.dryRun && component != RoleBastion && component != KeywordAll {
-		return previewComponent(cmd, cfg, component)
-	}
-
 	switch component {
-	case "aws":
-		return initializeAWS(cmd)
-	case "gcp":
-		return initializeGCP(cmd)
-	case "pve":
-		return initializePVE(cmd, cfg)
-	case "pg":
-		return initializePostgreSQL()
-	case "cf":
-		return initializeCloudFoundry(ctx, cfg)
-	case "bosh":
-		return initializeBOSH(ctx, cfg)
 	case RoleBastion:
 		return f.initializeBastionFromFlags(ctx, cfg)
 	case KeywordAll:
 		return f.initializeAllComponents(ctx, cfg)
+	}
+
+	r := f.newInitRun()
+
+	err := runComponent(ctx, cmd, cfg, component, r)
+	if err != nil {
+		return err
+	}
+
+	r.finish(component)
+
+	return nil
+}
+
+// newInitRun returns the run for a component other than bastion. A dry run
+// counts the deployment directory that its prerequisite step would have
+// created as present.
+func (f *initFlags) newInitRun() *initRun {
+	r := newInitRun(f.dryRun)
+	for _, dir := range f.wouldCreate {
+		r.createsDir(dir)
+	}
+
+	return r
+}
+
+// runComponent runs one init component other than bastion.
+func runComponent(ctx context.Context, cmd *cobra.Command, cfg *config.Config, component string, r *initRun) error {
+	switch component {
+	case "aws":
+		return runInitAWS(cmd, r)
+	case "gcp":
+		return runInitGCP(cmd, r)
+	case "pve":
+		return runInitPVE(cmd, cfg, r)
+	case "pg":
+		return runInitPostgreSQL(r)
+	case "cf":
+		return runInitCloudFoundry(ctx, cfg, r)
+	case "bosh":
+		return runInitBOSH(ctx, cfg, r)
 	default:
 		return ErrUnknownComponent(component)
 	}
@@ -407,32 +438,32 @@ func (f *initFlags) bastionRunParams() bastionRunParams {
 	}
 }
 
-// initializeAllComponents initializes all components in proper order.
+// initializeAllComponents initializes all components in proper order. A
+// dry run runs the bastion's dry run and then each other component's.
 func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 	log.Info("Initializing all components")
 
+	r := f.newInitRun()
+
 	components := []struct {
 		name      string
 		component string
-		fn        func() error
 	}{
-		{"bastion", RoleBastion, func() error {
-			return f.initializeBastionFull(ctx, cfg)
-		}},
-		{"PostgreSQL", "pg", initializePostgreSQL},
-		{"BOSH", "bosh", func() error { return initializeBOSH(ctx, cfg) }},
-		{"Cloud Foundry", "cf", func() error { return initializeCloudFoundry(ctx, cfg) }},
+		{"bastion", RoleBastion},
+		{"PostgreSQL", "pg"},
+		{"BOSH", "bosh"},
+		{"Cloud Foundry", "cf"},
 	}
 
 	for _, comp := range components {
-		run := comp.fn
-		if f.dryRun && comp.component != RoleBastion {
-			component := comp.component
-			run = func() error { return previewComponent(nil, cfg, component) }
+		var err error
+		if comp.component == RoleBastion {
+			err = f.initializeBastionFull(ctx, cfg)
+		} else {
+			err = runComponent(ctx, nil, cfg, comp.component, r)
 		}
 
-		err := run()
 		if err != nil {
 			return fmt.Errorf("%s initialization failed: %w", comp.name, err)
 		}
@@ -447,65 +478,6 @@ func (f *initFlags) initializeAllComponents(ctx context.Context, cfg *config.Con
 	log.Info("All components initialized successfully")
 
 	return nil
-}
-
-// previewComponent is the dry run of an init component other than bastion.
-// It checks the bloc name the way the real run does for the components that
-// take one, and then logs the work the real run would do instead of doing
-// it. The real runs deploy with bosh, log in with cf, and write env files
-// and the current bloc on the workstation, and bosh and cf can reach the
-// bastion through a proxy, so a dry run does none of that. cmd is the
-// running command, which the aws, gcp, and pve bloc lookups read.
-func previewComponent(cmd *cobra.Command, cfg *config.Config, component string) error {
-	bloc := cfg.Name
-
-	switch component {
-	case "aws", "gcp":
-		params, err := resolveInitAWSParams(cmd)
-		if err != nil {
-			return err
-		}
-
-		bloc = params.bloc
-	case "pve":
-		params, err := resolveInitPVEParams(cmd)
-		if err != nil {
-			return err
-		}
-
-		bloc = params.bloc
-	}
-
-	work, err := componentDryRunWork(component)
-	if err != nil {
-		return err
-	}
-
-	logger.Get().Infow("DRY RUN: Would "+work, "component", component, "bloc", bloc)
-
-	return nil
-}
-
-// componentDryRunWork describes what a real run of an init component other
-// than bastion does, for its dry run to log.
-func componentDryRunWork(component string) (string, error) {
-	switch component {
-	case "aws":
-		return "write the bloc's AWS Genesis env files and make it the current bloc", nil
-	case "gcp":
-		return "write the bloc's GCP Genesis env files and make it the current bloc", nil
-	case "pve":
-		return "write the bloc's PVE Genesis env files and ops files and make it the current bloc", nil
-	case "pg":
-		return "create the BOSH and Cloud Foundry databases", nil
-	case "bosh":
-		return "write the BOSH manifest if it is missing, create the director with bosh create-env, " +
-			"and write bosh-env.sh", nil
-	case "cf":
-		return "upload and deploy Cloud Foundry with bosh, then log in with cf and create the default org and space", nil
-	default:
-		return "", ErrUnknownComponent(component)
-	}
 }
 
 // getInitLongDescription returns the long description for the init command.
@@ -636,15 +608,16 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 // check runs ssh with accept-new, which records the bastion's host key in
 // our known_hosts on first contact and logs in to the bastion. It still
 // looks for the local tools, which changes nothing, and logs the deployment
-// directory it would create instead of creating it.
-func previewPrerequisites(cfg *config.Config, component string) {
+// directory it would create instead of creating it, and returns that
+// directory, so the component's checks count it as present.
+func previewPrerequisites(cfg *config.Config, component string) []string {
 	log := logger.Get()
 	log.Infow("DRY RUN: Would check SSH connectivity to the bastion", "bloc", cfg.Name, "component", component)
 
 	// Bastion init checks only the connection, because it installs its
 	// tools on the bastion.
 	if component == RoleBastion {
-		return
+		return nil
 	}
 
 	checkLocalTools(component)
@@ -654,7 +627,11 @@ func previewPrerequisites(cfg *config.Config, component string) {
 	_, err := os.Stat(deploymentDir) // #nosec -- path components are from trusted config
 	if os.IsNotExist(err) {
 		log.Infow("DRY RUN: Would create deployment directory", "path", deploymentDir)
+
+		return []string{deploymentDir}
 	}
+
+	return nil
 }
 
 // checkLocalTools warns about each tool that CF and BOSH init need and that
@@ -783,26 +760,31 @@ func resolveBastionIPForCheck(ctx context.Context, cfg *config.Config) (string, 
 	return bastionIP, nil
 }
 
-// initializePostgreSQL sets up PostgreSQL for BOSH and CF.
-func initializePostgreSQL() error {
-	log := logger.Get()
-	log.Info("Initializing PostgreSQL")
+// postgreSQLDatabases are the databases PostgreSQL init names. It logs
+// them and creates none of them yet.
+var postgreSQLDatabases = []string{"bosh", "uaa", "credhub", "cloud_controller", "diego", "routing_api"} //nolint:gochecknoglobals // fixed list
+
+// runInitPostgreSQL runs PostgreSQL init in either form. The real run only
+// logs the databases it plans, because PostgreSQL init creates no database
+// yet, so the dry run says exactly that and promises nothing more.
+func runInitPostgreSQL(r *initRun) error {
+	r.say("Initializing PostgreSQL")
 
 	// PostgreSQL initialization steps:
 	// 1. Create databases (bosh, uaa, credhub, etc.)
 	// 2. Create users with appropriate permissions
 	// 3. Configure SSL if required
 	// 4. Run initial schema migrations
+	_ = r.change("log the PostgreSQL databases it plans; it creates none of them yet", func() error {
+		for _, db := range postgreSQLDatabases {
+			// No database is created yet, so this loop only reports them.
+			r.log.Infow("Creating database", "name", db)
+		}
 
-	// Example implementation (would need actual PostgreSQL client)
-	databases := []string{"bosh", "uaa", "credhub", "cloud_controller", "diego", "routing_api"}
+		return nil
+	}, "databases", postgreSQLDatabases)
 
-	for _, db := range databases {
-		log.Infow("Creating database", "name", db)
-		// Pending: implement database creation via psql or Go postgres driver
-	}
-
-	log.Info("PostgreSQL initialization completed")
+	r.say("PostgreSQL initialization completed")
 
 	return nil
 }
@@ -830,10 +812,36 @@ func appendCompiledPin(args []string, pinPath string) ([]string, error) {
 	return append(args, "-o", pinPath), nil
 }
 
-// initializeBOSH sets up the BOSH Director.
-func initializeBOSH(ctx context.Context, cfg *config.Config) error {
-	log := logger.Get()
-	log.Info("Initializing BOSH Director")
+// openBOSHStateManager opens the bloc's bootstrap state. A real run
+// creates the state directory when it is missing. A dry run opens it
+// without creating it, fails where the real run would fail to create it,
+// and logs that it would create it.
+func (r *initRun) openBOSHStateManager(stateDir string) (*state.Manager, error) {
+	if !r.dryRun {
+		return state.NewManager(stateDir) //nolint:wrapcheck // the caller wraps it
+	}
+
+	mgr, err := state.PreviewManager(stateDir)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller wraps it, as it wraps NewManager's
+	}
+
+	_, err = os.Stat(stateDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		r.log.Infow("DRY RUN: Would create the state directory", "path", stateDir)
+	}
+
+	return mgr, nil
+}
+
+// runInitBOSH runs BOSH init in either form. A dry run makes the same
+// checks, which include the bootstrap state, the manifest's state outputs,
+// the paths, and the compiled-release pin's stemcell, and it logs the
+// manifest, bosh create-env, and bosh-env.sh instead of making them.
+//
+//nolint:funlen // the steps stay in the real run's order so both forms check alike
+func runInitBOSH(ctx context.Context, cfg *config.Config, r *initRun) error {
+	r.say("Initializing BOSH Director")
 
 	// Load bootstrap state to obtain subnet ID and BOSH static IP.
 	stateDir, err := state.GetStateDir(cfg.Name)
@@ -841,7 +849,7 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to resolve state directory: %w", err)
 	}
 
-	stateMgr, err := state.NewManager(stateDir)
+	stateMgr, err := r.openBOSHStateManager(stateDir)
 	if err != nil {
 		return fmt.Errorf("failed to create state manager: %w", err)
 	}
@@ -858,16 +866,16 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 	// Check if manifest exists
 	_, err = os.Stat(manifestPath) // #nosec -- path components are from trusted config
 	if os.IsNotExist(err) {
-		log.Infow("Creating BOSH manifest", "path", manifestPath)
+		r.say("Creating BOSH manifest", "path", manifestPath)
 
-		err = createBOSHManifest(cfg, manifestPath, stateMgr)
+		err = r.createBOSHManifest(cfg, manifestPath, stateMgr)
 		if err != nil {
 			return fmt.Errorf("failed to create BOSH manifest: %w", err)
 		}
 	}
 
 	// Deploy BOSH (example command)
-	log.Info("Deploying BOSH Director")
+	r.say("Deploying BOSH Director")
 
 	err = security.ValidateInput(manifestPath, validFilePathPattern)
 	if err != nil {
@@ -893,33 +901,75 @@ func initializeBOSH(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, "bosh", createEnvArgs...) // #nosec G204 -- command args are validated above
-	cmd.Dir = deploymentDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err = cmd.Run()
+	err = r.runIn(ctx, deploymentDir, "create the director with bosh create-env", "BOSH deployment failed",
+		"bosh", createEnvArgs...)
 	if err != nil {
-		return fmt.Errorf("BOSH deployment failed: %w", err)
+		return err
 	}
 
 	// Set BOSH environment
-	log.Info("Configuring BOSH environment")
+	r.say("Configuring BOSH environment")
 
-	err = configureBOSHEnvironment(cfg, deploymentDir)
+	err = r.change("write bosh-env.sh", func() error { return configureBOSHEnvironment(cfg, deploymentDir) },
+		"path", filepath.Join(deploymentDir, "bosh-env.sh"))
 	if err != nil {
 		return fmt.Errorf("failed to configure BOSH environment: %w", err)
 	}
 
-	log.Info("BOSH Director initialization completed")
+	r.say("BOSH Director initialization completed")
 
 	return nil
 }
 
-// initializeCloudFoundry sets up Cloud Foundry.
-func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
-	log := logger.Get()
-	log.Info("Initializing Cloud Foundry")
+// runIn runs name with args in dir, sending its output to ours, and wraps
+// a failure in failed. A dry run makes the checks that starting the command
+// makes, which find it on PATH and check dir, and logs the command instead
+// of running it.
+func (r *initRun) runIn(ctx context.Context, dir, would, failed, name string, args ...string) error {
+	if r.dryRun {
+		err := r.startError(ctx, dir, name, args...)
+		if err != nil {
+			return fmt.Errorf("%s: %w", failed, err)
+		}
+	}
+
+	return r.change(would, func() error {
+		cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- callers validate the args
+		cmd.Dir = dir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("%s: %w", failed, err)
+		}
+
+		return nil
+	}, "command", append([]string{name}, args...), "dir", dir)
+}
+
+// runQuiet runs name with args and returns its error. A dry run makes the
+// checks that starting the command makes, which find it on PATH, and logs
+// the command instead of running it.
+func (r *initRun) runQuiet(ctx context.Context, would, name string, args ...string) error {
+	if r.dryRun {
+		err := r.startError(ctx, "", name, args...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return r.change(would, func() error {
+		return exec.CommandContext(ctx, name, args...).Run() // #nosec G204 -- callers pass fixed or validated args
+	}, "command", append([]string{name}, args...))
+}
+
+// runInitCloudFoundry runs Cloud Foundry init in either form. A dry run
+// makes the same checks, which include the paths, the compiled-release
+// pin's stemcell, and the bloc's DNS name, and it logs each bosh and cf
+// command instead of running it.
+func runInitCloudFoundry(ctx context.Context, cfg *config.Config, r *initRun) error {
+	r.say("Initializing Cloud Foundry")
 
 	// Cloud Foundry initialization steps:
 	// 1. Upload CF deployment
@@ -932,18 +982,16 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	deploymentDir := filepath.Join(home, "deployments", cfg.Name)
 
 	// Upload cloud foundry deployment
-	log.Info("Uploading Cloud Foundry deployment")
+	r.say("Uploading Cloud Foundry deployment")
 
-	cmd := exec.CommandContext(ctx, "bosh", "upload-release", // #nosec G204 - using hardcoded URL
-		"https://bosh.io/d/github.com/cloudfoundry/cf-deployment")
-
-	err := cmd.Run()
+	err := r.runQuiet(ctx, "upload the cf-deployment release with bosh",
+		"bosh", "upload-release", "https://bosh.io/d/github.com/cloudfoundry/cf-deployment")
 	if err != nil {
-		log.Warnw("Failed to upload CF release", "error", err)
+		r.warn("Failed to upload CF release", "error", err)
 	}
 
 	// Deploy Cloud Foundry
-	log.Info("Deploying Cloud Foundry")
+	r.say("Deploying Cloud Foundry")
 
 	manifestPath := filepath.Join(deploymentDir, "cf-deployment.yml")
 
@@ -964,25 +1012,20 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	cmd = exec.CommandContext(ctx, "bosh", deployArgs...) // #nosec G204 -- command args are validated above
-	cmd.Dir = deploymentDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err = cmd.Run()
+	err = r.runIn(ctx, deploymentDir, "deploy Cloud Foundry with bosh", "CF deployment failed", "bosh", deployArgs...)
 	if err != nil {
-		return fmt.Errorf("CF deployment failed: %w", err)
+		return err
 	}
 
 	// Configure CF
-	log.Info("Configuring Cloud Foundry")
+	r.say("Configuring Cloud Foundry")
 
-	err = configureCloudFoundry(ctx, cfg)
+	err = r.configureCloudFoundry(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to configure CF: %w", err)
 	}
 
-	log.Info("Cloud Foundry initialization completed")
+	r.say("Cloud Foundry initialization completed")
 
 	return nil
 }
@@ -996,28 +1039,61 @@ func initializeCloudFoundry(ctx context.Context, cfg *config.Config) error {
 // Returns ErrBootstrapStateRequired when either output is absent or empty.
 // Callers must run `ocfp bootstrap` before `ocfp init bosh` to populate these values.
 func createBOSHManifest(cfg *config.Config, path string, stateMgr *state.Manager) error {
+	return newInitRun(false).createBOSHManifest(cfg, path, stateMgr)
+}
+
+// createBOSHManifest renders the manifest from the bootstrap state, which
+// fails when the state lacks the outputs, and then writes it. A dry run
+// renders it, checks the directory that would hold it, and logs the write.
+func (r *initRun) createBOSHManifest(cfg *config.Config, path string, stateMgr *state.Manager) error {
+	manifest, err := boshManifest(cfg, stateMgr)
+	if err != nil {
+		return err
+	}
+
+	if r.dryRun {
+		err = r.writeDirError(path)
+		if err != nil {
+			return fmt.Errorf("failed to write manifest file: %w", err)
+		}
+	}
+
+	return r.change("write the BOSH manifest", func() error {
+		err := os.WriteFile(path, []byte(manifest), ManifestFilePerm) // #nosec -- path is from trusted config
+		if err != nil {
+			return fmt.Errorf("failed to write manifest file: %w", err)
+		}
+
+		return nil
+	}, "path", path)
+}
+
+// boshManifest renders the BOSH manifest from the bootstrap state. It
+// returns ErrBootstrapStateRequired when the subnet ID or BOSH IP output is
+// absent or empty.
+func boshManifest(cfg *config.Config, stateMgr *state.Manager) (string, error) {
 	subnetName := cfg.Name + "-ocfp-0"
 	subnetIDKey := "subnet_" + subnetName + "_id"
 	boshIPKey := "reserved_" + subnetName + "_bosh_ip"
 
 	subnetIDRaw, err := stateMgr.GetOutput(subnetIDKey)
 	if err != nil {
-		return fmt.Errorf("%w: subnet ID output %q missing — %w", ErrBootstrapStateRequired, subnetIDKey, err)
+		return "", fmt.Errorf("%w: subnet ID output %q missing — %w", ErrBootstrapStateRequired, subnetIDKey, err)
 	}
 
 	subnetID, ok := subnetIDRaw.(string)
 	if !ok || subnetID == "" {
-		return fmt.Errorf("%w: subnet ID output %q is empty or not a string", ErrBootstrapStateRequired, subnetIDKey)
+		return "", fmt.Errorf("%w: subnet ID output %q is empty or not a string", ErrBootstrapStateRequired, subnetIDKey)
 	}
 
 	boshIPRaw, err := stateMgr.GetOutput(boshIPKey)
 	if err != nil {
-		return fmt.Errorf("%w: BOSH IP output %q missing — %w", ErrBootstrapStateRequired, boshIPKey, err)
+		return "", fmt.Errorf("%w: BOSH IP output %q missing — %w", ErrBootstrapStateRequired, boshIPKey, err)
 	}
 
 	boshIP, ok := boshIPRaw.(string)
 	if !ok || boshIP == "" {
-		return fmt.Errorf("%w: BOSH IP output %q is empty or not a string", ErrBootstrapStateRequired, boshIPKey)
+		return "", fmt.Errorf("%w: BOSH IP output %q is empty or not a string", ErrBootstrapStateRequired, boshIPKey)
 	}
 
 	// Determine instance type: prefer Bastion.InstanceType, fall back to Bastion.Flavor.
@@ -1068,12 +1144,7 @@ instance_groups:
     static_ips: [%s]
 `, instanceType, networkCIDR, subnetID, boshIP)
 
-	err = os.WriteFile(path, []byte(manifest), ManifestFilePerm) // #nosec -- path is from trusted config
-	if err != nil {
-		return fmt.Errorf("failed to write manifest file: %w", err)
-	}
-
-	return nil
+	return manifest, nil
 }
 
 // configureBOSHEnvironment sets up BOSH CLI environment.
@@ -1096,51 +1167,51 @@ export BOSH_CA_CERT=$(bosh int %s/creds.yml --path /director_ssl/ca)
 	return nil
 }
 
-// configureCloudFoundry performs initial CF configuration.
-func configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
-	log := logger.Get()
+// errNoBlocDNS reports a bloc with no DNS name, which CF init needs for
+// the API address it logs in to.
+var errNoBlocDNS = errors.New("the bloc has no DNS name configured")
 
+// configureCloudFoundry performs initial CF configuration. A dry run checks
+// the bloc's DNS name and logs each cf command instead of running it.
+func (r *initRun) configureCloudFoundry(ctx context.Context, cfg *config.Config) error {
 	// Login to CF
-	log.Info("Logging into Cloud Foundry")
+	r.say("Logging into Cloud Foundry")
+
+	if len(cfg.DNS) == 0 {
+		return fmt.Errorf("invalid DNS name: %w", errNoBlocDNS)
+	}
 
 	err := security.ValidateInput(cfg.DNS[0], validDNSPattern)
 	if err != nil {
 		return fmt.Errorf("invalid DNS name: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "cf", "login", // #nosec G204 - input validated above
+	err = r.runQuiet(ctx, "log in to Cloud Foundry with cf", "cf", "login",
 		"-a", "https://api."+cfg.DNS[0],
 		"-u", "admin",
 		"-p", "admin", // This should come from credhub
 		"--skip-ssl-validation")
-
-	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("CF login failed: %w", err)
 	}
 
 	// Create default org and space
-	log.Info("Creating default organization and space")
+	r.say("Creating default organization and space")
 
-	cmd = exec.CommandContext(ctx, "cf", "create-org", "default") // #nosec G204 - using hardcoded values
-
-	err = cmd.Run()
+	err = r.runQuiet(ctx, "create the default org with cf", "cf", "create-org", "default")
 	if err != nil {
-		log.Warnw("Failed to create org", "error", err)
+		r.warn("Failed to create org", "error", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "cf", "create-space", "development", "-o", "default") // #nosec G204 - using hardcoded values
-
-	err = cmd.Run()
+	err = r.runQuiet(ctx, "create the development space with cf", "cf", "create-space", "development", "-o", "default")
 	if err != nil {
-		log.Warnw("Failed to create space", "error", err)
+		r.warn("Failed to create space", "error", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "cf", "target", "-o", "default", "-s", "development") // #nosec G204 - using hardcoded values
-
-	err = cmd.Run()
+	err = r.runQuiet(ctx, "target the default org and development space with cf",
+		"cf", "target", "-o", "default", "-s", "development")
 	if err != nil {
-		log.Warnw("Failed to target org/space", "error", err)
+		r.warn("Failed to target org/space", "error", err)
 	}
 
 	return nil

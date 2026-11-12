@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
-	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/spf13/cobra"
@@ -129,36 +127,52 @@ func resolveInitAWSParams(cmd *cobra.Command) (*initAWSParams, error) {
 // Config is persisted via config.SetCurrentBloc so that subsequent `ocfp`
 // invocations can resolve the bloc without re-supplying the flag.
 func initializeAWS(cmd *cobra.Command) error {
-	log := logger.Get()
+	return runInitAWS(cmd, newInitRun(false))
+}
 
+// runInitAWS runs `ocfp init aws` in either form. A dry run makes the same
+// checks and logs each write instead of making it.
+func runInitAWS(cmd *cobra.Command, r *initRun) error {
 	params, err := resolveInitAWSParams(cmd)
 	if err != nil {
 		return err
 	}
 
-	log.Infow("Initializing AWS environment", "bloc", params.bloc)
+	r.say("Initializing AWS environment", "bloc", params.bloc)
 
-	if err := persistBlocToState(params.bloc); err != nil {
+	if err := r.persistCurrentBloc(params.bloc); err != nil {
 		return err
 	}
 
-	if err := writeAWSDeploymentEnvFile(params.bloc, "mgmt", "bosh", true); err != nil {
+	if err := r.writeBlocEnvFile(params.bloc, "mgmt", "mgmt", "mgmt Genesis env file", func() error {
+		return writeAWSDeploymentEnvFile(params.bloc, "mgmt", "bosh", true)
+	}); err != nil {
 		return err
 	}
 
-	if err := writeAWSDeploymentEnvFile(params.bloc, "ocf", "cf", false); err != nil {
+	if err := r.writeBlocEnvFile(params.bloc, "ocf", "ocf", "ocf Genesis env file", func() error {
+		return writeAWSDeploymentEnvFile(params.bloc, "ocf", "cf", false)
+	}); err != nil {
 		return err
 	}
 
 	// Co-locate a prometheus monitoring stack on the ocf director with
 	// monitor-cf enabled so Cloud Foundry metrics flow into Grafana.
-	if err := writeMonitoringEnvFile(params.bloc, "aws"); err != nil {
+	if err := r.writeMonitoringEnvFile(params.bloc, "aws"); err != nil {
 		return err
 	}
 
-	log.Infow("AWS environment initialized", "bloc", params.bloc)
+	r.say("AWS environment initialized", "bloc", params.bloc)
 
 	return nil
+}
+
+// writeMonitoringEnvFile checks the monitoring env file's path and writes
+// the file.
+func (r *initRun) writeMonitoringEnvFile(bloc, iaas string) error {
+	return r.writeBlocEnvFile(bloc, "prometheus", "ocf", "prometheus monitoring Genesis env file", func() error {
+		return writeMonitoringEnvFile(bloc, iaas)
+	})
 }
 
 // monitorCFFeature is the prometheus-kit feature that deploys the cf_exporter
@@ -184,18 +198,10 @@ const monitorCFFeature = "monitor-cf"
 // cf-grafana/cf-prometheus/cf-alertmanager FQDNs are populated separately in
 // vault, matching how operators tune a mgmt-director prometheus.
 func writeMonitoringEnvFile(bloc, iaas string) error {
-	if config.DataHome() == "" {
-		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
-	}
-
-	envFileName := bloc + "-ocf.yml"
-
-	blocDir, err := config.OcfpBlocDir(bloc)
+	envFilePath, err := blocDeploymentFile(bloc, "prometheus", bloc+"-ocf.yml")
 	if err != nil {
-		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+		return err
 	}
-
-	envFilePath := filepath.Join(blocDir, "deployments", "prometheus", envFileName)
 
 	opts := vault.WriteEnvFileV32Opts{
 		Path:     envFilePath,
@@ -246,18 +252,10 @@ func persistBlocToState(bloc string) error {
 // Path: config.OcfpBlocDir(bloc)/deployments/<deployment>/<bloc>-<deployment>.yml
 // IAAS is always "aws" for this command.
 func writeAWSDeploymentEnvFile(bloc, deployment, kit string, useCreateEnv bool) error {
-	if config.DataHome() == "" {
-		return fmt.Errorf("cannot determine OCFP home directory: %w", config.ErrOcfpHomeNotFound)
-	}
-
-	envFileName := bloc + "-" + deployment + ".yml"
-
-	blocDir, err := config.OcfpBlocDir(bloc)
+	envFilePath, err := blocDeploymentFile(bloc, deployment, bloc+"-"+deployment+".yml")
 	if err != nil {
-		return fmt.Errorf("failed to resolve the directory for bloc %s: %w", bloc, err)
+		return err
 	}
-
-	envFilePath := filepath.Join(blocDir, "deployments", deployment, envFileName)
 
 	const iaas = "aws"
 
