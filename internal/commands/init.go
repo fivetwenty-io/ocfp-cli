@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
+	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -486,6 +488,12 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	// Tools will be installed ON the bastion during provisioning
 	if component == RoleBastion {
 		err := checkBastionConnectivity(ctx, cfg)
+		if errors.Is(err, bastionssh.ErrHostKeyMismatch) {
+			// A changed host key is never a reason to carry on: the
+			// provisioning connection would refuse the same key.
+			return fmt.Errorf("bastion check failed: %w", err)
+		}
+
 		if err != nil {
 			log.Warnw("Bastion connectivity check failed, will attempt provisioning anyway", "error", err)
 		}
@@ -527,7 +535,9 @@ func validatePrerequisites(ctx context.Context, cfg *config.Config, component st
 	return nil
 }
 
-// checkBastionConnectivity verifies bastion host is accessible.
+// checkBastionConnectivity verifies bastion host is accessible. It checks
+// the bastion's host key against the known_hosts file the Go client uses,
+// and a changed key returns an error that matches ErrHostKeyMismatch.
 func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 	log := logger.Get()
 
@@ -563,20 +573,31 @@ func checkBastionConnectivity(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("invalid key path: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "ssh", // #nosec G204 - input validated above
+	// The host key options go first, because ssh keeps the first value it
+	// sees for an option.
+	args := bastionssh.BastionHostKeyOptions()
+	args = append(args,
 		"-i", keyPath,
 		"-o", "ConnectTimeout=30",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "IdentitiesOnly=yes",
 		"-o", "IdentityAgent=none",
 		fmt.Sprintf("%s@%s", cfg.Bastion.SSHUser, bastionIP),
 		"echo", "connected")
 
+	var stderr bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 - input validated above
+	cmd.Stderr = &stderr
+
 	err = cmd.Run()
 	if err != nil {
-		return fmt.Errorf("bastion not accessible: %w", err)
+		hostKeyErr := bastionssh.SystemSSHHostKeyFailure(stderr.String(), bastionIP, bastionssh.DefaultSSHPort, err)
+		if hostKeyErr != nil {
+			return hostKeyErr
+		}
+
+		return fmt.Errorf("bastion not accessible: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	log.Info("Bastion connectivity verified")
