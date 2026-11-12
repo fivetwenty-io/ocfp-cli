@@ -116,16 +116,26 @@ func runSCP(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scpCmd, err := prepareSCPCommand(scpConfig, bastionIP, keyPath)
-	if err != nil {
-		return err
-	}
-
 	log.Infof("Copying files: %s -> %s", scpConfig.Source, scpConfig.Destination)
 	logResolvedSSHKey(log, keyPath)
 	log.Debugf("Bastion IP: %s", bastionIP)
 
-	return executeSCP(ctx, scpCmd, bastionIP)
+	return transferSCP(ctx, scpConfig, bastionIP, keyPath)
+}
+
+// transferSCP builds and runs the scp command. A host key refusal is
+// reported as the bastion's only when one end of the copy is the bastion.
+func transferSCP(ctx context.Context, scpCfg *scpConfig, bastionIP, keyPath string) error {
+	scpCmd, err := prepareSCPCommand(scpCfg, bastionIP, keyPath)
+	if err != nil {
+		return err
+	}
+
+	bastionHost := transferBastionHost(bastionIP,
+		processSCPPath(scpCfg.Source, bastionIP, scpCfg.User),
+		processSCPPath(scpCfg.Destination, bastionIP, scpCfg.User))
+
+	return executeSCP(ctx, scpCmd, bastionHost)
 }
 
 type scpConfig struct {

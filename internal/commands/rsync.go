@@ -357,7 +357,9 @@ func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config 
 	logResolvedSSHKey(log, env.keyPath)
 	log.Debugf("Bastion IP: %s", env.bastionIP)
 
-	return executeRSync(ctx, rsyncCmd, env.bastionIP)
+	// A host key refusal is the bastion's only when one end of the copy is
+	// the bastion.
+	return executeRSync(ctx, rsyncCmd, transferBastionHost(env.bastionIP, processedSource, processedDest))
 }
 
 // getBastionIPForRSync retrieves the bastion host's public IP address.
