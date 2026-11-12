@@ -23,7 +23,7 @@ func TestRefusalCodesAreUpperSnake(t *testing.T) {
 		"OWNER_RECORD_EXISTS":       progress.CodeOwnerRecordExists,
 		"JOB_ORPHANED":              progress.CodeJobOrphaned,
 		"OWNER_RECORD_INVALID":      progress.CodeOwnerRecordInvalid,
-		"TENANT_MISMATCH":           progress.CodeTenantMismatch,
+		"ORG_BLOC_MISMATCH":         progress.CodeOrgBlocMismatch,
 	}
 
 	if len(codes) != 11 {

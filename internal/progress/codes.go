@@ -45,9 +45,9 @@ const (
 	// fault in its own request.
 	CodeOwnerRecordInvalid Code = "OWNER_RECORD_INVALID"
 
-	// CodeTenantMismatch reports a request for an org or a bloc other than
+	// CodeOrgBlocMismatch reports a request for an org or a bloc other than
 	// the one the host's owner record names.
-	CodeTenantMismatch Code = "TENANT_MISMATCH"
+	CodeOrgBlocMismatch Code = "ORG_BLOC_MISMATCH"
 )
 
 // Refusal is an error that carries a Code, so a caller can act on the reason
