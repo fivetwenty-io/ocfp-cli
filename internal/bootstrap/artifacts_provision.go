@@ -195,7 +195,7 @@ func (m *Manager) provisionArtifactsOverSSH(ctx context.Context, conn artifactsP
 
 	err = cmd.Run()
 	if err != nil {
-		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, ssh.DefaultSSHPort, err)
+		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, err)
 		if hostKeyErr != nil {
 			return fmt.Errorf("provision script did not run: %w", hostKeyErr)
 		}
@@ -232,7 +232,7 @@ func (m *Manager) waitArtifactsSSHReady(ctx context.Context, conn artifactsProvi
 		}
 
 		// A refused bastion key does not change by waiting, so stop now.
-		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, ssh.DefaultSSHPort, err)
+		hostKeyErr := ssh.SystemSSHHostKeyFailure(stderr.String(), conn.BastionHost, err)
 		if hostKeyErr != nil {
 			return hostKeyErr
 		}

@@ -82,7 +82,7 @@ func runShowingStderr(cmd *exec.Cmd, terminal io.Writer, bastionHost string, ref
 		return err
 	}
 
-	hostKeyErr := bastionssh.SystemSSHHostKeyFailure(tail.String(), bastionHost, bastionssh.DefaultSSHPort, err)
+	hostKeyErr := bastionssh.SystemSSHHostKeyFailure(tail.String(), bastionHost, err)
 	if hostKeyErr != nil {
 		return hostKeyErr
 	}

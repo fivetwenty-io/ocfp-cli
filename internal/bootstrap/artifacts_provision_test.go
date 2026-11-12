@@ -241,6 +241,7 @@ func fakeHostKeySSH(t *testing.T, refuseProbe bool) string {
 		"for last; do :; done\n" +
 		probe + "\n" +
 		"echo '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @' >&2\n" +
+		"echo 'Host key for 100.109.226.53 has changed and you have requested strict checking.' >&2\n" +
 		"echo 'Host key verification failed.' >&2\n" +
 		"exit 255\n"
 

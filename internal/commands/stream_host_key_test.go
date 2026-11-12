@@ -12,7 +12,16 @@ import (
 	bastionssh "github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 )
 
+// refusalBanner prints what ssh prints when it refuses the bastion's key.
 const refusalBanner = "echo '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @' >&2\n" +
+	"echo 'Host key for 100.109.226.53 has changed and you have requested strict checking.' >&2\n" +
+	"echo 'Host key verification failed.' >&2\n"
+
+// nestedRefusal prints what an ssh the bastion runs prints when it refuses
+// another host's key, which reaches us as the remote command's stderr.
+const nestedRefusal = "echo '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @' >&2\n" +
+	"echo 'Offending ECDSA key in /home/ubuntu/.ssh/known_hosts:3' >&2\n" +
+	"echo 'Host key for 10.64.64.20 has changed and you have requested strict checking.' >&2\n" +
 	"echo 'Host key verification failed.' >&2\n"
 
 // fakeOnPath puts an executable called name first on PATH that runs body.
@@ -71,6 +80,8 @@ func TestStreamingSSHReportsOnlyItsOwnRefusal(t *testing.T) {
 		bastion string
 	}{
 		{"RemoteCommandPrintedTheWords", refusalBanner + "exit 1\n", "100.109.226.53"},
+		{"RemoteSSHRefusedAnotherHost", nestedRefusal + "exit 255\n", "100.109.226.53"},
+		{"BareMarkersOnly", "echo 'Host key verification failed.' >&2\nexit 255\n", "100.109.226.53"},
 		{"ExitWithoutTheWords", "echo 'Connection refused' >&2\nexit 255\n", "100.109.226.53"},
 		{"NoBastionOnTheRoute", refusalBanner + "exit 255\n", ""},
 	}
