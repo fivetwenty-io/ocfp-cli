@@ -132,6 +132,14 @@ func TestReleaseOnlyByOwner(t *testing.T) {
 	writeForm := liveRecord()
 	writeForm.Generation = 7
 
+	otherOrg := liveRecord()
+	otherOrg.Generation = 7
+	otherOrg.Org = "org-other"
+
+	otherBloc := liveRecord()
+	otherBloc.Generation = 7
+	otherBloc.Bloc = "bloc-other"
+
 	// A later record can share the five fields above, so a proof also names
 	// the head and the signing time of the one record it releases.
 	otherHead := liveRecord()
@@ -152,6 +160,8 @@ func TestReleaseOnlyByOwner(t *testing.T) {
 		{"another epoch", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherEpoch) }, progress.CodeOwnerMismatch},
 		{"another generation", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherGeneration) }, progress.CodeOwnerMismatch},
 		{"another installation", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherInstallation) }, progress.CodeOwnerMismatch},
+		{"another org", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherOrg) }, progress.CodeOrgBlocMismatch},
+		{"another bloc", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherBloc) }, progress.CodeOrgBlocMismatch},
 		{"another head", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherHead) }, progress.CodeOwnerMismatch},
 		{"another signing time", func(t *testing.T) ownerrecord.Signed { return sealRelease(t, otherTime) }, progress.CodeOwnerMismatch},
 	}
