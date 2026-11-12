@@ -469,7 +469,7 @@ func copyScriptToBastion(ctx *BastionContext, scriptPath, remoteScript string, l
 
 	execCtx := context.Background()
 
-	return executeSCP(execCtx, scpCmd)
+	return executeSCP(execCtx, scpCmd, ctx.IP)
 }
 
 func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operationName, logPath string, log logger.Logger) error {
@@ -511,7 +511,7 @@ func executeRemoteScript(ctx *BastionContext, remoteScript, envString, operation
 
 	execCtx := context.Background()
 
-	return executeSSH(execCtx, sshCmd)
+	return executeSSH(execCtx, sshCmd, ctx.IP)
 }
 
 func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logger) {
@@ -521,7 +521,7 @@ func cleanupRemoteScript(ctx *BastionContext, remoteScript string, _ logger.Logg
 	}
 
 	sshCmd = append(sshCmd, "rm -f "+remoteScript)
-	_ = executeSSH(context.Background(), sshCmd) // best effort
+	_ = executeSSH(context.Background(), sshCmd, ctx.IP) // best effort
 }
 
 // BuildEnvironmentVariables constructs shell assignment statements for remote bastion execution.

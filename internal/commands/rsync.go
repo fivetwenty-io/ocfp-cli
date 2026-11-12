@@ -357,7 +357,7 @@ func executeRSyncWithEnvironment(ctx context.Context, log logger.Logger, config 
 	logResolvedSSHKey(log, env.keyPath)
 	log.Debugf("Bastion IP: %s", env.bastionIP)
 
-	return executeRSync(ctx, rsyncCmd)
+	return executeRSync(ctx, rsyncCmd, env.bastionIP)
 }
 
 // getBastionIPForRSync retrieves the bastion host's public IP address.
@@ -472,7 +472,7 @@ func rsyncModelledFlags(config *rsyncConfig) []string {
 }
 
 // executeRSync executes the rsync command.
-func executeRSync(ctx context.Context, rsyncCmd []string) error {
+func executeRSync(ctx context.Context, rsyncCmd []string, bastionHost string) error {
 	log := logger.WithOperation("executeRSync")
 	log.Debugf("Executing: %s", strings.Join(rsyncCmd, " "))
 
@@ -484,9 +484,8 @@ func executeRSync(ctx context.Context, rsyncCmd []string) error {
 	cmd := exec.CommandContext(ctx, rsyncCmd[0], rsyncCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err := runShowingStderr(cmd, os.Stderr, bastionHost, transferRefusalExit)
 	if err != nil {
 		return fmt.Errorf("rsync command failed: %w", err)
 	}

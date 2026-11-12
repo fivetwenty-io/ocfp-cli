@@ -231,7 +231,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	logResolvedSSHKey(log, keyPath)
 
-	return executeSSH(ctx, sshCmd)
+	return executeSSH(ctx, sshCmd, route.bastionHost())
 }
 
 type sshConfig struct {
@@ -391,6 +391,21 @@ type sshRouteResolver struct {
 	bastionIP   func(ctx context.Context) (string, error)
 	artifactsIP func(ctx context.Context) (string, error)
 	isBastion   func(ctx context.Context, address string) bool
+}
+
+// bastionHost returns the bastion ssh dials on this route, whose host key it
+// checks: the jump host, or the host itself when that is the bastion. It is
+// empty for a route that never reaches the bastion.
+func (r sshRoute) bastionHost() string {
+	if r.Bastion != "" {
+		return r.Bastion
+	}
+
+	if r.HostIsBastion {
+		return r.Host
+	}
+
+	return ""
 }
 
 // resolveSSHRoute turns a classified target into a route. The bastion is
@@ -983,7 +998,7 @@ func wrapRemoteCommand(command []string) []string {
 }
 
 // executeSSH executes the SSH command and attaches to stdin/stdout/stderr.
-func executeSSH(ctx context.Context, sshCmd []string) error {
+func executeSSH(ctx context.Context, sshCmd []string, bastionHost string) error {
 	log := logger.WithOperation("executeSSH")
 	log.Debugf("Executing: %s", strings.Join(sshCmd, " "))
 
@@ -995,9 +1010,8 @@ func executeSSH(ctx context.Context, sshCmd []string) error {
 	cmd := exec.CommandContext(ctx, sshCmd[0], sshCmd[1:]...) // #nosec G204 - command is validated above
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err := runShowingStderr(cmd, os.Stderr, bastionHost, sshRefusalExit)
 	if err != nil {
 		return fmt.Errorf("ssh command failed: %w", err)
 	}
