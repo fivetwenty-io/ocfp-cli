@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/output"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -252,4 +253,71 @@ func TestDryRunSaysItDidNotConnect(t *testing.T) {
 		"DRY RUN: Did not wait for the bastion's SSH port or connect to it, so its host key was not checked").Len())
 	_, err = os.Stat(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
 	assert.True(t, os.IsNotExist(err), "a dry run must not write known_hosts")
+}
+
+// A dry run that stops at a step the real run would fail at closes with a
+// summary that says the dry run failed and changed nothing. It counts the
+// steps before the failed one as previewed and the failed one as failed.
+func TestFailedDryRunSummarySaysNothingChanged(t *testing.T) {
+	// config_files is the fourth step of the sequential list and the
+	// seventh of the parallel one.
+	for parallel, previewed := range map[bool]int{false: 3, true: 6} {
+		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+
+			var out bytes.Buffer
+
+			m, _, _ := dryRunManager(t, cfg,
+				&ProvisioningOptions{DryRun: true, Parallel: parallel, ProgressOut: &out}, &unconnectedSSHClient{})
+			require.ErrorIs(t, m.syncAndRun(context.Background()), ErrOCFPConfigurationFileNotFound)
+
+			text := out.String()
+			assert.Contains(t, text, "Status: Dry run failed without changing anything")
+			assert.Contains(t, text, fmt.Sprintf("Phases previewed: %d\n", previewed))
+			assert.Contains(t, text, "Phases failed: 1\n")
+			assert.NotContains(t, text, "Status: Failed")
+			assert.NotContains(t, text, "Phases completed")
+		})
+	}
+
+	t.Run("json", func(t *testing.T) {
+		cfg := dryRunBloc(t)
+		dryRunWorkstation(t, cfg)
+		require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+
+		var out bytes.Buffer
+
+		m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, &unconnectedSSHClient{})
+		m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+		require.ErrorIs(t, m.executeInitializationPhases(context.Background()), ErrOCFPConfigurationFileNotFound)
+
+		event := summaryEvent(t, out.String())
+		assert.Equal(t, false, event["success"])
+		assert.Equal(t, true, event["dry_run"])
+		assert.Equal(t, false, event["changed"])
+		assert.Equal(t, "Dry run failed without changing anything", event["message"])
+		assert.InDelta(t, 0, event["completed_phases"], 0)
+		assert.InDelta(t, 3, event["previewed_phases"], 0)
+		assert.InDelta(t, 1, event["failed_phases"], 0)
+		assert.InDelta(t, len(m.getInitializationPhases()), event["total_phases"], 0)
+	})
+}
+
+// A real run that fails reports no closing summary, as before.
+func TestFailedRealRunReportsNoSummary(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+
+	var out bytes.Buffer
+
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, &unconnectedSSHClient{})
+	retryQuickly(m)
+	m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
+
+	require.Error(t, m.executeInitializationPhases(context.Background()))
+	assert.NotContains(t, out.String(), `"summary"`)
+	assert.NotContains(t, out.String(), "Dry run")
 }
