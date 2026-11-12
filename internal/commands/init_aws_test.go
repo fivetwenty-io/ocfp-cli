@@ -11,7 +11,17 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 )
+
+// TestBlocNameRuleIsTheOwnerRecordRule checks that init and the owner record
+// hold one bloc name rule, so a bloc init creates is a bloc a host can serve.
+func TestBlocNameRuleIsTheOwnerRecordRule(t *testing.T) {
+	t.Parallel()
+
+	assert.Same(t, ownerrecord.BlocPattern, validBlocPattern)
+}
 
 // setupAWSInitEnv prepares a temp OCFP_HOME and returns a cleanup func.
 // The testmain_test.go sets OCFP_HOME to a temp dir, but individual tests
