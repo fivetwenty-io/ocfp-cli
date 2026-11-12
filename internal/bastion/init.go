@@ -142,7 +142,7 @@ func NewManager(ctx context.Context, cfg *config.Config, opts *ProvisioningOptio
 		errorHandler:      NewErrorHandler(),
 		deploymentModes:   deployments.NewResolver(cfg),
 		log:               logger.Get(),
-		githubToken:       resolveGitHubToken(ctx, logger.Get()),
+		githubToken:       resolveGitHubToken(ctx, logger.Get(), opts.DryRun),
 		fetchGitHubKeys:   fetchGitHubKeysHTTP,
 		fetchGitLabKeys:   fetchGitLabKeysHTTP,
 	}
@@ -2941,10 +2941,18 @@ func (m *Manager) previewSSHKeyCopy(paths ...string) {
 }
 
 // resolveGitHubToken checks for a GitHub token in the environment or via the gh CLI.
-// Called once at Manager creation to avoid repeated exec calls.
-func resolveGitHubToken(ctx context.Context, log logger.Logger) string {
+// Called once at Manager creation to avoid repeated exec calls. A dry run
+// runs no command, so it takes the token from the environment only, and it
+// logs that it didn't ask the gh CLI.
+func resolveGitHubToken(ctx context.Context, log logger.Logger, dryRun bool) string {
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		return token
+	}
+
+	if dryRun {
+		log.Infow("DRY RUN: Did not ask the gh CLI for a GitHub token, because GITHUB_TOKEN is not set and a dry run runs no command")
+
+		return ""
 	}
 
 	ghCtx, cancel := context.WithTimeout(ctx, 5*time.Second) //nolint:mnd // short timeout for local CLI call
