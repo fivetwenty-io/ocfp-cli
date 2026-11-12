@@ -585,6 +585,8 @@ func (m *Manager) executeInitializationPhases(ctx context.Context) error {
 
 	err := m.executePhases(ctx, phases, m.reporter)
 	if err != nil {
+		m.reportFailedDryRun()
+
 		return err
 	}
 
@@ -1159,6 +1161,18 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 
 	// Reboot if requested after successful initialization
 	m.performRebootIfRequested(ctx)
+}
+
+// reportFailedDryRun closes a dry run that stopped at a step the real run
+// would fail at with a summary that says the dry run failed and changed
+// nothing. It counts the steps before that one as previewed. A real run
+// that fails reports no summary, as it always has.
+func (m *Manager) reportFailedDryRun() {
+	if !m.isDryRun() || m.reporter == nil {
+		return
+	}
+
+	m.reporter.ReportDryRunFailure(time.Since(m.progress.StartTime), m.progress.TotalSteps, m.progress.CompletedSteps)
 }
 
 // clearCheckpoints removes the bloc's resume checkpoint once a run has

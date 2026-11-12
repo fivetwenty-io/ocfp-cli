@@ -339,6 +339,20 @@ func (pr *ProgressReporter) ReportDryRunSummary(success bool, duration time.Dura
 	pr.finalize(summary)
 }
 
+// ReportDryRunFailure reports the final summary of a dry run that stopped
+// at a step the real run would fail at. Of the total steps, it counts the
+// previewed ones before that step and the one it stopped at as failed.
+func (pr *ProgressReporter) ReportDryRunFailure(duration time.Duration, total, previewed int) {
+	pr.finalize(output.Summary{
+		TotalPhases:     total,
+		CompletedPhases: previewed,
+		FailedPhases:    1,
+		Duration:        duration,
+		Success:         false,
+		DryRun:          true,
+	})
+}
+
 // finalSummary builds the summary of a run with the given phase and error
 // counts.
 func finalSummary(success bool, duration time.Duration, phases int, errors int) output.Summary {
