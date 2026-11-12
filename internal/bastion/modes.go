@@ -354,6 +354,18 @@ func (le *LocalExecutor) executeLocalPhase(ctx context.Context, manager *Manager
 	if le.options.DryRun {
 		le.log.Infow("DRY RUN: Would execute local phase", "phase", phase.name)
 
+		// The steps a dry run can check, it checks, and it fails as the
+		// real local run fails. Their changes are skipped in a dry run.
+		step := manager.dryRunStep(phase.name)
+		if step == nil {
+			return nil
+		}
+
+		err := step(ctx)
+		if err != nil {
+			return fmt.Errorf("local phase %s failed: %w", phase.name, err)
+		}
+
 		return nil
 	}
 

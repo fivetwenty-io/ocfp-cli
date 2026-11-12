@@ -212,11 +212,16 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 		// In full init mode, continue when a binary is already present. A
 		// bastion with no ocfp at all would silently skip vault populate and
 		// configure later, so that case fails here where the cause is visible.
-		if !m.remoteOCFPBinaryPresent(ctx) {
+		// A dry run can't look, so it says so and carries on.
+		switch {
+		case m.isDryRun():
+			m.log.Warnw("DRY RUN: Did not check for an ocfp on the bastion to keep, because that reads the bastion, and a real run fails here without one",
+				"error", err)
+		case !m.remoteOCFPBinaryPresent(ctx):
 			return fmt.Errorf("OCFP binary install failed and no ocfp is present on the bastion: %w", err)
+		default:
+			m.log.Warnw("Failed to install OCFP binary, keeping the existing one", "error", err)
 		}
-
-		m.log.Warnw("Failed to install OCFP binary, keeping the existing one", "error", err)
 	} else if cerr := m.executeScript(ctx, provision.GenerateOCFPCompletionsScript(), "ocfp-cli-completions"); cerr != nil {
 		// Completions are a convenience; never fail the phase over them
 		m.log.Warnw("Failed to install OCFP shell completions", "error", cerr)
@@ -229,13 +234,9 @@ func (m *Manager) setupOCFPCLI(ctx context.Context) error {
 }
 
 // remoteOCFPBinaryPresent reports whether the bastion already has an
-// executable ocfp at the install path. A dry run reports true, since nothing
-// would have been installed anyway.
+// executable ocfp at the install path. A dry run never calls it, because
+// it reads the bastion.
 func (m *Manager) remoteOCFPBinaryPresent(ctx context.Context) bool {
-	if m.options.DryRun {
-		return true
-	}
-
 	result, err := m.sshClient.ExecuteCommand(ctx, "test -x "+provision.OCFPInstallPath+" && echo present")
 
 	return err == nil && result != nil && strings.Contains(result.Stdout, "present")

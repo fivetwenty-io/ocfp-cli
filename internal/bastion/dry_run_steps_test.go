@@ -1,0 +1,255 @@
+package bastion
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/pem"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	gossh "golang.org/x/crypto/ssh"
+)
+
+// stepRefusal breaks one thing on the workstation that an init step checks
+// before it reaches the bastion, so the real run refuses at that step.
+type stepRefusal struct {
+	name  string
+	step  string
+	setup func(t *testing.T, cfg *config.Config)
+	is    error
+}
+
+var stepRefusals = []stepRefusal{
+	{
+		name: "no ocfp config",
+		step: "config_files",
+		setup: func(t *testing.T, _ *config.Config) {
+			t.Helper()
+			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+		},
+		is: ErrOCFPConfigurationFileNotFound,
+	},
+	{
+		name: "bloc missing from the ocfp config",
+		step: "config_files",
+		setup: func(t *testing.T, _ *config.Config) {
+			t.Helper()
+
+			data, err := yaml.Marshal(&config.ConfigFile{Blocs: map[string]*config.Config{"otherbloc": newBaseConfig("otherbloc", "pve")}})
+			require.NoError(t, err)
+			writeDryRunFile(t, filepath.Join(os.Getenv("OCFP_HOME"), "config.yml"), string(data))
+		},
+		is: ErrBlocNotFoundInConfig,
+	},
+	{
+		name: "unknown ocfp CLI source",
+		step: "ocfp_cli_setup",
+		setup: func(t *testing.T, _ *config.Config) {
+			t.Helper()
+			t.Setenv("OCFP_CLI_SOURCE", "nightly")
+		},
+		is: ErrOCFPCLISourceInvalid,
+	},
+}
+
+// retryQuickly keeps the retry handler's backoff short, so a step that
+// fails with an error it retries doesn't hold up the test.
+func retryQuickly(m *Manager) {
+	m.errorHandler.baseDelay = time.Millisecond
+}
+
+// realStepError runs one step of a real run and returns the error the
+// retry handler gives it, which is what the real runners wrap. It fails
+// the test if the step reached the bastion, because a refusal the dry run
+// is meant to repeat has to come before that.
+func realStepError(t *testing.T, cfg *config.Config, step string) error {
+	t.Helper()
+
+	client := &unconnectedSSHClient{}
+	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, client)
+	retryQuickly(m)
+
+	fn := map[string]func(context.Context) error{
+		"config_files":   m.copyConfigFiles,
+		"ocfp_cli_setup": m.setupOCFPCLI,
+	}[step]
+	require.NotNil(t, fn, step)
+
+	ctx := context.Background()
+	err := m.errorHandler.ExecuteWithRetry(ctx, step, func() error { return fn(ctx) })
+	require.Error(t, err)
+	require.Empty(t, client.recorded(), "the real run refuses before it reaches the bastion")
+
+	return err
+}
+
+// A dry run of the full step list makes the checks of the steps that read
+// only our own files, so it refuses a missing ocfp config, a bloc the
+// config doesn't hold, or an unknown ocfp CLI source with the error the
+// real run gives. It still reaches nothing on the bastion, and it leaves
+// the checkpoints alone when it fails.
+func TestDryRunStepsRefuseWhereTheRealRunRefuses(t *testing.T) {
+	for _, refusal := range stepRefusals {
+		for _, parallel := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/parallel=%t", refusal.name, parallel), func(t *testing.T) {
+				cfg := dryRunBloc(t)
+				dryRunWorkstation(t, cfg)
+				refusal.setup(t, cfg)
+
+				seeded := seedCheckpoints(t, cfg)
+				want := fmt.Sprintf("phase %s failed: %v", refusal.step, realStepError(t, cfg, refusal.step))
+
+				client := &unconnectedSSHClient{}
+				m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true, Parallel: parallel}, client)
+				retryQuickly(m)
+
+				err := m.syncAndRun(context.Background())
+				require.ErrorIs(t, err, refusal.is)
+				assert.EqualError(t, err, want)
+				assert.Empty(t, client.recorded(), "a dry run must not send anything to the bastion")
+				assert.Equal(t, seeded, readCheckpoints(t), "a failed dry run must not change the checkpoints")
+			})
+		}
+	}
+}
+
+// The parallel workers make the same checks, and they hand back the
+// error unwrapped, as they do in a real run.
+func TestDryRunWorkerRefusesWhereTheRealRunRefuses(t *testing.T) {
+	for _, refusal := range stepRefusals {
+		t.Run(refusal.name, func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+			refusal.setup(t, cfg)
+
+			want := realStepError(t, cfg, refusal.step)
+
+			client := &unconnectedSSHClient{}
+			m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, client)
+			retryQuickly(m)
+			m.progress.TotalSteps = 1
+
+			err := m.runPhasesParallel(context.Background(), []struct {
+				name string
+				fn   func(context.Context) error
+			}{{refusal.step, func(context.Context) error { return nil }}}, 0)
+			require.ErrorIs(t, err, refusal.is)
+			assert.EqualError(t, err, want.Error())
+			assert.Empty(t, client.recorded())
+		})
+	}
+}
+
+// A resumed dry run skips the steps an earlier run finished, and so it
+// skips their checks too, as the real run does.
+func TestDryRunSkipsTheChecksOfResumedSteps(t *testing.T) {
+	for _, parallel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
+			cfg := dryRunBloc(t)
+			dryRunWorkstation(t, cfg)
+			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+			t.Setenv("OCFP_CLI_SOURCE", "nightly")
+
+			client := &unconnectedSSHClient{}
+			m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true, Parallel: parallel, Resume: true}, client)
+			m.progress.Checkpoints["config_files"] = true
+			m.progress.Checkpoints["ocfp_cli_setup"] = true
+
+			require.NoError(t, m.syncAndRun(context.Background()))
+			assert.Empty(t, client.recorded())
+		})
+	}
+}
+
+// On the bastion itself, the local step list makes the ocfp CLI check as
+// well, and wraps its error as the local real run does. A dry run that
+// passes runs nothing on the host.
+func TestLocalExecutorDryRunChecksTheOCFPCLISource(t *testing.T) {
+	dryRunWorkstation(t, dryRunBloc(t))
+
+	mock := &ocfpCLIMockSSHClient{}
+	le, m := localModeManager(&ProvisioningOptions{DryRun: true}, mock)
+	require.NoError(t, le.executeLocalPhases(context.Background(), m))
+	assert.Empty(t, mock.commands, "a dry run on the bastion must not run anything")
+	assert.Empty(t, mock.transfers)
+
+	t.Setenv("OCFP_CLI_SOURCE", "nightly")
+
+	real := &ocfpCLIMockSSHClient{}
+	_, realManager := localModeManager(&ProvisioningOptions{}, real)
+	realErr := realManager.setupOCFPCLI(context.Background())
+	require.ErrorIs(t, realErr, ErrOCFPCLISourceInvalid)
+	assert.Empty(t, real.commands, "the real run refuses before it runs anything")
+
+	mock = &ocfpCLIMockSSHClient{}
+	le, m = localModeManager(&ProvisioningOptions{DryRun: true}, mock)
+	err := le.executeLocalPhases(context.Background(), m)
+	require.ErrorIs(t, err, ErrOCFPCLISourceInvalid)
+	assert.EqualError(t, err, fmt.Sprintf("local phase ocfp_cli_setup failed: %v", realErr))
+	assert.Empty(t, mock.commands)
+}
+
+// When the local ocfp build can't be found, the real run keeps the ocfp
+// already on the bastion and fails when there is none. A dry run can't
+// look, so it says it didn't, and it never claims to keep one.
+func TestDryRunSaysItDidNotLookForTheBastionsOCFP(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+	t.Setenv("OCFP_CLI_SOURCE", "local")
+	t.Setenv("OCFP_BINARY_PATH", filepath.Join(t.TempDir(), "missing"))
+
+	client := &unconnectedSSHClient{}
+	m, _, logs := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, client)
+
+	require.NoError(t, m.syncAndRun(context.Background()))
+	assert.Empty(t, client.recorded())
+	assert.Equal(t, 1, logs.FilterMessage(
+		"DRY RUN: Did not check for an ocfp on the bastion to keep, because that reads the bastion, and a real run fails here without one").Len())
+	assert.Zero(t, logs.FilterMessage("Failed to install OCFP binary, keeping the existing one").Len())
+}
+
+// A dry run says that it didn't check whether the bastion is already
+// provisioned, because a real run that finds it so skips the step list.
+func TestDryRunSaysItDidNotCheckTheProvisionedMarker(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+
+	client := &unconnectedSSHClient{}
+	m, _, logs := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, client)
+
+	require.NoError(t, m.syncAndRun(context.Background()))
+	assert.Empty(t, client.recorded())
+	assert.Equal(t, 1, logs.FilterMessage(
+		"DRY RUN: Did not check whether the bastion is already provisioned, because that reads the bastion").Len())
+}
+
+// A dry run neither waits for the bastion's SSH port nor connects, so it
+// never checks the bastion's host key, and it says so rather than letting
+// a passing dry run stand for a working connection.
+func TestDryRunSaysItDidNotConnect(t *testing.T) {
+	cfg := dryRunBloc(t)
+	dryRunWorkstation(t, cfg)
+	cfg.APIEndpoint = "https://pve.example.invalid:8006"
+	cfg.AuthToken = "root@pam!ocfp"
+	cfg.TokenSecret = "secret"
+	cfg.BastionIP = "10.61.148.10"
+	block, err := gossh.MarshalPrivateKey(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{3}, ed25519.SeedSize)), "")
+	require.NoError(t, err)
+	writeDryRunFile(t, filepath.Join(config.OcfpSSHKeyDir(cfg.Name), "id_ed25519"), string(pem.EncodeToMemory(block)))
+
+	m, _, logs := dryRunManager(t, cfg, &ProvisioningOptions{DryRun: true}, &unconnectedSSHClient{})
+
+	require.NoError(t, m.setupInfrastructure(context.Background()))
+	assert.Equal(t, 1, logs.FilterMessage(
+		"DRY RUN: Did not wait for the bastion's SSH port or connect to it, so its host key was not checked").Len())
+	_, err = os.Stat(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
+	assert.True(t, os.IsNotExist(err), "a dry run must not write known_hosts")
+}
