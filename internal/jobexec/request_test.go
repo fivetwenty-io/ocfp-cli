@@ -134,10 +134,11 @@ func TestSpoolFilesUseTheSharedHelper(t *testing.T) {
 		{"status with an unknown field", statusFile, replaceOnce(t, status, `{"state"`, `{"extra":1,"state"`), false, false},
 		{"status with trailing data", statusFile, append(bytes.Clone(status), '{', '}'), false, false},
 		{"exit with an unknown field", exitFile, replaceOnce(t, exit, `{"exitCode"`, `{"extra":1,"exitCode"`), false, false},
-		{"null status", statusFile, []byte("null\n"), true, false},
+		{"null status", statusFile, []byte("null\n"), false, false},
+		{"null exit", exitFile, []byte("null\n"), true, false},
 		{"status with a repeated state", statusFile, replaceOnce(t, status, `{"state"`, `{"state":"exited","state"`), true, false},
 		{"status with the state in another case", statusFile, replaceOnce(t, status, `{"state"`, `{"State"`), true, false},
-		{"status with invalid UTF-8", statusFile, replaceOnce(t, status, `"running"`, "\"runn\xffing\""), true, false},
+		{"status with invalid UTF-8", statusFile, replaceOnce(t, status, `"running"`, "\"runn\xffing\""), false, false},
 		{"exit with a repeated code", exitFile, replaceOnce(t, exit, `{"exitCode"`, `{"exitCode":1,"exitCode"`), true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
