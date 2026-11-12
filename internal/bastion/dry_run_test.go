@@ -417,12 +417,9 @@ func TestDryRunFullPhaseListNeverReachesTheBastion(t *testing.T) {
 
 			var out bytes.Buffer
 
-			// One worker still runs every parallel phase list, and it keeps
-			// the workers' shared progress bookkeeping, which they update
-			// without a lock, out of this test.
 			client := &unconnectedSSHClient{}
 			m, fetches, logs := dryRunManager(t, cfg,
-				&ProvisioningOptions{DryRun: true, Parallel: parallel, MaxWorkers: 1, ProgressOut: &out}, client)
+				&ProvisioningOptions{DryRun: true, Parallel: parallel, ProgressOut: &out}, client)
 
 			require.NoError(t, m.syncAndRun(context.Background()))
 			assert.Empty(t, client.recorded(), "a dry run must not send anything to the bastion")
