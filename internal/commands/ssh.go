@@ -1060,7 +1060,7 @@ func executeSSH(ctx context.Context, sshCmd []string, bastionHost string) error 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 
-	err := runShowingStderr(cmd, os.Stderr, bastionHost, sshRefusalExit)
+	err := runShowingStderr(cmd, os.Stderr, bastionHost)
 	if err != nil {
 		return fmt.Errorf("ssh command failed: %w", err)
 	}

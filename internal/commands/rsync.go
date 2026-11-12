@@ -487,7 +487,7 @@ func executeRSync(ctx context.Context, rsyncCmd []string, bastionHost string) er
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 
-	err := runShowingStderr(cmd, os.Stderr, bastionHost, transferRefusalExit)
+	err := runShowingStderr(cmd, os.Stderr, bastionHost)
 	if err != nil {
 		return fmt.Errorf("rsync command failed: %w", err)
 	}

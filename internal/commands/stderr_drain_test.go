@@ -56,7 +56,7 @@ func TestRunShowingStderrDoesNotWaitForABackgroundHolder(t *testing.T) {
 
 	start := time.Now()
 
-	err := runShowingStderr(cmd, &terminal, "100.109.226.53", sshRefusalExit)
+	err := runShowingStderr(cmd, &terminal, "100.109.226.53")
 	if err != nil {
 		t.Fatalf("got %v, want success", err)
 	}
@@ -90,7 +90,7 @@ func TestRunShowingStderrDeliversEverythingToASlowTerminal(t *testing.T) {
 
 	cmd := exec.Command("/bin/sh", "-c", "head -c 40000 /dev/zero | tr '\\0' x >&2; exit 0")
 
-	err := runShowingStderr(cmd, terminal, "100.109.226.53", sshRefusalExit)
+	err := runShowingStderr(cmd, terminal, "100.109.226.53")
 	if err != nil {
 		t.Fatalf("got %v, want success", err)
 	}

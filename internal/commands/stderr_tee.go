@@ -50,27 +50,16 @@ func (t *stderrTail) String() string {
 	return string(t.buf)
 }
 
-// sshRefusalExit reports whether an ssh exit status can be ssh's own
-// refusal. ssh exits 255 for its own errors, and any other status is the
-// remote command's, whose output may hold the same words.
-func sshRefusalExit(code int) bool {
-	return code == 255 //nolint:mnd // ssh's own error status
-}
-
-// transferRefusalExit reports whether an scp or rsync exit status can
-// follow ssh's refusal. Both exit 255 when ssh fails, except scp in its
-// legacy protocol, which exits 1.
-func transferRefusalExit(code int) bool {
-	return code == 255 || code == 1 //nolint:mnd // the statuses scp and rsync use when ssh fails
-}
-
 // runShowingStderr runs cmd with its stderr copied to terminal as it comes
-// and its tail kept. When the run fails with a status refusalExit accepts
-// and the tail shows ssh refusing the bastion's host key, the error is the
-// mismatch error, with how to clear the stale entry. An empty bastionHost
-// skips the check. cmd's stdin and stdout are left as the caller set them,
-// so an interactive session still has its terminal.
-func runShowingStderr(cmd *exec.Cmd, terminal io.Writer, bastionHost string, refusalExit func(code int) bool) error {
+// and its tail kept. When the command exits with any failing status and
+// the tail shows ssh refusing the bastion's host key, the error is the
+// mismatch error, with how to clear the stale entry. The status is not a
+// guide: ssh exits 255, legacy scp 1, and rsync 255 or 12, and a wrapper
+// can pick its own. ssh's lines must name the bastion, so a refusal of
+// another host's key is never blamed on it. An empty bastionHost skips
+// the check. cmd's stdin and stdout are left as the caller set them, so
+// an interactive session still has its terminal.
+func runShowingStderr(cmd *exec.Cmd, terminal io.Writer, bastionHost string) error {
 	tail := newStderrTail()
 
 	err := runCopyingStderr(cmd, terminal, tail)
@@ -79,7 +68,7 @@ func runShowingStderr(cmd *exec.Cmd, terminal io.Writer, bastionHost string, ref
 	}
 
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || !refusalExit(exitErr.ExitCode()) {
+	if !errors.As(err, &exitErr) {
 		return err
 	}
 

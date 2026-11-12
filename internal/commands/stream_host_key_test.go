@@ -34,7 +34,9 @@ func fakeOnPath(t *testing.T, name, body string) {
 }
 
 // The streaming commands show ssh's stderr as it comes, and still turn a
-// refusal of the bastion's host key into the mismatch error with its hint.
+// refusal of the bastion's host key into the mismatch error with its hint,
+// whatever non-zero status the command exits with. rsync can exit 12 when
+// ssh refuses the key, and a wrapper can pick its own status.
 func TestStreamingCommandsReportABastionHostKeyRefusal(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -50,6 +52,8 @@ func TestStreamingCommandsReportABastionHostKeyRefusal(t *testing.T) {
 		{"scp", "255", func() error { return executeSCP(context.Background(), []string{"scp", "a", "b"}, "100.109.226.53") }},
 		{"legacy scp", "1", func() error { return executeSCP(context.Background(), []string{"scp", "a", "b"}, "100.109.226.53") }},
 		{"rsync", "255", func() error { return executeRSync(context.Background(), []string{"rsync", "a", "b"}, "100.109.226.53") }},
+		{"rsync", "12", func() error { return executeRSync(context.Background(), []string{"rsync", "a", "b"}, "100.109.226.53") }},
+		{"ssh", "1", func() error { return executeSSH(context.Background(), []string{"ssh", "x"}, "100.109.226.53") }},
 	}
 
 	for _, tt := range runs {
@@ -68,9 +72,10 @@ func TestStreamingCommandsReportABastionHostKeyRefusal(t *testing.T) {
 	}
 }
 
-// Only ssh's own refusal counts. A remote command can print the same words
-// and exit with its own status, and a failure without the words, or one
-// that never reached the bastion, is an ordinary failure.
+// Only a refusal of the bastion's own key counts. An ssh the remote end
+// runs can refuse another host's key, whatever status it exits with, and
+// a failure without the words, or one that never reached the bastion, is
+// an ordinary failure.
 func TestStreamingSSHReportsOnlyItsOwnRefusal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -79,8 +84,8 @@ func TestStreamingSSHReportsOnlyItsOwnRefusal(t *testing.T) {
 		body    string
 		bastion string
 	}{
-		{"RemoteCommandPrintedTheWords", refusalBanner + "exit 1\n", "100.109.226.53"},
 		{"RemoteSSHRefusedAnotherHost", nestedRefusal + "exit 255\n", "100.109.226.53"},
+		{"RemoteSSHRefusedAnotherHostWithItsOwnStatus", nestedRefusal + "exit 1\n", "100.109.226.53"},
 		{"BareMarkersOnly", "echo 'Host key verification failed.' >&2\nexit 255\n", "100.109.226.53"},
 		{"ExitWithoutTheWords", "echo 'Connection refused' >&2\nexit 255\n", "100.109.226.53"},
 		{"NoBastionOnTheRoute", refusalBanner + "exit 255\n", ""},
@@ -112,7 +117,7 @@ func TestRunShowingStderrTeesOnlyStderr(t *testing.T) {
 	cmd := exec.Command(filepath.Join(dir, "noisy")) //nolint:gosec // test-owned path
 	cmd.Stdout = &stdout
 
-	err := runShowingStderr(cmd, &terminal, "100.109.226.53", sshRefusalExit)
+	err := runShowingStderr(cmd, &terminal, "100.109.226.53")
 	if !errors.Is(err, bastionssh.ErrHostKeyMismatch) {
 		t.Fatalf("got %v, want an error matching ErrHostKeyMismatch", err)
 	}
