@@ -87,7 +87,6 @@ func TestBastionScriptRunChecksTheBastionHostKey(t *testing.T) {
 	bastion := &BastionContext{
 		IP:           "10.61.148.10",
 		User:         "ubuntu",
-		SSHOptions:   "",
 		SSHKeyOption: "/tmp/id_ed25519",
 	}
 	log := logger.WithOperation("test")

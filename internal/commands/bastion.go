@@ -269,7 +269,6 @@ func newBastionInitializer(provider string, cfg *config.Config) (bastionprovider
 type BastionContext struct {
 	IP           string
 	User         string
-	SSHOptions   string
 	SSHKeyOption string
 }
 
@@ -324,7 +323,6 @@ func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, err
 		return &BastionContext{
 			IP:           ip,
 			User:         user,
-			SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
 			SSHKeyOption: strings.TrimSpace(key),
 		}, nil
 	}
@@ -348,7 +346,6 @@ func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, err
 	return &BastionContext{
 		IP:           bastionIP,
 		User:         user,
-		SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
 		SSHKeyOption: strings.TrimSpace(key),
 	}, nil
 }
@@ -372,7 +369,6 @@ func buildPlaceholderContext(user, key string) *BastionContext {
 	return &BastionContext{
 		IP:           "placeholder-ip",
 		User:         user,
-		SSHOptions:   "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
 		SSHKeyOption: strings.TrimSpace(key),
 	}
 }
