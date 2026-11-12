@@ -290,7 +290,7 @@ func executeSCP(ctx context.Context, scpCmd []string, bastionHost string) error 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 
-	err := runShowingStderr(cmd, os.Stderr, bastionHost, transferRefusalExit)
+	err := runShowingStderr(cmd, os.Stderr, bastionHost)
 	if err != nil {
 		return fmt.Errorf("scp command failed: %w", err)
 	}
