@@ -13,6 +13,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts"
 	"github.com/fivetwenty-io/ocfp-cli/internal/artifacts/provision"
+	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/cpi"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
@@ -246,6 +247,13 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 	// artifactsDeliverer instead of branching here — see
 	// resolveArtifactsDeliverer (artifacts_deliverer.go).
 	err = resolveArtifactsDeliverer(m.options.Provider).deliverArtifacts(ctx, m, ciInputs, ipStr)
+	if errors.Is(err, ssh.ErrHostKeyMismatch) {
+		// The bastion presented a key that differs from the one on record.
+		// Waiting cannot change that, so stop with the error, which says how
+		// to clear the entry if the bastion was rebuilt on purpose.
+		return fmt.Errorf("artifacts: provisioning delivery; VM %s is recorded in state: %w", vmName, err)
+	}
+
 	if err != nil {
 		// Non-fatal: leave the VM for triage and let the readiness probe
 		// below surface the resulting unhealthy state. The pve delivery

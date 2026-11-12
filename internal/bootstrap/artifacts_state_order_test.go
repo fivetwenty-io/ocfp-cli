@@ -42,6 +42,19 @@ func newArtifactsOrderManager(
 ) (*bootstrap.Manager, *fakeComputeEnhanced, string) {
 	t.Helper()
 
+	return newArtifactsOrderManagerOn(t, "fake", "", st, override...)
+}
+
+// newArtifactsOrderManagerOn is newArtifactsOrderManager for the named
+// provider, with the bloc's bastion at bastionIP.
+func newArtifactsOrderManagerOn(
+	t *testing.T,
+	provider, bastionIP string,
+	st cpi.StorageManager,
+	override ...cpi.ComputeManager,
+) (*bootstrap.Manager, *fakeComputeEnhanced, string) {
+	t.Helper()
+
 	stateDir := t.TempDir()
 
 	stateManager, err := state.NewManager(stateDir)
@@ -72,9 +85,10 @@ func newArtifactsOrderManager(
 	}
 
 	cfg := &config.Config{
-		Name:   "prod",
-		Region: "eu01",
-		AZs:    map[string]config.AvailabilityZone{"eu01-1": {}},
+		Name:      "prod",
+		Region:    "eu01",
+		BastionIP: bastionIP,
+		AZs:       map[string]config.AvailabilityZone{"eu01-1": {}},
 		Artifacts: config.ArtifactsConfig{
 			Enabled:  true,
 			Flavor:   "c1.4",
@@ -94,7 +108,7 @@ func newArtifactsOrderManager(
 	}
 
 	manager := bootstrap.NewManager(cfg, prov, stateManager, &bootstrap.Options{
-		BlocName: "prod", Provider: "fake", Region: "eu01", Yes: true,
+		BlocName: "prod", Provider: provider, Region: "eu01", Yes: true,
 	})
 
 	return manager, compute, stateDir
