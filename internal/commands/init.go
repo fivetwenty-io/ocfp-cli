@@ -276,6 +276,14 @@ func (f *initFlags) validatePrerequisitesIfNeeded(ctx context.Context, cfg *conf
 		return nil
 	}
 
+	// The bastion check runs ssh against the bastion, and a dry run of
+	// init bastion never connects to it.
+	if f.dryRun && component == RoleBastion {
+		logger.Get().Infow("DRY RUN: Would check SSH connectivity to the bastion", "bloc", cfg.Name)
+
+		return nil
+	}
+
 	err := validatePrerequisites(ctx, cfg, component)
 	if err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
