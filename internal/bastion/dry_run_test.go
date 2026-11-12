@@ -776,6 +776,7 @@ func TestRealRunFinalSummaryIsUnchanged(t *testing.T) {
 
 	m, _, _ := dryRunManager(t, cfg, &ProvisioningOptions{}, &unconnectedSSHClient{})
 	m.progress.StartTime = time.Now()
+	m.progress.TotalSteps = 3
 	m.reporter = NewProgressReporter(&out, output.ModeJSON, m.progress)
 
 	m.finalizeInitialization(context.Background(), make([]struct {
