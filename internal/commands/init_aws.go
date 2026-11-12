@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -19,7 +19,9 @@ import (
 // interior character (so the first and last chars cannot overlap).
 // Examples accepted: "ocfp-aws-us-east-1", "my-bloc", "prod"
 // Examples rejected: "Foo", "-bar", "bar-", "a", "bad name!".
-var validBlocPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
+// It is the owner record's bloc rule, so a bloc init creates is one a host's
+// owner record can name.
+var validBlocPattern = ownerrecord.BlocPattern
 
 // ErrBlocFormatInvalid is returned when the resolved bloc value does not match
 // the required format (lowercase alphanumeric + internal dashes, min length 2).

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 
@@ -254,17 +255,20 @@ func checkContract(req Request) error {
 	return refuse(progress.CodeWireContractUnsupported, msg)
 }
 
-// checkOrgBloc refuses a request whose org or bloc is missing or not of the
-// name form, and then one whose org or bloc is not the record's. The form is
+// checkOrgBloc refuses a request whose org or bloc is missing or not of its
+// form, and then one whose org or bloc is not the record's. The form is
 // checked first, so a request that names nothing is never read as one for
 // another host.
 func checkOrgBloc(req Request, rec ownerrecord.Record) error {
-	for _, f := range []struct{ name, value string }{{"org", req.Org}, {"bloc", req.Bloc}} {
+	for _, f := range []struct {
+		name, value string
+		form        *regexp.Regexp
+	}{{"org", req.Org, ownerrecord.NamePattern}, {"bloc", req.Bloc, ownerrecord.BlocPattern}} {
 		switch {
 		case f.value == "":
 			return invalid("job request names no " + f.name)
-		case !ownerrecord.NamePattern.MatchString(f.value):
-			return invalid("job request " + f.name + " " + quote(f.value) + " is not of the form " + ownerrecord.NamePattern.String())
+		case !f.form.MatchString(f.value):
+			return invalid("job request " + f.name + " " + quote(f.value) + " is not of the form " + f.form.String())
 		}
 	}
 

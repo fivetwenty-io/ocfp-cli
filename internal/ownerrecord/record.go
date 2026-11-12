@@ -11,10 +11,17 @@ import (
 	"time"
 )
 
-// NamePattern is the form of every name that may become part of a path on the
-// host: a job id, an org, and a bloc. It can never hold a path separator or
-// start with a dot or a dash.
+// NamePattern is the form of a job id and an org, either of which may become
+// part of a path on the host. It can never hold a path separator or start with
+// a dot or a dash.
 var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+
+// BlocPattern is the form of every bloc name: lower-case letters, digits, and
+// dashes, at least two characters, starting and ending with a letter or a
+// digit. It is the rule init applies when it creates a bloc, so every bloc the
+// tool makes is one an owner record can name. It can never hold a path
+// separator or start with a dot or a dash.
+var BlocPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
 
 // Mode says whether the owner may act on the bloc or is handing it over.
 type Mode string
@@ -35,8 +42,8 @@ type Record struct {
 	InstallationID string `json:"installationId"`
 
 	// Org and Bloc name the organisation and the bloc that this record's host
-	// serves. A job request must name the same two. Each matches NamePattern,
-	// because either may name a directory.
+	// serves. A job request must name the same two. Org matches NamePattern
+	// and Bloc matches BlocPattern.
 	Org  string `json:"org"`
 	Bloc string `json:"bloc"`
 

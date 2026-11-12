@@ -347,6 +347,31 @@ func TestOpenRefusesMalformedPayload(t *testing.T) {
 	}
 }
 
+// TestSealTakesEveryBlocName checks that a record may name any bloc the tool
+// can create, including one longer than an org may be.
+func TestSealTakesEveryBlocName(t *testing.T) {
+	t.Parallel()
+
+	for _, bloc := range []string{"b2", "ocfp-aws-us-east-1", "0-0", strings.Repeat("b", 65)} {
+		r := liveRecord()
+		r.Bloc = bloc
+
+		raw, err := ownerrecord.Seal(r, testSign)
+		if err != nil {
+			t.Fatalf("Seal refused bloc %q: %v", bloc, err)
+		}
+
+		got, err := ownerrecord.Open(raw)
+		if err != nil {
+			t.Fatalf("Open refused bloc %q: %v", bloc, err)
+		}
+
+		if got.Bloc != bloc {
+			t.Errorf("Open gave bloc %q, want %q", got.Bloc, bloc)
+		}
+	}
+}
+
 func TestOpenRefusesInvalidRecord(t *testing.T) {
 	t.Parallel()
 
@@ -363,7 +388,9 @@ func TestOpenRefusesInvalidRecord(t *testing.T) {
 		"org in upper case":      func(r *ownerrecord.Record) { r.Org = "Org" },
 		"bloc with a separator":  func(r *ownerrecord.Record) { r.Bloc = "bloc/x" },
 		"bloc with a dash first": func(r *ownerrecord.Record) { r.Bloc = "-bloc" },
-		"bloc too long":          func(r *ownerrecord.Record) { r.Bloc = strings.Repeat("b", 65) },
+		"bloc of one character":  func(r *ownerrecord.Record) { r.Bloc = "b" },
+		"bloc with a dash last":  func(r *ownerrecord.Record) { r.Bloc = "bloc-" },
+		"bloc in upper case":     func(r *ownerrecord.Record) { r.Bloc = "Bloc" },
 		"bloc with a newline":    func(r *ownerrecord.Record) { r.Bloc = "bloc\n" },
 		"no signer":              func(r *ownerrecord.Record) { r.SignerID = "" },
 		"no signed time":         func(r *ownerrecord.Record) { r.SignedAt = time.Time{} },

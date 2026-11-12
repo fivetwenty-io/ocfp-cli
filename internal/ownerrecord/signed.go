@@ -263,8 +263,8 @@ func (r Record) validate() error {
 		return fmt.Errorf("org %+q is not of the form %s", r.Org, NamePattern)
 	case r.Bloc == "":
 		return errors.New("no bloc")
-	case !NamePattern.MatchString(r.Bloc):
-		return fmt.Errorf("bloc %+q is not of the form %s", r.Bloc, NamePattern)
+	case !BlocPattern.MatchString(r.Bloc):
+		return fmt.Errorf("bloc %+q is not of the form %s", r.Bloc, BlocPattern)
 	case r.Mode != ModeLive && r.Mode != ModeHandover:
 		return fmt.Errorf("unknown mode %q", r.Mode)
 	case r.Mode == ModeHandover && r.Relocation == nil:

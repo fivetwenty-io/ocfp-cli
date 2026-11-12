@@ -55,6 +55,8 @@ func TestCheckOwnerOrgAndBloc(t *testing.T) {
 		{"bloc with a separator", func(r *Request) { r.Bloc = "bloc/fixture" }, "bloc \"bloc/fixture\" is not of the form"},
 		{"bloc with a dash first", func(r *Request) { r.Bloc = "-bloc" }, "is not of the form"},
 		{"bloc with a newline", func(r *Request) { r.Bloc = "bloc-fixture\n" }, "is not of the form"},
+		{"bloc of one character", func(r *Request) { r.Bloc = "b" }, "bloc \"b\" is not of the form"},
+		{"bloc with a dash last", func(r *Request) { r.Bloc = "bloc-" }, "is not of the form"},
 		{"org with U+FFFD", func(r *Request) { r.Org = "org-�" }, "org holds U+FFFD"},
 		{"bloc with U+FFFD", func(r *Request) { r.Bloc = "bloc-�" }, "bloc holds U+FFFD"},
 	} {
@@ -102,6 +104,29 @@ func TestCheckOwnerOrgAndBloc(t *testing.T) {
 			wantUnlocked(t, st)
 		})
 	}
+}
+
+// TestCheckOwnerTakesALongBloc checks that a bloc longer than an org may be is
+// still a bloc a request can name.
+func TestCheckOwnerTakesALongBloc(t *testing.T) {
+	t.Parallel()
+
+	bloc := strings.Repeat("b", 65)
+
+	s := baseScenario()
+	s.record.Bloc = bloc
+	s.request.Bloc = bloc
+
+	st, _, _, release, err := s.check(t)
+	if err != nil {
+		t.Fatalf("CheckOwner refused a %d-character bloc: %v", len(bloc), err)
+	}
+
+	if err := release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	wantUnlocked(t, st)
 }
 
 // TestCheckOwnerRefusesAnotherOrgOrBloc checks that a request signed by the owner
