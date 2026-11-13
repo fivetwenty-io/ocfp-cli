@@ -153,6 +153,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # The test run's cache can't see a package added since the check last
+      # ran, so the check gets a step of its own that never uses the cache.
+      - name: Check every test package isolates its home
+        run: bash scripts/ci/check-test-isolation.sh
+
       # -race in a container makes the larger packages slow enough to crowd
       # go test's 10 minute per-package default, which aborts the whole run
       # with a panic instead of a test failure.

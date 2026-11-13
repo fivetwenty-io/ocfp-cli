@@ -269,6 +269,7 @@ preflight-lint: $(GOLANGCI_LINT_BIN) ## CI Lint job: gofmt, go vet, golangci-lin
 preflight-test: test-scripts ## CI Test job (plus the script tests)
 	@echo "$(GREEN)[preflight] Test$(RESET)"
 	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go mod download
+	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" bash scripts/ci/check-test-isolation.sh
 	@GOFLAGS="$(PREFLIGHT_GOFLAGS)" go test -race -timeout 25m -coverprofile=coverage.txt -covermode=atomic ./...
 
 preflight-build: ## CI Build job: cross-compile every target
