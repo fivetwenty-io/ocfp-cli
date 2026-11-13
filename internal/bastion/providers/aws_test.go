@@ -171,6 +171,9 @@ func TestGetBastionIP_StatePresent_NoEC2Call(t *testing.T) {
 // available in config or env, getBastionIP falls through to EC2 and returns the
 // discovered IP.
 func TestGetBastionIP_StateMissing_EC2FallbackInvoked(t *testing.T) {
+	isolateOcfpHome(t)
+	t.Setenv("AWS_BASTION_IP", "")
+
 	fake := &fakeEC2Client{
 		output: &ec2.DescribeInstancesOutput{
 			Reservations: []types.Reservation{
@@ -189,8 +192,8 @@ func TestGetBastionIP_StateMissing_EC2FallbackInvoked(t *testing.T) {
 		},
 	}
 
-	// No BastionIP, no env var set; state dir will not exist, so state lookup
-	// returns an error and the code falls through to EC2.
+	// No BastionIP, no env var set; the isolated home holds no state, so the
+	// state lookup returns an error and the code falls through to EC2.
 	cfg := &config.Config{
 		Name:   "mybloc",
 		Region: "us-east-1",
