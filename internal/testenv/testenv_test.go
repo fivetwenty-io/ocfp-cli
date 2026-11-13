@@ -152,6 +152,11 @@ type listedPackage struct {
 
 // Every package whose tests can reach ocfp's directories gives them a home
 // of their own, so none can reach the developer's real ones.
+//
+// The test asks go list about the whole module, which Go's test cache can't
+// see, so a cached pass proves nothing about a package added since.
+// scripts/ci/check-test-isolation.sh runs it with -count=1, and both ci.yml
+// and `make preflight` call that script.
 func TestEveryPackageThatReachesOcfpPathsIsolatesItsTests(t *testing.T) {
 	root, module := moduleRoot(t, "")
 	packages := listPackages(t, root)
