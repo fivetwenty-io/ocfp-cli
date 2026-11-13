@@ -417,3 +417,20 @@ func TestUseOcfpHomePanicsOutsideAnIsolatedProcess(t *testing.T) {
 
 	assert.Panics(t, func() { testenv.UseOcfpHome() })
 }
+
+func TestGuardOnlyMakesTheWriteGuardRefuseThatPathAndNoOther(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "state.yml")
+
+	testenv.GuardOnly(t, target)
+
+	assert.Contains(t, testenv.PanicMessage(func() { writeguard.Check("a write", target) }), "SAFETY GUARD")
+	assert.Empty(t, testenv.PanicMessage(func() { writeguard.Check("a write", dir) }), "a parent of the path stays open")
+	assert.Empty(t, testenv.PanicMessage(func() { writeguard.Check("a write", filepath.Join(dir, "other")) }))
+}
+
+func TestPanicMessageReturnsWhatTheFunctionPanickedWith(t *testing.T) {
+	assert.Empty(t, testenv.PanicMessage(func() {}))
+	assert.Equal(t, "boom", testenv.PanicMessage(func() { panic("boom") }))
+	assert.Equal(t, "an error", testenv.PanicMessage(func() { panic(errors.New("an error")) }))
+}
