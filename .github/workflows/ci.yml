@@ -153,6 +153,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # A directory left by an earlier job on this runner would otherwise
+      # fail the check after the tests, with a message that blames a test.
+      - name: Check the runner started with no ocfp directories
+        run: bash scripts/ci/check-no-ocfp-dirs.sh --before-tests
+
       # The test run's cache can't see a package added since the check last
       # ran, so the check gets a step of its own that never uses the cache.
       - name: Check every test package isolates its home

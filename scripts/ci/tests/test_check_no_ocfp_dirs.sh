@@ -61,6 +61,26 @@ run_cmd env HOME="$HOME_DIR" bash "$SCRIPT"
 assert_out_contains "$passwd_home/.local/state/ocfp" "defaults to the passwd home, not HOME"
 
 run_cmd bash "$SCRIPT" "$HOME_DIR" extra
-assert_status 2 "more than one argument is a usage error"
+assert_status 2 "two arguments after the home are a usage error"
+
+run_cmd bash "$SCRIPT" --before-tests "$HOME_DIR" extra
+assert_status 2 "more arguments than the flag and a home are a usage error"
+
+# Run before the tests, the script blames what it finds on the runner, not
+# on a test.
+mkdir -p "$HOME_DIR/.local/state/ocfp/leftover"
+check
+assert_out_contains "A test wrote an ocfp directory" "after the tests, blames a test"
+run_cmd env -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u XDG_DATA_HOME -u XDG_CACHE_HOME -u OCFP_HOME \
+  HOME="$HOME_DIR" bash "$SCRIPT" --before-tests "$HOME_DIR"
+assert_status 1 "fails before the tests when a directory is already there"
+assert_out_contains "before the tests ran" "says the directory predates the tests"
+assert_out_lacks "A test wrote" "does not blame a test"
+assert_out_contains "$HOME_DIR/.local/state/ocfp/leftover" "lists what the leftover holds"
+rm -rf "${HOME_DIR:?}/.local"
+
+run_cmd env -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u XDG_DATA_HOME -u XDG_CACHE_HOME -u OCFP_HOME \
+  HOME="$HOME_DIR" bash "$SCRIPT" --before-tests "$HOME_DIR"
+assert_status 0 "passes before the tests when nothing is there"
 
 finish

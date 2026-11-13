@@ -2,7 +2,12 @@
 # Fails when any ocfp directory exists in the user's home. CI runs it after
 # the tests, in a container that started with none, so a test that wrote
 # the real ocfp config, state, data, or cache directories fails the job.
-# Usage: check-no-ocfp-dirs.sh [home]
+# Usage: check-no-ocfp-dirs.sh [--before-tests] [home]
+#
+# CI also runs it before the tests with --before-tests. A directory found
+# then was left by an earlier job on the same runner, so the failure says
+# that instead of blaming a test, and it stops that leftover from failing
+# every later job with a message about the wrong commit.
 #
 # The home defaults to the one in the passwd entry, which a test that moves
 # HOME can't hide. The script also checks the directories that HOME, the
@@ -11,8 +16,14 @@
 # developer's machine has real ocfp directories.
 set -euo pipefail
 
+before_tests=0
+if [ "${1:-}" = "--before-tests" ]; then
+  before_tests=1
+  shift
+fi
+
 if [ $# -gt 1 ]; then
-  echo "usage: $0 [home]" >&2
+  echo "usage: $0 [--before-tests] [home]" >&2
   exit 2
 fi
 
@@ -61,7 +72,11 @@ for dir in "${dirs[@]}"; do
 done
 
 if [ "$found" -ne 0 ]; then
-  echo "A test wrote an ocfp directory in the home. Every test package must run its tests in a temporary home with testenv." >&2
+  if [ "$before_tests" -ne 0 ]; then
+    echo "An ocfp directory existed before the tests ran. An earlier job on this runner left it, and the runner's home was not wiped. Remove it on the runner." >&2
+  else
+    echo "A test wrote an ocfp directory in the home. Every test package must run its tests in a temporary home with testenv." >&2
+  fi
   exit 1
 fi
 echo "No ocfp directories exist."
