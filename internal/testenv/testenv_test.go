@@ -153,7 +153,7 @@ type listedPackage struct {
 // Every package whose tests can reach ocfp's directories gives them a home
 // of their own, so none can reach the developer's real ones.
 func TestEveryPackageThatReachesOcfpPathsIsolatesItsTests(t *testing.T) {
-	root, module := moduleRoot(t)
+	root, module := moduleRoot(t, "")
 	packages := listPackages(t, root)
 
 	require.Contains(t, packages, module+"/internal/config", "go list must find the config package")
@@ -182,15 +182,16 @@ func TestEveryPackageThatReachesOcfpPathsIsolatesItsTests(t *testing.T) {
 	assert.Contains(t, checked, module+"/internal/config", "the check must cover the config package itself")
 }
 
-// moduleRoot returns the module's directory and path.
-func moduleRoot(t *testing.T) (string, string) {
+// moduleRoot returns the directory and path of the module that holds dir,
+// or of the test's own module when dir is empty.
+func moduleRoot(t *testing.T, dir string) (string, string) {
 	t.Helper()
 
-	out := goCommand(t, "", "list", "-m", "-f", "{{.Dir}}\t{{.Path}}")
-	dir, module, ok := strings.Cut(strings.TrimSpace(out), "\t")
+	out := goCommand(t, dir, "list", "-m", "-f", "{{.Dir}}\t{{.Path}}")
+	root, module, ok := strings.Cut(strings.TrimSpace(out), "\t")
 	require.True(t, ok, "go list -m printed %q", out)
 
-	return dir, module
+	return root, module
 }
 
 // listPackages lists every package in the module and every test binary,
@@ -315,6 +316,8 @@ func callsSelector(body ast.Node, pkg string, fns ...string) bool {
 }
 
 // goCommand runs the go command in dir and returns its standard output.
+// It turns workspace mode off, since a go.work above the module would make
+// go list name every module in the workspace instead of the one under test.
 func goCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 
@@ -322,6 +325,7 @@ func goCommand(t *testing.T, dir string, args ...string) string {
 
 	cmd := exec.CommandContext(t.Context(), "go", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -347,4 +351,36 @@ func TestOcfpHomePanicsWhenTheEnvironmentNamesNoUsableDirectory(t *testing.T) {
 			assert.Panics(t, func() { testenv.OcfpHome() })
 		})
 	}
+}
+
+// A developer can work in a go.work that lists this module beside others.
+// The check must still see one module, the one it runs in.
+func TestTheCheckSeesOneModuleInsideAGoWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+
+	for _, name := range []string{"first", "second"} {
+		dir := filepath.Join(workspace, name)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/"+name+"\n\ngo 1.21\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name+".go"), []byte("package "+name+"\n"), 0o600))
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.work"), []byte("go 1.21\n\nuse (\n\t./first\n\t./second\n)\n"), 0o600))
+
+	root, module := moduleRoot(t, filepath.Join(workspace, "second"))
+	assert.Equal(t, "example.com/second", module)
+	assert.Equal(t, evalSymlinks(t, filepath.Join(workspace, "second")), evalSymlinks(t, root))
+
+	packages := listPackages(t, root)
+	assert.Contains(t, packages, "example.com/second")
+	assert.NotContains(t, packages, "example.com/first")
+}
+
+func evalSymlinks(t *testing.T, path string) string {
+	t.Helper()
+
+	resolved, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+
+	return resolved
 }
