@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -514,55 +515,38 @@ func (km *KeyManager) isValidPrivateKey(keyPath string) bool {
 	return err == nil
 }
 
-// isKeyPasswordProtected checks if key data represents an encrypted key.
+// isKeyPasswordProtected reports whether keyData holds a private key that
+// needs a passphrase. It recognises the legacy PEM forms by their headers
+// and block types, and every other form, the OpenSSH format among them, by
+// asking the ssh package to parse the key. The OpenSSH format names its
+// cipher inside the base64 body, so no marker in the text shows it.
 func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
-	// Check for encrypted key markers
-	keyStr := string(keyData)
-
-	// Common encrypted key indicators
-	encryptedMarkers := []string{
-		"ENCRYPTED",
-		"Proc-Type: 4,ENCRYPTED",
-		"BEGIN ENCRYPTED PRIVATE KEY",
+	if hasEncryptedPEMMarker(keyData) {
+		return true
 	}
 
-	for _, marker := range encryptedMarkers {
-		if strings.Contains(keyStr, marker) {
-			return true
-		}
-	}
+	_, err := ssh.ParseRawPrivateKey(keyData)
 
-	// Parse PEM block to check for encryption
+	var missing *ssh.PassphraseMissingError
+
+	return errors.As(err, &missing)
+}
+
+// hasEncryptedPEMMarker reports whether keyData is a PEM key that says it
+// is encrypted, with a Proc-Type header of 4,ENCRYPTED or as an encrypted
+// PKCS#8 block. The ssh package can't parse the second form at all, so it
+// can't report that it needs a passphrase.
+func hasEncryptedPEMMarker(keyData []byte) bool {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
 		return false
 	}
 
-	// Check PEM headers for encryption
-	if procType, ok := block.Headers["Proc-Type"]; ok {
-		if strings.Contains(procType, "ENCRYPTED") {
-			return true
-		}
-	}
-
-	// Check for PKCS#8 encrypted key
-	if block.Type == "ENCRYPTED PRIVATE KEY" {
+	if strings.Contains(block.Headers["Proc-Type"], "ENCRYPTED") {
 		return true
 	}
 
-	// Try to parse the key - if it fails with decryption error, it's encrypted
-	_, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		// Check if error suggests encryption
-		errStr := err.Error()
-		if strings.Contains(errStr, "decrypt") ||
-			strings.Contains(errStr, "password") ||
-			strings.Contains(errStr, "encrypted") {
-			return true
-		}
-	}
-
-	return false
+	return block.Type == "ENCRYPTED PRIVATE KEY"
 }
 
 func (km *KeyManager) ensureSSHDirectory(keyPath string) error {
