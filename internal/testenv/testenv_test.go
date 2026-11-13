@@ -32,11 +32,15 @@ func TestMainGivesTheTestsATreeOfTheirOwn(t *testing.T) {
 	require.NotEmpty(t, home)
 
 	tree := filepath.Dir(home)
-	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OCFP_HOME"} {
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
 		value := os.Getenv(name)
 		assert.Equal(t, tree, filepath.Dir(value), "%s must sit in the tree", name)
 		assert.DirExists(t, value, name)
 	}
+
+	// Without OCFP_HOME the tests resolve ocfp's directories the way a user
+	// without it does, through the XDG layout.
+	assert.Empty(t, os.Getenv("OCFP_HOME"))
 
 	assert.Equal(t, "1", os.Getenv(writeguard.EnvVar))
 }
@@ -74,11 +78,14 @@ func TestIsolateMovesEveryHomeVariableAndPinsTheGoCaches(t *testing.T) {
 
 	for name, dir := range map[string]string{
 		"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_STATE_HOME": "state",
-		"XDG_DATA_HOME": "data", "XDG_CACHE_HOME": "cache", "OCFP_HOME": "ocfp",
+		"XDG_DATA_HOME": "data", "XDG_CACHE_HOME": "cache",
 	} {
 		assert.Equal(t, filepath.Join(tree, dir), os.Getenv(name))
 		assert.DirExists(t, filepath.Join(tree, dir))
 	}
+
+	_, set := os.LookupEnv("OCFP_HOME")
+	assert.False(t, set, "an OCFP_HOME from the developer's shell must not reach the tests")
 
 	for name, value := range goSettings {
 		assert.Equal(t, value, os.Getenv(name), "%s must stay where it was", name)
@@ -388,4 +395,25 @@ func evalSymlinks(t *testing.T, path string) string {
 	require.NoError(t, err)
 
 	return resolved
+}
+
+func TestUseOcfpHomeCollapsesOcfpOntoTheTree(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": t.TempDir()})
+
+	tree := t.TempDir()
+	require.NoError(t, testenv.Isolate(tree, func() (map[string]string, error) { return nil, nil }))
+
+	dir := testenv.UseOcfpHome()
+
+	assert.Equal(t, filepath.Join(tree, "ocfp"), dir)
+	assert.DirExists(t, dir)
+	assert.Equal(t, dir, testenv.OcfpHome())
+}
+
+// Outside an isolated process the directory UseOcfpHome would name is the
+// developer's own.
+func TestUseOcfpHomePanicsOutsideAnIsolatedProcess(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": t.TempDir()})
+
+	assert.Panics(t, func() { testenv.UseOcfpHome() })
 }
