@@ -123,6 +123,16 @@ func testKeyPEM(t *testing.T, passphrase string) string {
 	return string(pem.EncodeToMemory(block))
 }
 
+// fakeSSHPass puts an sshpass first on PATH, so the providers that check
+// for it find it on every machine.
+func fakeSSHPass(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sshpass"), []byte("#!/bin/sh\nexit 0\n"), 0o700)) //nolint:gosec // an executable fake
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // connectionDetailer is the pair of lookups each provider offers.
 type connectionDetailer interface {
 	GetConnectionDetails(ctx context.Context) (*ConnectionDetails, error)
@@ -139,6 +149,9 @@ type providerCase struct {
 	// build returns the provider for cfg, after setting whatever gives it
 	// the bastion's IP once the state lookup comes up empty.
 	build func(t *testing.T, cfg *config.Config) connectionDetailer
+	// sshpass is whether the provider answers an encrypted key with the
+	// bloc's name as its passphrase, passed through sshpass. GCP doesn't.
+	sshpass bool
 }
 
 func ec2ReturningIP(ip string) *fakeEC2Client {
@@ -153,25 +166,25 @@ var providerCases = []providerCase{
 		a.ec2Client = ec2ReturningIP("54.0.0.10")
 
 		return a
-	}},
+	}, true},
 	{"pve", dryRunBlocName + "-keypair", "10.0.0.20", func(t *testing.T, cfg *config.Config) connectionDetailer {
 		t.Helper()
 		t.Setenv("PVE_BASTION_IP", "10.0.0.20")
 
 		return NewPVEBastionInit(cfg)
-	}},
+	}, true},
 	{"stackit", dryRunBlocName + "-keypair", "10.0.0.30", func(t *testing.T, cfg *config.Config) connectionDetailer {
 		t.Helper()
 		t.Setenv("STACKIT_BASTION_IP", "10.0.0.30")
 
 		return NewStackitBastionInit(cfg)
-	}},
+	}, true},
 	{"gcp", dryRunBlocName + "-keypair", "10.0.0.40", func(t *testing.T, cfg *config.Config) connectionDetailer {
 		t.Helper()
 		t.Setenv("OCFP_BASTION_IP", "10.0.0.40")
 
 		return NewGCPBastionInit(cfg)
-	}},
+	}, false},
 }
 
 // A dry run's connection lookup writes nothing. Where the real lookup
@@ -181,8 +194,11 @@ var providerCases = []providerCase{
 func TestPreviewConnectionDetailsWritesNothing(t *testing.T) {
 	for _, tc := range providerCases {
 		for _, passphrase := range []string{"", dryRunBlocName} {
-			t.Run(fmt.Sprintf("%s encrypted=%t", tc.name, passphrase != ""), func(t *testing.T) {
+			// The name becomes part of the key's path, so it keeps to the
+			// characters that a key path may hold.
+			t.Run(tc.name+map[bool]string{true: "_encrypted", false: "_plain"}[passphrase != ""], func(t *testing.T) {
 				roots := dryRunHome(t)
+				fakeSSHPass(t)
 				cfg := &config.Config{Name: dryRunBlocName, Keys: map[string]string{tc.keyName: testKeyPEM(t, passphrase)}}
 				provider := tc.build(t, cfg)
 				keyPath := filepath.Join(config.OcfpSSHKeyDir(dryRunBlocName), "id_ed25519")
@@ -193,6 +209,11 @@ func TestPreviewConnectionDetailsWritesNothing(t *testing.T) {
 				assert.Equal(t, before, fileTree(t, roots...), "a dry run must write nothing")
 				assert.Equal(t, keyPath, preview.PrivateKeyPath)
 				assert.Equal(t, tc.host, preview.Host)
+
+				encrypted := passphrase != "" && tc.sshpass
+				assert.Equal(t, encrypted, preview.UseSSHPass, "an encrypted key goes through sshpass")
+				assert.Equal(t, map[bool]string{true: dryRunBlocName, false: ""}[encrypted], preview.Password,
+					"an encrypted key's passphrase is the bloc's name")
 
 				real, err := provider.GetConnectionDetails(context.Background())
 				require.NoError(t, err)
