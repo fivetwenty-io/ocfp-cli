@@ -21,6 +21,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
 	"github.com/fivetwenty-io/ocfp-cli/internal/state"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/goccy/go-yaml"
 )
 
@@ -1292,6 +1293,8 @@ func (m *Manager) validatePrerequisites() error {
 	// Create local directories
 	logDir := filepath.Join(config.GetLogDir(), "provision")
 
+	writeguard.Check("bastion provision log directory", logDir)
+
 	err := os.MkdirAll(logDir, logDirectoryMode) // #nosec -- path components are from trusted config
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
@@ -1733,6 +1736,8 @@ func (m *Manager) saveCheckpoint() error {
 	// Implementation would save checkpoint data to file
 	// For now, just create the directory
 	dir := filepath.Dir(checkpointPath)
+
+	writeguard.Check("bastion checkpoint directory", dir)
 
 	err := os.MkdirAll(dir, logDirectoryMode) // #nosec -- path components are from trusted config
 	if err != nil {

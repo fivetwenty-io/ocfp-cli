@@ -571,12 +571,6 @@ func TestInitPVE_UsesXDGDataHomeWhenOCFPHomeUnset(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	// testSafetyGuard (TestMain sets OCFP_TEST_SAFETY_GUARD=1 package-wide)
-	// compares OcfpHome() against a real-home-derived legacy root computed
-	// from the SAME os.UserHomeDir() call, so it panics whenever OCFP_HOME
-	// is unset regardless of a faked HOME. Disable it for this test only;
-	// the faked HOME below still protects the real home directory.
-	t.Setenv("OCFP_TEST_SAFETY_GUARD", "")
 	t.Setenv("OCFP_HOME", "")
 	// Clear every inherited XDG override too: a developer shell that
 	// exports XDG_STATE_HOME would otherwise steer this test's writes

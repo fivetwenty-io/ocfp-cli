@@ -12,6 +12,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 )
 
 const (
@@ -113,6 +114,8 @@ func (cm *CheckpointManager) Save(shared *ProvisioningProgress, metadata map[str
 	if cm.afterSnapshot != nil {
 		cm.afterSnapshot()
 	}
+
+	writeguard.Check("CheckpointManager.Save", cm.checkpointDir)
 
 	// Ensure checkpoint directory exists
 	err := os.MkdirAll(cm.checkpointDir, checkpointDirMode)
@@ -224,6 +227,8 @@ func (cm *CheckpointManager) Clear() error {
 	if os.IsNotExist(err) {
 		return nil // Nothing to clear
 	}
+
+	writeguard.Check("CheckpointManager.Clear", checkpointFile)
 
 	err = os.Remove(checkpointFile)
 	if err != nil {

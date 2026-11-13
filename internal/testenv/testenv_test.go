@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +37,8 @@ func TestMainGivesTheTestsATreeOfTheirOwn(t *testing.T) {
 		assert.Equal(t, tree, filepath.Dir(value), "%s must sit in the tree", name)
 		assert.DirExists(t, value, name)
 	}
+
+	assert.Equal(t, "1", os.Getenv(writeguard.EnvVar))
 }
 
 // fakeEnv sets every variable that Isolate reads or writes, so the test
@@ -45,7 +48,7 @@ func fakeEnv(t *testing.T, values map[string]string) {
 
 	for _, name := range []string{
 		"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OCFP_HOME",
-		"GOENV", "GOCACHE", "GOMODCACHE", "GOPATH",
+		"GOENV", "GOCACHE", "GOMODCACHE", "GOPATH", writeguard.EnvVar, writeguard.RootsEnvVar,
 	} {
 		t.Setenv(name, values[name])
 	}
@@ -53,7 +56,11 @@ func fakeEnv(t *testing.T, values map[string]string) {
 
 func TestIsolateMovesEveryHomeVariableAndPinsTheGoCaches(t *testing.T) {
 	realHome := t.TempDir()
-	fakeEnv(t, map[string]string{"HOME": realHome})
+	fakeEnv(t, map[string]string{
+		"HOME":           realHome,
+		"XDG_STATE_HOME": "/custom/state",
+		"OCFP_HOME":      "/custom/ocfp",
+	})
 
 	tree := t.TempDir()
 	goSettings := map[string]string{
@@ -76,6 +83,34 @@ func TestIsolateMovesEveryHomeVariableAndPinsTheGoCaches(t *testing.T) {
 	for name, value := range goSettings {
 		assert.Equal(t, value, os.Getenv(name), "%s must stay where it was", name)
 	}
+
+	assert.Equal(t, "1", os.Getenv(writeguard.EnvVar))
+
+	roots := filepath.SplitList(os.Getenv(writeguard.RootsEnvVar))
+	for _, want := range []string{
+		"/custom/ocfp",
+		filepath.Join("/custom/state", "ocfp"),
+		filepath.Join(realHome, ".ocfp"),
+		filepath.Join(realHome, ".local", "state", "ocfp"),
+		filepath.Join(realHome, ".local", "share", "ocfp"),
+		filepath.Join(realHome, ".config", "ocfp"),
+	} {
+		assert.Contains(t, roots, want, "the guard must keep guarding the directory the environment named")
+	}
+}
+
+// A test binary that another test process started inherits a tree, not
+// the real directories, so it keeps the roots it was given.
+func TestIsolateKeepsTheRootsATestProcessPassedOn(t *testing.T) {
+	fakeEnv(t, map[string]string{
+		"HOME":                 t.TempDir(),
+		writeguard.EnvVar:      "1",
+		writeguard.RootsEnvVar: "/real/.ocfp",
+	})
+
+	require.NoError(t, testenv.Isolate(t.TempDir(), func() (map[string]string, error) { return nil, nil }))
+
+	assert.Equal(t, "/real/.ocfp", os.Getenv(writeguard.RootsEnvVar))
 }
 
 func TestIsolateFailsWhenItCannotFindTheGoCaches(t *testing.T) {
@@ -103,9 +138,10 @@ func TestRunRemovesItsTreeAndReturnsTheCode(t *testing.T) {
 }
 
 // pathPackages are the packages through which a test reaches ocfp's real
-// directories. config resolves every one of them, so a package whose test
-// binary links it must isolate its tests.
-var pathPackages = []string{"/internal/config"}
+// directories: config resolves every one of them, and writeguard sits at
+// every write. A package whose test binary links either must isolate its
+// tests.
+var pathPackages = []string{"/internal/config", "/internal/writeguard"}
 
 // listedPackage is what go list says about one package or test binary.
 type listedPackage struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/goccy/go-yaml"
 )
 
@@ -90,6 +91,8 @@ func NewManager(stateDir string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	writeguard.Check("state.NewManager", stateDir)
 
 	// Ensure state directory exists
 	err = os.MkdirAll(stateDir, stateDirMode)
@@ -520,6 +523,8 @@ func (m *Manager) Lock(blocName string) error {
 		return fmt.Errorf("invalid lock path: %w", err)
 	}
 
+	writeguard.Check("state lock", lockPath)
+
 	lockInfo := map[string]interface{}{
 		"owner":      os.Getenv("USER"),
 		"hostname":   getHostname(),
@@ -585,6 +590,8 @@ func readExistingLock(lockPath string) error {
 func (m *Manager) Unlock(blocName string) error {
 	lockPath := m.getLockPath(blocName)
 
+	writeguard.Check("state unlock", lockPath)
+
 	err := os.Remove(lockPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove lock file: %w", err)
@@ -633,6 +640,8 @@ func getHostname() string {
 
 // atomicStateWrite never removes the live file before its replacement is durable.
 func atomicStateWrite(path string, data []byte) error {
+	writeguard.Check("state write", path)
+
 	file, err := os.CreateTemp(filepath.Dir(path), ".ocfp-state-*")
 	if err != nil {
 		return err
