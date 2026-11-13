@@ -1,14 +1,24 @@
 package version_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 	"github.com/fivetwenty-io/ocfp-cli/internal/version"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
+	"github.com/stretchr/testify/assert"
 )
+
+// TestMain gives the tests a home of their own. The stamped binary one of
+// them runs inherits it.
+func TestMain(m *testing.M) {
+	testenv.Main(m)
+}
 
 // TestGetReportsLinkerValues is the fast twin of
 // TestStampedBuildReportsVersion. It sets the variable the linker would set
@@ -53,4 +63,13 @@ func TestStampedBuildReportsVersion(t *testing.T) {
 	if !strings.Contains(string(out), "9.9.9-test") {
 		t.Errorf("version output %q does not contain the stamped version", out)
 	}
+}
+
+// The stamped binary inherits this process's environment. If version ever
+// reads config or writes a log, it must find the test home, not the
+// developer's own directories.
+func TestStampedBinaryInheritsTheTestHome(t *testing.T) {
+	assert.Equal(t, "1", os.Getenv(writeguard.EnvVar), "the process must be marked as a test process")
+	assert.True(t, strings.HasPrefix(filepath.Base(filepath.Dir(os.Getenv("HOME"))), "ocfp-test-home-"),
+		"HOME is %q, which is not in a testenv tree", os.Getenv("HOME"))
 }
