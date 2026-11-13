@@ -17,6 +17,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/netlayout"
 	"github.com/fivetwenty-io/ocfp-cli/internal/pve/netvalidate"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/viper"
 )
@@ -58,6 +59,8 @@ var ErrAvailableBandRemoved = errors.New(
 // StateHome, and DataHome to when set.
 func OcfpHome() string {
 	if v := os.Getenv("OCFP_HOME"); v != "" {
+		writeguard.Check("config.OcfpHome", v)
+
 		return v
 	}
 
@@ -76,7 +79,10 @@ func LegacyHome() string {
 		return ""
 	}
 
-	return filepath.Join(home, ".ocfp")
+	legacy := filepath.Join(home, ".ocfp")
+	writeguard.Check("config.LegacyHome", legacy)
+
+	return legacy
 }
 
 // xdgClassHome resolves one of the three XDG base-directory classes for
@@ -87,10 +93,15 @@ func LegacyHome() string {
 // xdg.go).
 func xdgClassHome(xdgDefault func() string) string {
 	if v := os.Getenv("OCFP_HOME"); v != "" {
+		writeguard.Check("config.OcfpHome", v)
+
 		return v
 	}
 
-	return xdgDefault()
+	home := xdgDefault()
+	writeguard.Check("config XDG home", home)
+
+	return home
 }
 
 // ConfigHome returns ocfp's config-class base directory: OCFP_HOME when
@@ -150,53 +161,6 @@ func OcfpSSHKeyDir(blocName string) string {
 	legacyPath := filepath.Join(OcfpHome(), blocName, "ssh")
 
 	return resolveSSHKeyDir(newPath, legacyPath)
-}
-
-// testSafetyGuard panics if OCFP_TEST_SAFETY_GUARD is set and any of
-// OcfpHome, ConfigHome, StateHome, or DataHome resolves to the real user's
-// default directory: the pre-migration ~/.ocfp, or its XDG-class
-// successors ~/.config/ocfp, ~/.local/state/ocfp, and ~/.local/share/ocfp.
-// This prevents a test that forgets to set OCFP_HOME (or the relevant
-// XDG_*_HOME) to a temp directory from accidentally writing into the
-// developer's real home directory, across both the legacy layout and the
-// new XDG-class layout.
-func testSafetyGuard(operation string) {
-	if os.Getenv("OCFP_TEST_SAFETY_GUARD") == "" {
-		return
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	realRoots := map[string]string{
-		"legacy ~/.ocfp":                filepath.Join(home, ".ocfp"),
-		"XDG config ~/.config/ocfp":     filepath.Join(home, ".config", appDirName),
-		"XDG state ~/.local/state/ocfp": filepath.Join(home, ".local", "state", appDirName),
-		"XDG data ~/.local/share/ocfp":  filepath.Join(home, ".local", "share", appDirName),
-	}
-
-	resolved := map[string]string{
-		"OcfpHome":   OcfpHome(),
-		"ConfigHome": ConfigHome(),
-		"StateHome":  StateHome(),
-		"DataHome":   DataHome(),
-	}
-
-	for label, root := range realRoots {
-		for fnName, got := range resolved {
-			if got == "" || got != root {
-				continue
-			}
-
-			panic(fmt.Sprintf(
-				"SAFETY GUARD: %s attempted to use real home directory %s (%s, via %s()) during testing. "+
-					"Set OCFP_HOME (or XDG_CONFIG_HOME/XDG_STATE_HOME/XDG_DATA_HOME) to a temp directory.",
-				operation, root, label, fnName,
-			))
-		}
-	}
 }
 
 // PVEDefaults holds global default PVE credentials that apply to any bloc

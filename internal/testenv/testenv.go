@@ -4,7 +4,9 @@
 // base directory variables, and OCFP_HOME. A package whose tests reach any
 // of those calls Main or Run from its TestMain. Before any test runs, they
 // point all of those variables at one temporary tree, so no test can find
-// the developer's real directories through them.
+// the developer's real directories through them. They also mark the
+// process as a test process for the write guard, which panics if a write
+// still heads for a real directory.
 //
 // Moving HOME would move the Go build and module caches as well, for any
 // test that runs the go command, so the helper pins them where they were.
@@ -21,6 +23,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 )
 
 // Runner is what a TestMain receives. *testing.M satisfies it.
@@ -68,8 +72,10 @@ func Run(run func() int) int {
 }
 
 // Isolate points HOME, the XDG variables, and OCFP_HOME at directories it
-// makes inside tree. Before it moves HOME it pins the go command's caches
-// to where goSettings says they are.
+// makes inside tree, and marks the process as a test process. Before it
+// moves HOME it pins the go command's caches to where goSettings says they
+// are, and it records the ocfp directories that the variables named, so
+// the write guard keeps guarding them.
 func Isolate(tree string, goSettings func() (map[string]string, error)) error {
 	pinned, err := goSettings()
 	if err != nil {
@@ -82,6 +88,15 @@ func Isolate(tree string, goSettings func() (map[string]string, error)) error {
 			if err != nil {
 				return fmt.Errorf("pin %s: %w", name, err)
 			}
+		}
+	}
+
+	// A test binary that another test process started keeps the roots it
+	// was given, since its HOME and XDG variables already name a tree.
+	if os.Getenv(writeguard.EnvVar) == "" {
+		err = os.Setenv(writeguard.RootsEnvVar, strings.Join(namedRoots(), string(os.PathListSeparator)))
+		if err != nil {
+			return fmt.Errorf("record the real ocfp directories: %w", err)
 		}
 	}
 
@@ -99,7 +114,41 @@ func Isolate(tree string, goSettings func() (map[string]string, error)) error {
 		}
 	}
 
+	err = os.Setenv(writeguard.EnvVar, "1")
+	if err != nil {
+		return fmt.Errorf("mark the process as a test process: %w", err)
+	}
+
 	return nil
+}
+
+// namedRoots returns the ocfp directories that HOME, the XDG variables,
+// and OCFP_HOME name now, before they move. They are the real ones on a
+// developer's machine, whatever the variables are set to.
+func namedRoots() []string {
+	var roots []string
+
+	if v := os.Getenv("OCFP_HOME"); v != "" {
+		roots = append(roots, v)
+	}
+
+	if home := os.Getenv("HOME"); home != "" {
+		roots = append(roots,
+			filepath.Join(home, ".ocfp"),
+			filepath.Join(home, ".config", "ocfp"),
+			filepath.Join(home, ".local", "state", "ocfp"),
+			filepath.Join(home, ".local", "share", "ocfp"),
+			filepath.Join(home, ".cache", "ocfp"),
+		)
+	}
+
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+		if v := os.Getenv(name); v != "" {
+			roots = append(roots, filepath.Join(v, "ocfp"))
+		}
+	}
+
+	return roots
 }
 
 // goEnv asks the go command where its caches are. Without a go command on

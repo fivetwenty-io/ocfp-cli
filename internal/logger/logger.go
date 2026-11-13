@@ -11,6 +11,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -140,6 +141,8 @@ func createFileCore(cfg Config, encoderConfig zapcore.EncoderConfig) (zapcore.Co
 	}
 
 	dir := filepath.Join(pathParts...)
+
+	writeguard.Check("logger file", dir)
 
 	err := os.MkdirAll(dir, LogDirMode)
 	if err != nil {

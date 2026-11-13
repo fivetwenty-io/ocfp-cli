@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 )
 
 const (
@@ -65,6 +67,8 @@ func withStateLock(fn func() error) error {
 		return fn()
 	}
 
+	writeguard.Check("config state lock", path)
+
 	err := os.MkdirAll(filepath.Dir(path), stateDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
@@ -86,6 +90,8 @@ func withStateLock(fn func() error) error {
 // takes, so on Unix the kernel releases it when its process exits and a
 // killed ocfp never leaves a stale lock behind.
 func WithFileLock(path string, timeout time.Duration, fn func() error) error {
+	writeguard.Check("config.WithFileLock", path)
+
 	err := os.MkdirAll(filepath.Dir(path), fileLockDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create the directory for lock %s: %w", path, err)

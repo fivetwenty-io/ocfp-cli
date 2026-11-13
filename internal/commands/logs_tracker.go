@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 )
 
 // File permission and lock file constants.
@@ -48,6 +50,8 @@ func NewCommandTracker(baseDir string) *CommandTracker {
 
 // CreateLockFile creates a lock file for an active command.
 func (t *CommandTracker) CreateLockFile(info ActiveCommand) error {
+	writeguard.Check("CommandTracker.CreateLockFile", t.activeDir)
+
 	// Ensure .active directory exists
 	err := os.MkdirAll(t.activeDir, filePermUserRWXGroupRX)
 	if err != nil {
@@ -82,6 +86,8 @@ func (t *CommandTracker) CreateLockFile(info ActiveCommand) error {
 
 // RemoveLockFile removes the lock file for a command.
 func (t *CommandTracker) RemoveLockFile(timestamp time.Time, pid int) error {
+	writeguard.Check("CommandTracker.RemoveLockFile", t.activeDir)
+
 	timestampStr := timestamp.Format("20060102-150405")
 	lockFilename := fmt.Sprintf("%s-%d.lock", timestampStr, pid)
 	lockPath := filepath.Join(t.activeDir, lockFilename)
@@ -96,6 +102,8 @@ func (t *CommandTracker) RemoveLockFile(timestamp time.Time, pid int) error {
 
 // GetActiveCommands returns all currently active commands.
 func (t *CommandTracker) GetActiveCommands() ([]ActiveCommand, error) {
+	writeguard.Check("CommandTracker.GetActiveCommands", t.activeDir)
+
 	// Ensure .active directory exists
 	//nolint:noinlineerr // Preserving existing error handling pattern for no functional changes
 	if _, err := os.Stat(t.activeDir); os.IsNotExist(err) {
@@ -191,6 +199,8 @@ func processRunning(pid int) bool {
 
 // CleanStaleLocks removes lock files for processes that are no longer running.
 func (t *CommandTracker) CleanStaleLocks() error {
+	writeguard.Check("CommandTracker.CleanStaleLocks", t.activeDir)
+
 	// Ensure .active directory exists
 	//nolint:noinlineerr // Preserving existing error handling pattern for no functional changes
 	if _, err := os.Stat(t.activeDir); os.IsNotExist(err) {

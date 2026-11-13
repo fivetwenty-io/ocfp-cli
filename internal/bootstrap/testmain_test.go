@@ -12,8 +12,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("OCFP_TEST_SAFETY_GUARD", "1")
-
 	// Replace the STACKIT eventual-consistency sleep with a no-op for all tests.
 	// Called here, before m.Run(), so parallel tests never race on the var.
 	bootstrap.SetSleepFn(func(time.Duration) {})

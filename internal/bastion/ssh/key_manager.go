@@ -16,6 +16,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -327,6 +328,8 @@ func (km *KeyManager) RestoreKeyFromConfig(blocName, privateKeyPEM string) (stri
 		return "", err
 	}
 
+	writeguard.Check("ssh.RestoreKeyFromConfig", keyPath)
+
 	// Create directory if it doesn't exist
 	err = os.MkdirAll(keyDir, sshDirectoryMode)
 	if err != nil {
@@ -455,6 +458,8 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 		return fmt.Errorf("invalid key path: %w", err)
 	}
 
+	writeguard.Check("ssh private key", keyPath)
+
 	keyFile, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, privateKeyMode) // #nosec G304 - path validated above
 	if err != nil {
 		return fmt.Errorf("failed to create private key file: %w", err)
@@ -477,6 +482,8 @@ func (km *KeyManager) writePrivateKey(keyPath string, privateKey interface{}, ke
 
 // writePublicKey writes a public key to file in OpenSSH format.
 func (km *KeyManager) writePublicKey(keyPath string, publicKey ssh.PublicKey) error {
+	writeguard.Check("ssh public key", keyPath)
+
 	// Format public key in OpenSSH format
 	keyData := ssh.MarshalAuthorizedKey(publicKey)
 
@@ -560,6 +567,8 @@ func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
 
 func (km *KeyManager) ensureSSHDirectory(keyPath string) error {
 	sshDir := filepath.Dir(keyPath)
+
+	writeguard.Check("ssh key directory", sshDir)
 
 	err := os.MkdirAll(sshDir, sshDirectoryMode)
 	if err != nil {

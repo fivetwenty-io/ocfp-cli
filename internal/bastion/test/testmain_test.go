@@ -1,7 +1,6 @@
 package test_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
@@ -10,7 +9,5 @@ import (
 // TestMain gives the tests a home of their own, so none of them can read
 // or write the developer's real ocfp directories.
 func TestMain(m *testing.M) {
-	os.Setenv("OCFP_TEST_SAFETY_GUARD", "1")
-
 	testenv.Main(m)
 }

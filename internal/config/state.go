@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/goccy/go-yaml"
 )
 
@@ -74,12 +75,12 @@ func LoadState() (*StateFile, error) {
 
 // SaveState marshals and writes the state file with 2-space indentation.
 func SaveState(state *StateFile) error {
-	testSafetyGuard("SaveState")
-
 	statePath := StateFilePath()
 	if statePath == "" {
 		return fmt.Errorf("cannot determine state file path: %w", ErrOcfpHomeNotFound)
 	}
+
+	writeguard.Check("config.SaveState", statePath)
 
 	// Ensure directory exists
 	dir := filepath.Dir(statePath)

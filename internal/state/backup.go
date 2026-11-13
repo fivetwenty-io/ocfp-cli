@@ -11,6 +11,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/security"
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 )
 
 const (
@@ -62,6 +63,8 @@ func (m *Manager) createBackup(blocName string) (string, error) {
 		return "", fmt.Errorf("invalid backup path: %w", err)
 	}
 
+	writeguard.Check("state backup", backupPath)
+
 	// Copy state file to backup
 	data, err := os.ReadFile(statePath) // #nosec G304 - statePath is validated
 	if err != nil {
@@ -98,6 +101,8 @@ func (m *Manager) cleanupOldBackups(blocName string) error {
 	// Delete oldest backups beyond maxBackups
 	toDelete := len(backups) - maxBackups
 	for backupIndex := range toDelete {
+		writeguard.Check("state backup cleanup", backups[backupIndex].Path)
+
 		err := os.Remove(backups[backupIndex].Path)
 		if err != nil {
 			logger.Warnf("Failed to remove old backup %s: %v", backups[backupIndex].Path, err)
@@ -214,6 +219,8 @@ func (m *Manager) restoreFromBackupLocked(blocName string) (*State, error) {
 		return nil, fmt.Errorf("invalid state path: %w", err)
 	}
 
+	writeguard.Check("state restore", statePath)
+
 	// Copy backup to state file
 	data, err := os.ReadFile(backup.Path) // #nosec G304 - backup.Path from listBackups
 	if err != nil {
@@ -243,6 +250,8 @@ func (m *Manager) restoreFromBackupLocked(blocName string) (*State, error) {
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	// Create temp file in same directory
 	dir := filepath.Dir(path)
+
+	writeguard.Check("state write", path)
 
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+tempSuffix+".*")
 	if err != nil {

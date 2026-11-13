@@ -407,10 +407,8 @@ func vaultInBothDirs(bloc string) func(t *testing.T, fx *componentFixture) {
 		t.Helper()
 		// With OCFP_HOME unset, the legacy dir is ~/.ocfp and the XDG one
 		// is under XDG_DATA_HOME, so the bloc has two dirs. HOME is a temp
-		// dir here, so the guard against writing to the real ~/.ocfp can
-		// stand down.
+		// dir here, so neither is a real directory.
 		t.Setenv("OCFP_HOME", "")
-		t.Setenv("OCFP_TEST_SAFETY_GUARD", "")
 		writeFixtureFile(t, filepath.Join(config.DataHome(), bloc, "vault", "data", "raft.db"), "x")
 		writeFixtureFile(t, filepath.Join(config.OcfpHome(), bloc, "vault", "data", "raft.db"), "x")
 	}

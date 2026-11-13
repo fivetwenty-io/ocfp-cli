@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/goccy/go-yaml"
 	"go.uber.org/zap"
 )
@@ -170,6 +171,8 @@ func WriteNew(path, value string) error {
 // it was and removes the temporary file. A directory sync that fails after
 // it leaves the new key at path, and the error says so.
 func writeFile(path, value string, replace bool) error {
+	writeguard.Check("keyfile write", path)
+
 	dir := filepath.Dir(path)
 
 	err := os.MkdirAll(dir, DirMode)
