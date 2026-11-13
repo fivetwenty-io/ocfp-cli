@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/knownhostsguard"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
@@ -21,14 +22,7 @@ func TestMain(m *testing.M) {
 	// test scripts otherwise with useMigrateVaults.
 	migrateVaultProbes = (&fakeMigrateVaults{}).probes()
 
-	tmpDir, err := os.MkdirTemp("", "ocfp-commands-test-*")
-	if err == nil {
-		os.Setenv("OCFP_HOME", tmpDir)
-	}
-
-	// Tests here run the system ssh, so the run fails if they touch the
-	// developer's own known_hosts.
-	code := knownhostsguard.Run(m)
-	os.RemoveAll(tmpDir)
-	os.Exit(code)
+	// The tests get a home of their own. They run the system ssh, so the
+	// run fails if they touch the developer's own known_hosts.
+	os.Exit(testenv.Run(func() int { return knownhostsguard.Run(m) }))
 }
