@@ -14,12 +14,19 @@ bin="$1"
 
 chmod +x "$bin"
 
-# Run with an empty home and config directory, as in CI's clean container, so
-# a local run never reads the developer's real ocfp configuration.
+# Run with an empty home, as in CI's clean container, so a local run never
+# reads or writes the developer's real ocfp config, state, data, or logs.
+# Every XDG directory moves into the temporary home. OCFP_HOME is unset
+# rather than moved, because setting it would collapse ocfp's XDG layout
+# into one directory, which CI's container never does.
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
 export HOME="$home"
 export XDG_CONFIG_HOME="$home/.config"
+export XDG_STATE_HOME="$home/.local/state"
+export XDG_DATA_HOME="$home/.local/share"
+export XDG_CACHE_HOME="$home/.cache"
+unset OCFP_HOME
 
 "$bin" --help
 "$bin" version
