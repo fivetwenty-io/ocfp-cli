@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,4 +92,20 @@ func TestManager_saveCheckpoint_WritesUnderXDGStateHome(t *testing.T) {
 	legacyDir := filepath.Join(tmpHome, ".ocfp", "checkpoints")
 	_, legacyErr := os.Stat(legacyDir)
 	assert.True(t, os.IsNotExist(legacyErr), "checkpoint directory must not land under legacy ~/.ocfp")
+}
+
+// The manager resolves its directory before the guard is set, so the check
+// in Save is the one that fires.
+func TestCheckpointManager_Save_PanicsForADirectoryUnderTheRealDirectories(t *testing.T) {
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	cm := NewCheckpointManager(newBaseConfig("bloc1", "aws"))
+	cm.log = newTestLogger()
+	testenv.GuardOnly(t, cm.checkpointDir)
+
+	progress := &ProvisioningProgress{TotalSteps: 1, StartTime: time.Now()}
+
+	assert.Contains(t, testenv.PanicMessage(func() { _ = cm.Save(progress, nil) }), "CheckpointManager.Save")
+	assert.NoDirExists(t, cm.checkpointDir, "the guard must stop Save before it creates the directory")
 }
