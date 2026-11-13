@@ -137,7 +137,7 @@ func TestPVEBastionInit_PrepareEnvironment_GenesisDisabled(t *testing.T) {
 // the expected user, host, and port from config when BastionIP is pre-configured
 // (short-circuits all fallback strategies).
 func TestPVEBastionInit_GetConnectionDetails(t *testing.T) {
-	t.Parallel()
+	isolateOcfpHome(t)
 
 	cfg := newPVEConfig()
 	// BastionIP set in newPVEConfig() — getBastionIP uses strategy 1 (config field).
@@ -190,9 +190,11 @@ func TestPVEBastionInit_GetConnectionDetails_BastionIPFromConfig(t *testing.T) {
 // TestPVEBastionInit_GetConnectionDetails_NoBastionIP verifies that when no IP is
 // available from any strategy, getBastionIP returns ErrCouldNotDetermineBastionIP.
 func TestPVEBastionInit_GetConnectionDetails_NoBastionIP(t *testing.T) {
-	t.Parallel()
+	isolateOcfpHome(t)
 
 	// No BastionIP, no env var, no state dir, no real API available.
+	t.Setenv("PVE_BASTION_IP", "")
+
 	cfg := &config.Config{
 		Name:        "no-ip-bloc",
 		APIEndpoint: "https://pve.example.com:8006",
