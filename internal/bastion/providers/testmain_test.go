@@ -1,19 +1,17 @@
 package providers
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/fivetwenty-io/ocfp-cli/internal/stateguard"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
-// TestMain fails the run if a test changes the developer's own ocfp
-// directories. The providers read and create bloc state, so a test that
-// leaves HOME and the XDG variables alone writes under the real
-// ~/.local/state/ocfp.
+// TestMain gives the tests a home of their own. The providers read and
+// create bloc state, so a test that found the developer's real home would
+// write under the real ~/.local/state/ocfp.
 func TestMain(m *testing.M) {
-	os.Exit(stateguard.Run(m))
+	testenv.Main(m)
 }
 
 // isolateOcfpHome points HOME, the XDG base directories, and OCFP_HOME at a

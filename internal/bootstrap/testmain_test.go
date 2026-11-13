@@ -8,6 +8,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/bootstrap"
 	"github.com/fivetwenty-io/ocfp-cli/internal/knownhostsguard"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
@@ -17,23 +18,14 @@ func TestMain(m *testing.M) {
 	// Called here, before m.Run(), so parallel tests never race on the var.
 	bootstrap.SetSleepFn(func(time.Duration) {})
 
-	// Set OCFP_HOME to a temp dir for all tests in this package.
-	// This prevents tests that use t.Parallel() (which can't use
-	// t.Setenv) from writing to the real ~/.ocfp directory.
-	tmpDir, err := os.MkdirTemp("", "ocfp-bootstrap-test-*")
-	if err == nil {
-		os.Setenv("OCFP_HOME", tmpDir)
-	}
+	// Give the tests a home of their own. Tests that use t.Parallel()
+	// can't use t.Setenv, so the whole package shares it.
+	os.Exit(testenv.Run(func() int {
+		// Keep bastion creation away from the real ~/.ssh/known_hosts.
+		bootstrap.SetKnownHostsFile(filepath.Join(os.Getenv("OCFP_HOME"), "ssh", "known_hosts"))
 
-	// Also create the directory structure that tests expect
-	_ = os.MkdirAll(filepath.Join(tmpDir, "config"), 0o750)
-
-	// Keep bastion creation away from the real ~/.ssh/known_hosts.
-	bootstrap.SetKnownHostsFile(filepath.Join(tmpDir, "ssh", "known_hosts"))
-
-	// Tests here run the system ssh, so the run fails if they touch the
-	// developer's own known_hosts.
-	code := knownhostsguard.Run(m)
-	os.RemoveAll(tmpDir)
-	os.Exit(code)
+		// Tests here run the system ssh, so the run fails if they touch the
+		// developer's own known_hosts.
+		return knownhostsguard.Run(m)
+	}))
 }
