@@ -516,12 +516,13 @@ func (km *KeyManager) isValidPrivateKey(keyPath string) bool {
 }
 
 // isKeyPasswordProtected reports whether keyData holds a private key that
-// needs a passphrase. It recognises the legacy PEM forms by their headers
-// and block types, and every other form, the OpenSSH format among them, by
-// asking the ssh package to parse the key. The OpenSSH format names its
-// cipher inside the base64 body, so no marker in the text shows it.
+// needs a passphrase. The ssh package says so for the legacy PEM forms with
+// a Proc-Type header and for the OpenSSH format, which names its cipher
+// inside the base64 body, so no marker in the text shows it. Encrypted
+// PKCS#8 is the exception. The ssh package can't parse it at all, so it
+// can't report that it needs a passphrase, and the block type has to say so.
 func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
-	if hasEncryptedPEMMarker(keyData) {
+	if isEncryptedPKCS8(keyData) {
 		return true
 	}
 
@@ -532,21 +533,12 @@ func (km *KeyManager) isKeyPasswordProtected(keyData []byte) bool {
 	return errors.As(err, &missing)
 }
 
-// hasEncryptedPEMMarker reports whether keyData is a PEM key that says it
-// is encrypted, with a Proc-Type header of 4,ENCRYPTED or as an encrypted
-// PKCS#8 block. The ssh package can't parse the second form at all, so it
-// can't report that it needs a passphrase.
-func hasEncryptedPEMMarker(keyData []byte) bool {
+// isEncryptedPKCS8 reports whether keyData is a PEM block of the encrypted
+// PKCS#8 type.
+func isEncryptedPKCS8(keyData []byte) bool {
 	block, _ := pem.Decode(keyData)
-	if block == nil {
-		return false
-	}
 
-	if strings.Contains(block.Headers["Proc-Type"], "ENCRYPTED") {
-		return true
-	}
-
-	return block.Type == "ENCRYPTED PRIVATE KEY"
+	return block != nil && block.Type == "ENCRYPTED PRIVATE KEY"
 }
 
 func (km *KeyManager) ensureSSHDirectory(keyPath string) error {
