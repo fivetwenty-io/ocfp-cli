@@ -159,6 +159,13 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 25m -coverprofile=coverage.txt -covermode=atomic ./...
 
+      # The container starts with no ocfp directories, so any that exist now
+      # came from a test that escaped its temporary home. It runs after a
+      # failed test run too, since a leak can be what made a test fail.
+      - name: Check the tests left no ocfp directories
+        if: success() || failure()
+        run: bash scripts/ci/check-no-ocfp-dirs.sh
+
       # This repository is private with no Codecov token, so an upload could
       # only ever fail. The profile ships as an artifact instead, so coverage
       # is still inspectable per run.
