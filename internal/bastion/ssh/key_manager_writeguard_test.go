@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 	"github.com/fivetwenty-io/ocfp-cli/internal/writeguard"
 	"github.com/stretchr/testify/assert"
 )
@@ -27,6 +29,22 @@ func TestRestoreKeyFromConfigPanicsUnderTheRealDataDirInATest(t *testing.T) {
 
 	_, err := os.Stat(filepath.Join(home, ".local"))
 	assert.True(t, os.IsNotExist(err), "the guard must stop the restore before it creates anything")
+}
+
+// The config resolves the key directory first and checks it, so a test
+// that guarded the directory would never reach the check in
+// RestoreKeyFromConfig. Guarding the key file leaves the directory open.
+func TestRestoreKeyFromConfigChecksTheKeyFileItself(t *testing.T) {
+	t.Setenv("OCFP_HOME", "")
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	keyDir := config.OcfpSSHKeyDir("mybloc")
+	testenv.GuardOnly(t, filepath.Join(keyDir, "id_ed25519"))
+
+	assert.Contains(t, testenv.PanicMessage(func() {
+		_, _ = NewKeyManager().RestoreKeyFromConfig("mybloc", "-----BEGIN OPENSSH PRIVATE KEY-----\n")
+	}), "ssh.RestoreKeyFromConfig")
+	assert.NoDirExists(t, keyDir, "the guard must stop the restore before it creates the directory")
 }
 
 // The key writers refuse a path under the real directories that a caller
