@@ -15,11 +15,11 @@ import (
 // file the write point names leaves the resolvers alone.
 //
 // It sets environment variables, so the test can't run in parallel.
-func GuardOnly(t testing.TB, path string) {
-	t.Helper()
+func GuardOnly(tb testing.TB, path string) {
+	tb.Helper()
 
-	t.Setenv(writeguard.EnvVar, "1")
-	t.Setenv(writeguard.RootsEnvVar, path)
+	tb.Setenv(writeguard.EnvVar, "1")
+	tb.Setenv(writeguard.RootsEnvVar, path)
 }
 
 // PanicMessage runs fn and returns what it panicked with, or "" when it

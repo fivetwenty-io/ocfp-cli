@@ -148,7 +148,7 @@ func UseOcfpHome() string {
 
 	dir := filepath.Join(filepath.Dir(os.Getenv("HOME")), "ocfp")
 
-	err := os.MkdirAll(dir, 0o700)
+	err := os.MkdirAll(dir, 0o700) // #nosec G703 -- a directory beside the isolated HOME, in the test tree
 	if err != nil {
 		panic(fmt.Sprintf("testenv: make %s: %v", dir, err))
 	}
