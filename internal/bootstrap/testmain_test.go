@@ -17,10 +17,11 @@ func TestMain(m *testing.M) {
 	bootstrap.SetSleepFn(func(time.Duration) {})
 
 	// Give the tests a home of their own. Tests that use t.Parallel()
-	// can't use t.Setenv, so the whole package shares it.
+	// can't use t.Setenv, so the whole package shares one OCFP_HOME, set
+	// here.
 	os.Exit(testenv.Run(func() int {
 		// Keep bastion creation away from the real ~/.ssh/known_hosts.
-		bootstrap.SetKnownHostsFile(filepath.Join(testenv.OcfpHome(), "ssh", "known_hosts"))
+		bootstrap.SetKnownHostsFile(filepath.Join(testenv.UseOcfpHome(), "ssh", "known_hosts"))
 
 		// Tests here run the system ssh, so the run fails if they touch the
 		// developer's own known_hosts.

@@ -3,8 +3,11 @@
 // ocfp finds its config, state, data, keys, and logs from HOME, the XDG
 // base directory variables, and OCFP_HOME. A package whose tests reach any
 // of those calls Main or Run from its TestMain. Before any test runs, they
-// point all of those variables at one temporary tree, so no test can find
-// the developer's real directories through them. They also mark the
+// point HOME and the XDG variables at one temporary tree and clear
+// OCFP_HOME, so no test can find the developer's real directories through
+// them, and the tests resolve ocfp's directories through the XDG layout
+// that a user without OCFP_HOME gets. A package whose tests need the
+// single-directory layout calls UseOcfpHome. Main and Run also mark the
 // process as a test process for the write guard, which panics if a write
 // still heads for a real directory.
 //
@@ -33,14 +36,14 @@ type Runner interface {
 }
 
 // homeVars names the variables the tree replaces, each with the directory
-// inside the tree it gets.
+// inside the tree it gets. OCFP_HOME isn't among them, because it is
+// cleared instead.
 var homeVars = [...]struct{ name, dir string }{ //nolint:gochecknoglobals // a fixed table
 	{"HOME", "home"},
 	{"XDG_CONFIG_HOME", "config"},
 	{"XDG_STATE_HOME", "state"},
 	{"XDG_DATA_HOME", "data"},
 	{"XDG_CACHE_HOME", "cache"},
-	{"OCFP_HOME", "ocfp"},
 }
 
 // goVars are the go command's settings that depend on HOME and that the
@@ -71,9 +74,9 @@ func Run(run func() int) int {
 	return run()
 }
 
-// Isolate points HOME, the XDG variables, and OCFP_HOME at directories it
-// makes inside tree, and marks the process as a test process. Before it
-// moves HOME it pins the go command's caches to where goSettings says they
+// Isolate points HOME and the XDG variables at directories it makes inside
+// tree, clears OCFP_HOME, and marks the process as a test process. Before
+// it moves HOME it pins the go command's caches to where goSettings says they
 // are, and it records the ocfp directories that the variables named, so
 // the write guard keeps guarding them.
 func Isolate(tree string, goSettings func() (map[string]string, error)) error {
@@ -114,12 +117,43 @@ func Isolate(tree string, goSettings func() (map[string]string, error)) error {
 		}
 	}
 
+	err = os.Unsetenv("OCFP_HOME")
+	if err != nil {
+		return fmt.Errorf("clear OCFP_HOME: %w", err)
+	}
+
 	err = os.Setenv(writeguard.EnvVar, "1")
 	if err != nil {
 		return fmt.Errorf("mark the process as a test process: %w", err)
 	}
 
 	return nil
+}
+
+// UseOcfpHome points OCFP_HOME at a directory in the temporary tree and
+// returns it, for a package whose tests need ocfp's single-directory
+// layout. A TestMain calls it from inside Main or Run, before any test
+// starts, since tests that run in parallel can't set the variable. It
+// panics when the process isn't isolated, because the directory it would
+// name then belongs to the developer.
+func UseOcfpHome() string {
+	if os.Getenv(writeguard.EnvVar) == "" {
+		panic("testenv: UseOcfpHome needs a process that testenv.Main or testenv.Run isolated")
+	}
+
+	dir := filepath.Join(filepath.Dir(os.Getenv("HOME")), "ocfp")
+
+	err := os.MkdirAll(dir, 0o700)
+	if err != nil {
+		panic(fmt.Sprintf("testenv: make %s: %v", dir, err))
+	}
+
+	err = os.Setenv("OCFP_HOME", dir)
+	if err != nil {
+		panic(fmt.Sprintf("testenv: set OCFP_HOME: %v", err))
+	}
+
+	return dir
 }
 
 // OcfpHome returns the directory OCFP_HOME names, for a test that builds a
