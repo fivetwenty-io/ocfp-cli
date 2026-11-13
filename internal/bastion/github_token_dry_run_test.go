@@ -3,6 +3,7 @@ package bastion
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -20,6 +21,11 @@ func fakeGh(t *testing.T, token string) string {
 	script := "#!/bin/sh\necho \"$@\" >> '" + ran + "'\necho " + token + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o700)) // #nosec G306 -- test executable
 	t.Setenv("PATH", bin)
+
+	// Run it once before the test does, so a slow first start of a new
+	// script under load doesn't count against the lookup's own timeout.
+	require.NoError(t, exec.Command(filepath.Join(bin, "gh")).Run()) // #nosec G204 -- the script this test just wrote
+	require.NoError(t, os.Remove(ran))
 
 	return ran
 }
