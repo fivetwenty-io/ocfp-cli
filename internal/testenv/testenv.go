@@ -58,6 +58,11 @@ func Main(m Runner) {
 // Run runs run in a temporary home, removes the home, and returns run's
 // code. It returns 1 without running anything when it can't set the home
 // up, after saying why on stderr.
+//
+// A panic in a test goroutine ends the test binary without unwinding Run,
+// so the tree stays in the temporary directory. The write guard panics when
+// it catches a write, so a real violation leaves its ocfp-test-home-*
+// directory behind. Nothing reads it later, and it can be deleted.
 func Run(run func() int) int {
 	tree, err := os.MkdirTemp("", "ocfp-test-home-*")
 	if err != nil {
