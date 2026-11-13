@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 	// can't use t.Setenv, so the whole package shares it.
 	os.Exit(testenv.Run(func() int {
 		// Keep bastion creation away from the real ~/.ssh/known_hosts.
-		bootstrap.SetKnownHostsFile(filepath.Join(os.Getenv("OCFP_HOME"), "ssh", "known_hosts"))
+		bootstrap.SetKnownHostsFile(filepath.Join(testenv.OcfpHome(), "ssh", "known_hosts"))
 
 		// Tests here run the system ssh, so the run fails if they touch the
 		// developer's own known_hosts.

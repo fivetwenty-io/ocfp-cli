@@ -329,3 +329,22 @@ func goCommand(t *testing.T, dir string, args ...string) string {
 
 	return stdout.String()
 }
+
+func TestOcfpHomeReturnsTheDirectoryTheEnvironmentNames(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OCFP_HOME", home)
+
+	assert.Equal(t, home, testenv.OcfpHome())
+}
+
+// A path built from an empty or relative OCFP_HOME lands in the package
+// directory, inside the source tree, where no guard looks.
+func TestOcfpHomePanicsWhenTheEnvironmentNamesNoUsableDirectory(t *testing.T) {
+	for name, value := range map[string]string{"empty": "", "relative": "ocfp/home"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OCFP_HOME", value)
+
+			assert.Panics(t, func() { testenv.OcfpHome() })
+		})
+	}
+}

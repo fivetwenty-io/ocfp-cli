@@ -13,6 +13,7 @@ import (
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
 	"github.com/fivetwenty-io/ocfp-cli/internal/output"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ var stepRefusals = []stepRefusal{
 		step: "config_files",
 		setup: func(t *testing.T, _ *config.Config) {
 			t.Helper()
-			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+			require.NoError(t, os.Remove(filepath.Join(testenv.OcfpHome(), "config.yml")))
 		},
 		is: ErrOCFPConfigurationFileNotFound,
 	},
@@ -46,7 +47,7 @@ var stepRefusals = []stepRefusal{
 
 			data, err := yaml.Marshal(&config.ConfigFile{Blocs: map[string]*config.Config{"otherbloc": newBaseConfig("otherbloc", "pve")}})
 			require.NoError(t, err)
-			writeDryRunFile(t, filepath.Join(os.Getenv("OCFP_HOME"), "config.yml"), string(data))
+			writeDryRunFile(t, filepath.Join(testenv.OcfpHome(), "config.yml"), string(data))
 		},
 		is: ErrBlocNotFoundInConfig,
 	},
@@ -156,7 +157,7 @@ func TestDryRunSkipsTheChecksOfResumedSteps(t *testing.T) {
 		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
 			cfg := dryRunBloc(t)
 			dryRunWorkstation(t, cfg)
-			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+			require.NoError(t, os.Remove(filepath.Join(testenv.OcfpHome(), "config.yml")))
 			t.Setenv("OCFP_CLI_SOURCE", "nightly")
 
 			client := &unconnectedSSHClient{}
@@ -290,7 +291,7 @@ func TestFailedDryRunSummarySaysNothingChanged(t *testing.T) {
 		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
 			cfg := dryRunBloc(t)
 			dryRunWorkstation(t, cfg)
-			require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+			require.NoError(t, os.Remove(filepath.Join(testenv.OcfpHome(), "config.yml")))
 
 			var out bytes.Buffer
 
@@ -310,7 +311,7 @@ func TestFailedDryRunSummarySaysNothingChanged(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		cfg := dryRunBloc(t)
 		dryRunWorkstation(t, cfg)
-		require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+		require.NoError(t, os.Remove(filepath.Join(testenv.OcfpHome(), "config.yml")))
 
 		var out bytes.Buffer
 
@@ -346,7 +347,7 @@ func TestResumedDryRunSummaryCountsSkippedSteps(t *testing.T) {
 				dryRunWorkstation(t, cfg)
 
 				if fails {
-					require.NoError(t, os.Remove(filepath.Join(os.Getenv("OCFP_HOME"), "config.yml")))
+					require.NoError(t, os.Remove(filepath.Join(testenv.OcfpHome(), "config.yml")))
 				}
 
 				var out bytes.Buffer

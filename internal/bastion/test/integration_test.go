@@ -14,6 +14,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
 // TestFullDryRunIntegration tests complete dry run integration.
@@ -162,7 +163,7 @@ func saveAndVerifyCheckpoint(t *testing.T, checkpointMgr *bastion.CheckpointMana
 	verifyCheckpointData(t, loadedCheckpoint, progress, cfg)
 
 	// Verify checkpoint file exists in OCFP_HOME.
-	ocfpHome := os.Getenv("OCFP_HOME")
+	ocfpHome := testenv.OcfpHome()
 	if ocfpHome != "" {
 		checkpointDir := filepath.Join(ocfpHome, "checkpoints")
 		entries, err := os.ReadDir(checkpointDir)

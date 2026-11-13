@@ -122,6 +122,19 @@ func Isolate(tree string, goSettings func() (map[string]string, error)) error {
 	return nil
 }
 
+// OcfpHome returns the directory OCFP_HOME names, for a test that builds a
+// path inside it. It panics when OCFP_HOME is empty or not absolute, since
+// a path built from either would sit in the package directory, inside the
+// source tree, where the write guard doesn't look.
+func OcfpHome() string {
+	home := os.Getenv("OCFP_HOME")
+	if home == "" || !filepath.IsAbs(home) {
+		panic(fmt.Sprintf("testenv: OCFP_HOME is %q, but this test needs an absolute directory; call testenv.Main or testenv.Run from TestMain", home))
+	}
+
+	return home
+}
+
 // namedRoots returns the ocfp directories that HOME, the XDG variables,
 // and OCFP_HOME name now, before they move. They are the real ones on a
 // developer's machine, whatever the variables are set to.

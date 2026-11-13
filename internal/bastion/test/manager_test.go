@@ -3,7 +3,6 @@ package test_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion"
 	"github.com/fivetwenty-io/ocfp-cli/internal/bastion/ssh"
 	"github.com/fivetwenty-io/ocfp-cli/internal/config"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
 // TestManagerInitialization tests basic manager initialization.
@@ -271,7 +271,7 @@ func containsAny(text string, substrings []string) bool {
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	t.Helper()
 
-	ocfpHome := os.Getenv("OCFP_HOME")
+	ocfpHome := testenv.OcfpHome()
 	cleanup := func() {}
 
 	return ocfpHome, cleanup
