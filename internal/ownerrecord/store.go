@@ -24,12 +24,18 @@ const (
 	DefaultDir = "/data/ocfp-owner"
 
 	// RecordFile is the signed owner record's file name in its directory.
-	RecordFile = "cosmos-owner.json"
+	RecordFile = "owner.json"
+
+	// LegacyRecordFile is the name an earlier release gave the record. The
+	// store reads it only when RecordFile does not exist, and it removes it
+	// whenever it writes or releases the record. It goes away in the release
+	// after this one.
+	LegacyRecordFile = "cosmos-owner.json"
 
 	// LockFile is the name of the file beside the record that every reader
 	// and writer locks. It is never removed, so every caller locks the same
 	// file.
-	LockFile = "cosmos-owner.lock"
+	LockFile = "owner.lock"
 )
 
 // The modes the store gives the files and the directory it creates.
@@ -88,15 +94,21 @@ type Store interface {
 // exclusive one, with flock on Unix and LockFileEx on Windows. Locks are
 // advisory, so they guard only against callers that lock too.
 //
+// For one release the store also reads a record that an earlier release left
+// as LegacyRecordFile, but only when RecordFile does not exist. Every other
+// trouble with RecordFile is reported and never falls back. A successful
+// Replace removes the old file, and a Release removes the record under both
+// names, so a released record never comes back through the old name.
+//
 // The store sets the mode of the directory and files it creates, and it
 // never changes a file's owner or group.
 //
 // Every use of the store first checks that no other user can change the
-// record. The directory and the record must not be symbolic links, must be
-// owned by this process's effective user or by root, and must not be
-// writable by group or other. Every directory above them must pass
-// safedir.Ancestors. A store that fails any of these is refused with
-// ErrUnsafeStore, and nothing in it is read or changed.
+// record. The directory and the record, under either of its names, must not
+// be symbolic links, must be owned by this process's effective user or by
+// root, and must not be writable by group or other. Every directory above
+// them must pass safedir.Ancestors. A store that fails any of these is
+// refused with ErrUnsafeStore, and nothing in it is read or changed.
 //
 // Each use resolves the symbolic links above the directory with
 // safedir.Resolve and then works only in the resolved directory, so a link
@@ -120,6 +132,9 @@ type DirStore struct {
 
 	// dirSync, when set, flushes a directory in place of syncDir.
 	dirSync func(dir string) error
+
+	// removeFile, when set, removes a record file in place of os.Remove.
+	removeFile func(path string) error
 }
 
 var _ Store = (*DirStore)(nil)
@@ -226,8 +241,10 @@ func (s *DirStore) RLock(ctx context.Context) (func() error, error) {
 // While it holds the exclusive lock, Replace also removes temporary files
 // that an earlier writer left behind when it stopped before its rename.
 //
-// An error from the final directory sync comes after the rename, so the new
-// record is in place but may not survive a crash.
+// An error from the directory sync comes after the rename, so the new record
+// is in place but may not survive a crash. Once the new record is in place
+// and synced, Replace removes LegacyRecordFile, which a failure there does
+// not fail.
 func (s *DirStore) Replace(ctx context.Context, expect *uint64, next Signed) (err error) {
 	defer func() {
 		if err != nil {
@@ -276,7 +293,37 @@ func (s *DirStore) Replace(ctx context.Context, expect *uint64, next Signed) (er
 		return err
 	}
 
-	return s.writeRecord(dir, data)
+	if err := s.writeRecord(dir, data); err != nil {
+		return err
+	}
+
+	// The new record is in place and synced, so the write has happened, and
+	// reporting it as failed would send the caller to retry a write that
+	// would then fail on its generation. A failure to remove the old file is
+	// therefore not the write's failure. The old file cannot be reported
+	// while RecordFile exists, because a read falls back only when
+	// RecordFile does not exist. The store removes RecordFile only in
+	// Release, which removes the old file first and fails, with the record
+	// still in place, when it cannot. The next Replace tries again.
+	_ = s.removeLegacy(dir)
+
+	return nil
+}
+
+// removeLegacy removes LegacyRecordFile from dir, the resolved directory, and
+// then syncs dir so that the removal survives a crash. A missing file is not
+// an error, and then nothing is synced. The caller holds the exclusive lock.
+func (s *DirStore) removeLegacy(dir string) error {
+	err := s.removeRecordFile(filepath.Join(dir, LegacyRecordFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("remove legacy owner record: %w", err)
+	}
+
+	return s.syncDirectory(dir)
 }
 
 // checkReplace checks next against the record stored in dir. The caller
@@ -331,7 +378,32 @@ func (s *DirStore) checkReplace(dir string, expect *uint64, next Record) error {
 // readSigned reads and parses the record stored in dir, the resolved
 // directory. It returns ErrNoRecord when there is none.
 func (s *DirStore) readSigned(dir string) (Signed, error) {
-	path := filepath.Join(dir, RecordFile)
+	sf, _, err := s.readStored(dir)
+
+	return sf, err
+}
+
+// readStored reads and parses the record stored in dir, the resolved
+// directory, and returns the name of the file it read. It reads RecordFile,
+// and it reads LegacyRecordFile only when RecordFile does not exist. Any
+// other error from RecordFile is returned as it is, so a record that cannot
+// be read, does not parse, or is not private is never passed over for the
+// old file. It returns ErrNoRecord when neither file exists.
+func (s *DirStore) readStored(dir string) (Signed, string, error) {
+	sf, err := s.readFile(dir, RecordFile)
+	if !errors.Is(err, ErrNoRecord) {
+		return sf, RecordFile, err
+	}
+
+	sf, err = s.readFile(dir, LegacyRecordFile)
+
+	return sf, LegacyRecordFile, err
+}
+
+// readFile reads and parses the record file name in dir, the resolved
+// directory. It returns ErrNoRecord only when that file does not exist.
+func (s *DirStore) readFile(dir, name string) (Signed, error) {
+	path := filepath.Join(dir, name)
 
 	err := safedir.EntryAs(path, false, s.uid())
 	if errors.Is(err, fs.ErrNotExist) {
@@ -381,13 +453,18 @@ func (s *DirStore) readSigned(dir string) (Signed, error) {
 // a decimal number after it.
 const tempPrefix = "." + RecordFile + ".tmp-"
 
+// legacyTempPrefix started the temporary record files of the release that
+// named the record LegacyRecordFile. The sweep still removes them, and it
+// goes away with LegacyRecordFile.
+const legacyTempPrefix = "." + LegacyRecordFile + ".tmp-"
+
 // sweepTemps removes temporary record files that an earlier writer left
 // behind when it stopped between creating one and renaming it. The caller
 // holds the exclusive lock, and every writer holds that lock while its
 // temporary file exists, so none of these files is still being written. It
-// removes only regular files whose names are exactly the store's own pattern,
-// and it is best effort: a file it cannot remove is left for the next writer.
-// dir is the resolved directory.
+// removes only regular files whose names are exactly the store's own pattern
+// under the record's current or legacy name. It is best effort, and a file it
+// cannot remove is left for the next writer. dir is the resolved directory.
 func (s *DirStore) sweepTemps(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -401,10 +478,14 @@ func (s *DirStore) sweepTemps(dir string) {
 	}
 }
 
-// isTempName reports whether name is tempPrefix followed by one or more
-// decimal digits.
+// isTempName reports whether name is tempPrefix or legacyTempPrefix followed
+// by one or more decimal digits.
 func isTempName(name string) bool {
 	digits, ok := strings.CutPrefix(name, tempPrefix)
+	if !ok {
+		digits, ok = strings.CutPrefix(name, legacyTempPrefix)
+	}
+
 	if !ok || digits == "" {
 		return false
 	}
@@ -416,6 +497,16 @@ func isTempName(name string) bool {
 	}
 
 	return true
+}
+
+// removeRecordFile removes the record file at path, through the test hook
+// when one is set.
+func (s *DirStore) removeRecordFile(path string) error {
+	if s.removeFile != nil {
+		return s.removeFile(path)
+	}
+
+	return os.Remove(path)
 }
 
 // syncDirectory flushes dir, through the test hook when one is set.
@@ -556,7 +647,7 @@ func unsafeStore(err error) error {
 }
 
 // checkPrivate checks that no user but this one and root can change the
-// directory, the record, or a directory above them, and returns the
+// directory, the record under either of its names, or a directory above them, and returns the
 // directory with the symbolic links above it resolved. Everything the caller
 // does next must use that directory. A missing directory, or a missing
 // directory above it, is ErrNoRecord. A missing record is left for the
@@ -581,9 +672,13 @@ func (s *DirStore) checkPrivate() (string, error) {
 		return "", unsafeStore(err)
 	}
 
-	err = safedir.EntryAs(filepath.Join(dir, RecordFile), false, uid)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", unsafeStore(err)
+	// The legacy record is checked whether or not RecordFile exists, so that
+	// the store never holds a file that another user could change.
+	for _, name := range []string{RecordFile, LegacyRecordFile} {
+		err = safedir.EntryAs(filepath.Join(dir, name), false, uid)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", unsafeStore(err)
+		}
 	}
 
 	return dir, nil

@@ -29,12 +29,16 @@ func TestStoreNames(t *testing.T) {
 		t.Errorf("DefaultDir = %q", ownerrecord.DefaultDir)
 	}
 
-	if ownerrecord.RecordFile != "cosmos-owner.json" {
+	if ownerrecord.RecordFile != "owner.json" {
 		t.Errorf("RecordFile = %q", ownerrecord.RecordFile)
 	}
 
-	if ownerrecord.LockFile != "cosmos-owner.lock" {
+	if ownerrecord.LockFile != "owner.lock" {
 		t.Errorf("LockFile = %q", ownerrecord.LockFile)
+	}
+
+	if ownerrecord.LegacyRecordFile != "cosmos-owner.json" {
+		t.Errorf("LegacyRecordFile = %q", ownerrecord.LegacyRecordFile)
 	}
 }
 
@@ -981,8 +985,19 @@ func TestReplaceSweepsStaleTemporaryFiles(t *testing.T) {
 
 	s, dir, _ := createdStore(t)
 
-	stale := []string{".cosmos-owner.json.tmp-1", ".cosmos-owner.json.tmp-3141592653"}
+	// Temporary files under the record's old name are swept as well, so
+	// that a writer that stopped before the rename leaves nothing behind.
+	stale := []string{
+		".owner.json.tmp-1",
+		".owner.json.tmp-3141592653",
+		".cosmos-owner.json.tmp-1",
+		".cosmos-owner.json.tmp-3141592653",
+	}
 	kept := []string{
+		".owner.json.tmp-",
+		".owner.json.tmp-12a",
+		".owner.json.tmp-12.bak",
+		"owner.json.tmp-12",
 		".cosmos-owner.json.tmp-",
 		".cosmos-owner.json.tmp-12a",
 		".cosmos-owner.json.tmp-12.bak",
@@ -998,9 +1013,11 @@ func TestReplaceSweepsStaleTemporaryFiles(t *testing.T) {
 	}
 
 	// A directory that matches the pattern is not a file the store wrote.
-	keptDir := ".cosmos-owner.json.tmp-77"
-	if err := os.Mkdir(filepath.Join(dir, keptDir), 0o750); err != nil {
-		t.Fatal(err)
+	keptDirs := []string{".owner.json.tmp-77", ".cosmos-owner.json.tmp-78"}
+	for _, name := range keptDirs {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o750); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// A refused replace still holds the exclusive lock, so it sweeps too.
@@ -1008,7 +1025,7 @@ func TestReplaceSweepsStaleTemporaryFiles(t *testing.T) {
 		t.Fatalf("err = %v, want ErrRecordChanged", err)
 	}
 
-	want := append([]string{ownerrecord.RecordFile, ownerrecord.LockFile, keptDir}, kept...)
+	want := append(append([]string{ownerrecord.RecordFile, ownerrecord.LockFile}, keptDirs...), kept...)
 	slices.Sort(want)
 
 	if got := dirNames(t, dir); !slices.Equal(got, want) {

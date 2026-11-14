@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
@@ -56,6 +55,14 @@ func openRelease(sf Signed) (Record, error) {
 // signed form (JOB_REQUEST_INVALID). A refused release leaves the record as
 // it was. A release keeps the lock file, so the directory can be removed
 // afterwards.
+//
+// Release removes the record under both RecordFile and LegacyRecordFile,
+// whichever it read, because a read falls back to LegacyRecordFile and would
+// otherwise find a released record again. It removes LegacyRecordFile first
+// and syncs the directory before it removes RecordFile, so neither a failed
+// removal nor a crash can leave the old file behind without RecordFile in
+// front of it. A release that fails part way leaves the stored record
+// readable as it was, and a retry finishes it.
 func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (err error) {
 	defer func() {
 		if err != nil {
@@ -80,7 +87,7 @@ func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (er
 
 	s.sweepTemps(dir)
 
-	cur, err := s.readSigned(dir)
+	cur, name, err := s.readStored(dir)
 	if err != nil {
 		return err
 	}
@@ -98,9 +105,17 @@ func (s *DirStore) Release(ctx context.Context, expect uint64, proof Signed) (er
 		return err
 	}
 
-	path := filepath.Join(dir, RecordFile)
+	// The old file goes first, and its removal is synced, so that RecordFile
+	// is never gone while the old file could still be read in its place.
+	if err := s.removeLegacy(dir); err != nil {
+		return err
+	}
 
-	if err := os.Remove(path); err != nil {
+	if name == LegacyRecordFile {
+		return nil
+	}
+
+	if err := s.removeRecordFile(filepath.Join(dir, RecordFile)); err != nil {
 		return fmt.Errorf("remove owner record: %w", err)
 	}
 

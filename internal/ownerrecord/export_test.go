@@ -77,3 +77,9 @@ func SyncDir(dir string) error {
 func SetEUID(s *DirStore, euid int) {
 	s.euid = func() int { return euid }
 }
+
+// SetRecordRemover makes s remove a record file with f in place of
+// os.Remove.
+func SetRecordRemover(s *DirStore, f func(path string) error) {
+	s.removeFile = f
+}
