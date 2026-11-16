@@ -188,7 +188,7 @@ func TestAnOrphanedStreamHasNoCancelOutcome(t *testing.T) {
 	}{
 		"orphaned": {&progress.ErrorBody{Code: progress.CodeJobOrphaned, Message: "job job-0001 is orphaned"}, progress.ResultBody{ExitCode: 1}},
 		"refused":  {&progress.ErrorBody{Code: progress.CodeJobNotFound, Message: "job job-0001 has no spool on this host"}, progress.ResultBody{ExitCode: 2}},
-		"unknown":  {&progress.ErrorBody{Code: progress.CodeJobCancelled, Message: "job job-0001 was cancelled"}, progress.ResultBody{ExitCode: 1, Cancel: "paused"}},
+		"unknown":  {&progress.ErrorBody{Code: progress.CodeJobCancelled, Message: "job job-0001 was cancelled"}, progress.ResultBody{ExitCode: 1, Cancel: "unknown-outcome"}},
 		"stored":   {nil, progress.ResultBody{ExitCode: 0, Cancel: progress.CancelAlreadyFinished}},
 	} {
 		if got, ok := progress.CancelOutcomeOf(tc.err, tc.res); ok || got != "" {

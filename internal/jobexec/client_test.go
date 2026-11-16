@@ -36,16 +36,16 @@ func TestAClientThatFallsTooFarBehindIsDropped(t *testing.T) {
 	}
 }
 
-// slowClient takes each write after a pause.
+// slowClient takes each write after a delay.
 type slowClient struct {
-	pause time.Duration
+	delay time.Duration
 
 	mu  sync.Mutex
 	got bytes.Buffer
 }
 
 func (c *slowClient) Write(p []byte) (int, error) {
-	time.Sleep(c.pause)
+	time.Sleep(c.delay)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,7 +58,7 @@ func (c *slowClient) Write(p []byte) (int, error) {
 func TestASlowClientGetsTheWholeStream(t *testing.T) {
 	t.Parallel()
 
-	client := &slowClient{pause: 50 * time.Millisecond}
+	client := &slowClient{delay: 50 * time.Millisecond}
 	c := newClientWriter(client, defaultClientBuffer)
 
 	// Each write takes a twentieth of the grace, which leaves room for a
