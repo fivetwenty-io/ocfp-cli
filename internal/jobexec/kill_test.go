@@ -122,8 +122,11 @@ func killRunWith(t *testing.T, setup func(rc *runCase), lines ...string) (*runCa
 
 // A verb that does not stop is killed once the budget has passed on the
 // run's clock from when the run first saw the marker: not at any wait
-// before that, and exactly once at it. The stream ends with JOB_CANCELLED
-// and a result that says the job was killed, and exit.json records it.
+// before that, and first at it. The scripted verb exits at its first kill,
+// so it is killed once. A real verb whose kill fails is killed again at the
+// next look, and its group gets one more kill when it is reaped. The stream
+// ends with JOB_CANCELLED and a result that says the job was killed, and
+// exit.json records it.
 func TestACancelKillsWhenTheBudgetPasses(t *testing.T) {
 	t.Parallel()
 
