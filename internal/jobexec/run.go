@@ -299,6 +299,13 @@ func cancelJob(ctx context.Context, o Options, req Request, release func() error
 	// A run of this contract can make the spool and not yet have written its
 	// status, and it looks for the marker before it starts its verb. A run of
 	// an older contract writes its status with no contract in it.
+	//
+	// A spool with no status yet can also be a run of an older contract that
+	// has not written its status, as during an upgrade. That run never reads
+	// the marker, so the job runs to its end, and the requester then hears
+	// already_finished although the cancel came first. The window is the
+	// moment between a run's making its spool and writing its status, and
+	// only a binary from before cancels can be in it, so it is accepted.
 	if ok && st.WireContract < actionWireContract {
 		return refusalStream(o, req.JobID, refuse(progress.CodeWireContractUnsupported,
 			fmt.Sprintf("job %s was started by a run of wire contract %d or older, which does not take a cancel",
