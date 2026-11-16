@@ -53,6 +53,11 @@ const (
 	// CodeJobCancelled reports a job that ended because a cancel asked it to
 	// stop.
 	CodeJobCancelled Code = "JOB_CANCELLED"
+
+	// CodeJobNotFound reports a cancel of a job that has no spool on the
+	// host. A requester whose own run has not yet made the spool can try
+	// again.
+	CodeJobNotFound Code = "JOB_NOT_FOUND"
 )
 
 // Refusal is an error that carries a Code, so a caller can act on the reason

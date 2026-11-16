@@ -131,6 +131,14 @@ type waitClock interface {
 // without exit.json is orphaned, and the stream ends with a JOB_ORPHANED
 // error and a result with exit code 1 after the records it has. Run returns
 // a plain error for an orphaned job, and for a job whose exit code is not 0.
+//
+// A cancel request gets the same owner checks as a run request. It never
+// makes a spool: a job with none is refused with JOB_NOT_FOUND, and a job
+// that a run of an older wire contract started is refused with
+// WIRE_CONTRACT_UNSUPPORTED. A cancel of a job that has not finished writes
+// the marker while it holds the shared lock on the owner record, and then
+// attaches like any later run, so its reply is the job's stream. A cancel
+// of a finished job writes nothing, and its reply is the replay.
 func Run(ctx context.Context, o Options) error {
 	o, err := o.withDefaults()
 	if err != nil {
@@ -197,6 +205,14 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		}
 	}()
 
+	if req.Action == ActionCancel {
+		return cancelJob(ctx, o, req, func() error {
+			released = true
+
+			return release()
+		})
+	}
+
 	v, ok := verbs[req.Verb]
 	if !ok {
 		return refusalStream(o, req.JobID, refuse(progress.CodeVerbNotAllowed,
@@ -220,7 +236,65 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		return fmt.Errorf("release owner record lock: %w", err)
 	}
 
-	return attach(ctx, o, s, req.JobID, v)
+	return attach(ctx, o, s, req.JobID, verbHeader(req.JobID, v))
+}
+
+// cancelJob asks the job that a cancel request names to stop, and then
+// attaches to it, so the requester's reply is the job's stream. It opens the
+// job's spool and never makes one, because a cancel must not become a job's
+// first run. A job with no spool is refused with JOB_NOT_FOUND, and a job
+// that a run of an older wire contract started, which never looks for a
+// marker, is refused with WIRE_CONTRACT_UNSUPPORTED.
+//
+// A job that has finished gets no marker, so its spool stays as it was, and
+// the requester gets the replay any later run gets. Otherwise cancelJob
+// writes the marker while it still holds the owner lock, so that a hand-over
+// cannot come between the owner check and the write. A marker that is
+// already there stays as it is. release gives the lock back before the
+// attach, as a run's attach does.
+func cancelJob(ctx context.Context, o Options, req Request, release func() error) error {
+	s, err := OpenSpool(o.SpoolRoot, req.JobID)
+	if errors.Is(err, ErrSpoolNotFound) {
+		return refusalStream(o, req.JobID, refuse(progress.CodeJobNotFound,
+			fmt.Sprintf("job %s has no spool on this host", req.JobID)))
+	}
+
+	if err != nil {
+		return err
+	}
+
+	st, ok, err := s.readStatus()
+	if err != nil {
+		return err
+	}
+
+	// A run of this contract can make the spool and not yet have written its
+	// status, and it looks for the marker before it starts its verb. A run of
+	// an older contract writes its status with no contract in it.
+	if ok && st.WireContract < actionWireContract {
+		return refusalStream(o, req.JobID, refuse(progress.CodeWireContractUnsupported,
+			fmt.Sprintf("job %s was started by a run of wire contract %d or older, which does not take a cancel",
+				req.JobID, actionWireContract-1)))
+	}
+
+	_, finished, err := s.readExit()
+	if err != nil {
+		return err
+	}
+
+	if !finished {
+		_, err = s.WriteCancel(Cancel{RequestedAt: o.Clock.Now().UTC()})
+		if err != nil {
+			return err
+		}
+	}
+
+	err = release()
+	if err != nil {
+		return fmt.Errorf("release owner record lock: %w", err)
+	}
+
+	return attach(ctx, o, s, req.JobID, streamHeader(req.JobID))
 }
 
 // readRequest reads one line from r, one byte at a time so that nothing
@@ -472,9 +546,10 @@ func (t *teeWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// attach follows the spool of a job that another run made.
-func attach(ctx context.Context, o Options, s Spool, jobID string, v verb) error {
-	fl := &follower{spool: s, jobID: jobID, w: o.Stdout, clock: o.Clock, header: verbHeader(jobID, v)}
+// attach follows the spool of a job that another run made. header is the
+// header it writes for a spool whose out holds none.
+func attach(ctx context.Context, o Options, s Spool, jobID string, header progress.Header) error {
+	fl := &follower{spool: s, jobID: jobID, w: o.Stdout, clock: o.Clock, header: header}
 	defer fl.close()
 
 	start := o.Clock.Now()
