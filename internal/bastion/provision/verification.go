@@ -592,21 +592,27 @@ func (vm *VerificationManager) generateServiceStatusChecks(services []string) []
 	return lines
 }
 
+// generateVaultStatusCheck reports whether the bloc's own safe target is
+// registered. It never asks which target is current, because that target
+// belongs to the operator and says nothing about the bloc.
 func (vm *VerificationManager) generateVaultStatusCheck() []string {
-	return []string{
+	lines := []string{
 		"# Vault status",
 		"if command -v safe >/dev/null 2>&1; then",
-		"    VAULT_STATUS=$(safe target 2>&1 || echo 'not-targeted')",
-		"    if echo \"$VAULT_STATUS\" | grep -q 'inception\\|production'; then",
-		"        log_success '  ✓ Vault targeted and accessible'",
+	}
+	lines = append(lines, blocSafeTargetSnippet("    ")...)
+
+	return append(lines,
+		"    if [ -n \"$BLOC_SAFE_TARGET\" ]; then",
+		"        log_success \"  ✓ Vault registered as safe target $BLOC_SAFE_TARGET\"",
 		"    else",
-		"        log_info \"  ⚠ Vault status: $VAULT_STATUS\"",
+		"        log_info \"  ⚠ No safe target is registered for bloc ${OCFP_BLOC:-}\"",
 		"    fi",
 		"else",
 		"    log_info '  Safe command not available for vault check'",
 		"fi",
 		"",
-	}
+	)
 }
 
 func (vm *VerificationManager) getProvisioningSummaryHeader() []string {

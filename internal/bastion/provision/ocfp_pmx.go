@@ -31,6 +31,9 @@ const pmxDefaultPort = "8006"
 // name and environment segment are never hand-spelled in either place.
 //
 // The generated script:
+//   - reads every value through the bloc's own safe target, named with -T
+//     (see blocSafeTargetSnippet), and fails the phase when the bloc has no
+//     target registered, rather than reading the operator's current one;
 //   - reads host, node, token_id, and token_secret with `safe get`, failing
 //     the phase with a clear error when any of the four is absent;
 //   - reads port and verify_ssl the same way, falling back to 8006 and to
@@ -67,6 +70,15 @@ func (om *OCFPManager) GeneratePMXContextScript(_ctx context.Context) string {
 		"",
 	)
 
+	lines = append(lines, blocSafeTargetSnippet("")...)
+	lines = append(lines,
+		`if [ -z "$BLOC_SAFE_TARGET" ]; then`,
+		`    log_error "pmx_context: no safe target is registered for bloc ${OCFP_BLOC} (expected ${OCFP_BLOC}-mgmt or ${OCFP_BLOC}-inception)"`,
+		"    exit 1",
+		"fi",
+		"",
+	)
+
 	lines = append(lines, om.pmxRequiredFieldsSnippet()...)
 	lines = append(lines, om.pmxOptionalFieldsSnippet(defaultVerifySSL)...)
 	lines = append(lines, om.pmxTokenSplitSnippet()...)
@@ -88,15 +100,15 @@ func (om *OCFPManager) GeneratePMXContextScript(_ctx context.Context) string {
 func (om *OCFPManager) pmxRequiredFieldsSnippet() []string {
 	return []string{
 		`for PMX_FIELD in host node token_id token_secret; do`,
-		`    if ! safe exists "${CPI_PATH}:${PMX_FIELD}"; then`,
+		`    if ! ocfp_bloc_safe exists "${CPI_PATH}:${PMX_FIELD}"; then`,
 		`        log_error "pmx_context: ${CPI_PATH}:${PMX_FIELD} not found in vault (run vault_populate first)"`,
 		"        exit 1",
 		"    fi",
 		"done",
 		"",
-		`PMX_HOST="$(safe get "${CPI_PATH}:host")"`,
-		`PMX_NODE="$(safe get "${CPI_PATH}:node")"`,
-		`PMX_TOKEN_ID_FULL="$(safe get "${CPI_PATH}:token_id")"`,
+		`PMX_HOST="$(ocfp_bloc_safe get "${CPI_PATH}:host")"`,
+		`PMX_NODE="$(ocfp_bloc_safe get "${CPI_PATH}:node")"`,
+		`PMX_TOKEN_ID_FULL="$(ocfp_bloc_safe get "${CPI_PATH}:token_id")"`,
 		"",
 		`if [ -z "$PMX_HOST" ] || [ -z "$PMX_NODE" ] || [ -z "$PMX_TOKEN_ID_FULL" ]; then`,
 		`    log_error "pmx_context: host, node, or token_id resolved empty from ${CPI_PATH}"`,
@@ -114,12 +126,12 @@ func (om *OCFPManager) pmxRequiredFieldsSnippet() []string {
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) pmxOptionalFieldsSnippet(defaultVerifySSL string) []string {
 	return []string{
-		`PMX_PORT="$(safe get "${CPI_PATH}:port" 2>/dev/null || echo '')"`,
+		`PMX_PORT="$(ocfp_bloc_safe get "${CPI_PATH}:port" 2>/dev/null || echo '')"`,
 		`if [ -z "$PMX_PORT" ]; then`,
 		`    PMX_PORT="` + pmxDefaultPort + `"`,
 		"fi",
 		"",
-		`PMX_VERIFY_SSL="$(safe get "${CPI_PATH}:verify_ssl" 2>/dev/null || echo '')"`,
+		`PMX_VERIFY_SSL="$(ocfp_bloc_safe get "${CPI_PATH}:verify_ssl" 2>/dev/null || echo '')"`,
 		`if [ -z "$PMX_VERIFY_SSL" ]; then`,
 		`    PMX_VERIFY_SSL="` + defaultVerifySSL + `"`,
 		"fi",
@@ -163,7 +175,7 @@ func (om *OCFPManager) pmxContextAddSnippet() []string {
 		`    --port "$PMX_PORT"`,
 		`    --username "$PMX_USERNAME"`,
 		`    --token-id "$PMX_TOKEN_ID"`,
-		`    --secret "$(safe get "${CPI_PATH}:token_secret")"`,
+		`    --secret "$(ocfp_bloc_safe get "${CPI_PATH}:token_secret")"`,
 		`    --default-node "$PMX_NODE"`,
 		"    --select",
 		"    --force",

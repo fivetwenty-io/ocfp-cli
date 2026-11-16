@@ -22,13 +22,13 @@ func TestGeneratePMXContextScript_ContainsExpectedPatterns(t *testing.T) {
 	for _, want := range []string{
 		`CPI_PATH="secret/config/ocfp-cf1-lab/mgmt/cpi/pve"`,
 		`PMX_CONTEXT_NAME="${OCFP_BLOC}-cpi"`,
-		`safe exists "${CPI_PATH}:${PMX_FIELD}"`,
-		`PMX_HOST="$(safe get "${CPI_PATH}:host")"`,
-		`PMX_NODE="$(safe get "${CPI_PATH}:node")"`,
-		`PMX_TOKEN_ID_FULL="$(safe get "${CPI_PATH}:token_id")"`,
+		`ocfp_bloc_safe exists "${CPI_PATH}:${PMX_FIELD}"`,
+		`PMX_HOST="$(ocfp_bloc_safe get "${CPI_PATH}:host")"`,
+		`PMX_NODE="$(ocfp_bloc_safe get "${CPI_PATH}:node")"`,
+		`PMX_TOKEN_ID_FULL="$(ocfp_bloc_safe get "${CPI_PATH}:token_id")"`,
 		`cut -d'!' -f1`,
 		`cut -d'!' -f2`,
-		`--secret "$(safe get "${CPI_PATH}:token_secret")"`,
+		`--secret "$(ocfp_bloc_safe get "${CPI_PATH}:token_secret")"`,
 		"--default-node \"$PMX_NODE\"",
 		"--select",
 		"--force",
@@ -57,6 +57,7 @@ func TestGeneratePMXContextScript_NeverLogsSecret(t *testing.T) {
 		"PMX_SECRET=",
 		"echo \"$PMX",
 		"log_info \"$(safe get",
+		"log_info \"$(ocfp_bloc_safe get",
 	} {
 		if strings.Contains(script, reject) {
 			t.Errorf("pmx context script must not contain %q (secret handling regression)\ngot:\n%s", reject, script)
@@ -122,9 +123,9 @@ func TestGeneratePMXContextScript_PortAndVerifySSLFallbacks(t *testing.T) {
 	script := NewOCFPManager("pve", cfg, nil).GeneratePMXContextScript(context.Background())
 
 	for _, want := range []string{
-		`PMX_PORT="$(safe get "${CPI_PATH}:port" 2>/dev/null || echo '')"`,
+		`PMX_PORT="$(ocfp_bloc_safe get "${CPI_PATH}:port" 2>/dev/null || echo '')"`,
 		`PMX_PORT="8006"`,
-		`PMX_VERIFY_SSL="$(safe get "${CPI_PATH}:verify_ssl" 2>/dev/null || echo '')"`,
+		`PMX_VERIFY_SSL="$(ocfp_bloc_safe get "${CPI_PATH}:verify_ssl" 2>/dev/null || echo '')"`,
 		"for PMX_FIELD in host node token_id token_secret; do",
 		"exit 1",
 	} {

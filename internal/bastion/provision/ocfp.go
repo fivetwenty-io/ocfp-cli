@@ -1038,22 +1038,28 @@ func (om *OCFPManager) generateOCFPCLILocator() []string {
 	}
 }
 
+// generateVaultPreparation waits for the vault and resolves the bloc's own
+// safe target, which the populate check reads through. It asks whether the
+// bloc's target is registered, not which target is current, because the
+// current target belongs to the operator.
 func (om *OCFPManager) generateVaultPreparation() []string {
-	return []string{
+	lines := []string{
 		"# Wait for vault to settle",
 		"log_info 'Waiting for vault to settle...'",
 		"sleep 3",
 		"",
-		"# Verify vault accessibility",
-		"VAULT_CHECK=$(safe target 2>&1 || echo 'not-accessible')",
-		"if echo \"$VAULT_CHECK\" | grep -q 'inception\\|production'; then",
-		"    log_info 'Vault is accessible and targeted'",
+	}
+	lines = append(lines, blocSafeTargetSnippet("")...)
+
+	return append(lines,
+		"if [ -n \"$BLOC_SAFE_TARGET\" ]; then",
+		"    log_info \"Vault is registered as safe target $BLOC_SAFE_TARGET\"",
 		"else",
 		"    log_warning 'Vault may not be properly initialized yet'",
-		"    log_warning \"Current vault target: $VAULT_CHECK\"",
+		"    log_warning \"No safe target is registered for bloc ${OCFP_BLOC:-}\"",
 		"fi",
 		"",
-	}
+	)
 }
 
 func (om *OCFPManager) generateVaultPopulateExecution() []string {
@@ -1073,7 +1079,7 @@ func (om *OCFPManager) generateVaultPopulateExecution() []string {
 		"        ",
 		"        # Verify vault populate results",
 		"        log_info 'Verifying vault populate...'",
-		"        VERIFY_OUTPUT=$(safe tree \"secret/config/${OCFP_BLOC}\" 2>&1 | head -10 || echo 'verification-failed')",
+		"        VERIFY_OUTPUT=$(ocfp_bloc_safe tree \"secret/config/${OCFP_BLOC}\" 2>&1 | head -10 || echo 'verification-failed')",
 		"        if echo \"$VERIFY_OUTPUT\" | grep -q 'secret/config'; then",
 		"            log_success 'Vault populate verification passed'",
 		"            log_info \"Found paths in vault: $(echo \"$VERIFY_OUTPUT\" | head -3)\"",
