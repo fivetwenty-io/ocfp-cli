@@ -2,6 +2,7 @@ package jobexec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -280,6 +281,11 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 		`{"type":"undo","work":{"kind":"lease","id":"c"},"state":"registered"}`,
 		`{"type":"undo","work":{"kind":"lease","id":"b"},"state":"done"}`,
 		`{"type":"undo","work":{"kind":"task","id":"b"},"state":"done"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"d"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"d"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"d"},"state":"failed"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"d"},"state":"done"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"d"},"state":"done"}`,
 		`{"type":"stopped"}`,
 	} {
 		if err := rl.envelope([]byte(line)); err != nil {
@@ -287,8 +293,13 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 		}
 	}
 
-	if got, want := rl.pendingUndo(), []progress.WorkRef{{Kind: "task", ID: "a"}, {Kind: "lease", ID: "c"}}; !slices.Equal(got, want) {
-		t.Fatalf("pending undo = %v, want %v", got, want)
+	want := []progress.UndoneWork{
+		{WorkRef: progress.WorkRef{Kind: "task", ID: "a"}, State: progress.UndoNotRun},
+		{WorkRef: progress.WorkRef{Kind: "lease", ID: "c"}, State: progress.UndoNotRun},
+		{WorkRef: progress.WorkRef{Kind: "lease", ID: "d"}, State: progress.UndoFailed},
+	}
+	if got := rl.pendingUndo(); !slices.Equal(got, want) {
+		t.Fatalf("undone = %v, want %v", got, want)
 	}
 
 	if !rl.sawStopped() {
@@ -393,5 +404,39 @@ func TestAnExitCodeOutsideTheProtocolFailsTheJob(t *testing.T) {
 
 			wantExitShape(t, readFile(t, filepath.Join(root, "job-0001", "exit.json")), 1)
 		})
+	}
+}
+
+// A hook that runs and fails is reported failed rather than done, so the
+// wrapper still counts its work as left undone.
+func TestTheChildReportsAFailedHook(t *testing.T) {
+	t.Parallel()
+
+	var buf strings.Builder
+
+	rt := newJobRuntime(&envelopeWriter{w: &buf})
+
+	rt.OnCancel(progress.WorkRef{Kind: "remote-task", ID: "task-1"}, func(context.Context) error { return nil })
+	rt.OnCancel(progress.WorkRef{Kind: "lease", ID: "lease-7"}, func(context.Context) error { return errors.New("boom") })
+
+	if err := rt.runUndo(t.Context(), time.Second); err == nil {
+		t.Fatal("runUndo reported success for a hook that failed")
+	}
+
+	var states []string
+
+	for line := range strings.Lines(buf.String()) {
+		var env envelope
+
+		must(t, json.Unmarshal([]byte(line), &env))
+
+		if env.Type == envelopeUndo {
+			states = append(states, env.Work.String()+" "+env.State)
+		}
+	}
+
+	want := []string{"remote-task task-1 registered", "lease lease-7 registered", "lease lease-7 failed", "remote-task task-1 done"}
+	if !slices.Equal(states, want) {
+		t.Fatalf("undo envelopes = %q, want %q", states, want)
 	}
 }

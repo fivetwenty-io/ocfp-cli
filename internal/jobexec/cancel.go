@@ -229,7 +229,8 @@ func (r *jobRuntime) pendingHooks() []progress.WorkRef {
 // context that ends remaining less undoMargin from now, and its start and end
 // appear as step_started and step_finished events for the step undo, with the
 // hook's work as the message. A hook that fails finishes with the outcome
-// failed, and the others still run. A second call runs nothing. The error
+// failed, is reported to the wrapper as failed rather than done, and the
+// others still run. A second call runs nothing. The error
 // joins every failed hook's error and any record that could not be written.
 func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error {
 	r.mu.Lock()
@@ -259,11 +260,11 @@ func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error
 			errs = append(errs, err)
 		}
 
-		outcome := outcomeSucceeded
+		outcome, state := outcomeSucceeded, undoDone
 
 		uerr := h.undo(ctx)
 		if uerr != nil {
-			outcome = outcomeFailed
+			outcome, state = outcomeFailed, undoFailed
 
 			errs = append(errs, fmt.Errorf("undo %s: %w", quote(h.work.String()), uerr))
 		}
@@ -273,7 +274,7 @@ func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error
 			errs = append(errs, err)
 		}
 
-		r.report(h.work, undoDone)
+		r.report(h.work, state)
 	}
 
 	return errors.Join(errs...)

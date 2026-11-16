@@ -135,7 +135,7 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 		t.Fatalf("record kinds = %v, want %v:\n%s", got, want, rc.stdout)
 	}
 
-	if w := bodyOf[progress.Event](t, recs[3]); w.Kind != progress.EventWarning || !slices.Equal(w.Undone, []progress.WorkRef{{Kind: "helper-undo", ID: "1"}}) {
+	if w := bodyOf[progress.Event](t, recs[3]); w.Kind != progress.EventWarning || !slices.Equal(w.Undone, []progress.UndoneWork{{WorkRef: progress.WorkRef{Kind: "helper-undo", ID: "1"}, State: progress.UndoNotRun}}) {
 		t.Fatalf("warning = %+v, want one that lists the undo hook that did not run", w)
 	}
 

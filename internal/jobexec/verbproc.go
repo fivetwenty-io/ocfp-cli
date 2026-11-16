@@ -56,10 +56,13 @@ const (
 	envelopeStopped = "stopped"
 )
 
-// The states that an undo envelope reports for a hook.
+// The states that an undo envelope reports for a hook. A hook is reported
+// done once it has run and succeeded, or once the verb forgets it, and
+// failed once it has run and failed.
 const (
 	undoRegistered = "registered"
 	undoDone       = "done"
+	undoFailed     = "failed"
 )
 
 // exitVerbFailed is the exit code of a verb that failed with an error rather
@@ -393,7 +396,8 @@ func (e *envelopeWriter) Encode(kind progress.Kind, body any) error {
 	return e.write(envelope{Type: envelopeRecord, Kind: kind, Body: raw})
 }
 
-// undoState reports that the undo hook for work is registered or done.
+// undoState reports that the undo hook for work is registered, done, or
+// failed.
 func (e *envelopeWriter) undoState(work progress.WorkRef, state string) error {
 	return e.write(envelope{Type: envelopeUndo, Work: &work, State: state})
 }
@@ -438,7 +442,8 @@ var errSealed = errors.New("relay sealed")
 
 // relay copies a verb's envelopes and stderr into the job's stream. It
 // forwards records through enc until it is sealed, and keeps the work of the
-// undo hooks that the verb has registered and not yet reported done.
+// undo hooks that the verb has registered and not yet reported done, with
+// whether each has failed.
 //
 // mu is held while a record is written, so the supervisor never takes it:
 // the stopped mark lives apart from it, and the kill needs nothing under it.
@@ -456,7 +461,7 @@ type relay struct {
 	sealed   bool
 	refused  error // the first envelope the relay refused
 	writeErr error // the first record the relay could not write
-	undo     []progress.WorkRef
+	undo     []progress.UndoneWork
 }
 
 // envelopes relays the envelopes on r, one line at a time, until r ends, the
@@ -578,21 +583,29 @@ func (rl *relay) record(kind progress.Kind, body json.RawMessage) error {
 }
 
 // undoState records the state an undo envelope reports. A hook reported done
-// is the newest one registered for its work.
+// or failed is the newest one registered for its work that has not been
+// reported failed. A done hook's work is no longer undone, and a failed
+// hook's work stays undone, marked failed.
 func (rl *relay) undoState(work progress.WorkRef, state string) error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	switch state {
 	case undoRegistered:
-		rl.undo = append(rl.undo, work)
-	case undoDone:
+		rl.undo = append(rl.undo, progress.UndoneWork{WorkRef: work, State: progress.UndoNotRun})
+	case undoDone, undoFailed:
 		for i := len(rl.undo) - 1; i >= 0; i-- {
-			if rl.undo[i] == work {
-				rl.undo = append(rl.undo[:i:i], rl.undo[i+1:]...)
-
-				break
+			if rl.undo[i].WorkRef != work || rl.undo[i].State != progress.UndoNotRun {
+				continue
 			}
+
+			if state == undoFailed {
+				rl.undo[i].State = progress.UndoFailed
+			} else {
+				rl.undo = append(rl.undo[:i:i], rl.undo[i+1:]...)
+			}
+
+			break
 		}
 	default:
 		return refusedEnvelope("an undo envelope in state %s", quote(state))
@@ -702,13 +715,13 @@ func (rl *relay) failure() (writeErr, refused error) {
 	return rl.writeErr, rl.refused
 }
 
-// pendingUndo returns the undo hooks that the verb registered and has not
-// reported done, oldest first.
-func (rl *relay) pendingUndo() []progress.WorkRef {
+// pendingUndo returns the work of the undo hooks that the verb registered
+// and has not reported done, oldest first, with whether each hook failed.
+func (rl *relay) pendingUndo() []progress.UndoneWork {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	return append([]progress.WorkRef(nil), rl.undo...)
+	return append([]progress.UndoneWork(nil), rl.undo...)
 }
 
 // sawStopped reports whether the verb wrote the stopped mark. It never
@@ -733,9 +746,10 @@ type verbEnd struct {
 	// error.
 	message string
 
-	// undone lists the work of the undo hooks that a killed verb had
-	// registered and had not reported done, oldest first.
-	undone []progress.WorkRef
+	// undone lists the work that a cancelled verb left undone, oldest
+	// first: the undo hooks it had registered and had not reported done,
+	// with whether each failed.
+	undone []progress.UndoneWork
 }
 
 // runVerb starts v and relays what it writes into enc until it has exited and
@@ -841,6 +855,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 			cancel:  progress.CancelStopped,
 			seenAt:  sv.seenUTC(),
 			message: fmt.Sprintf("job %s was cancelled and stopped at a safe point", jobID),
+			undone:  rl.pendingUndo(),
 		}, nil
 	}
 

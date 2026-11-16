@@ -82,23 +82,26 @@ func TestHeaderCarriesTheCancelBudgetOnlyWhenSet(t *testing.T) {
 	}
 }
 
-// The warning that a killed job's stream carries lists the undo hooks that
-// never ran as typed entries, so a requester parses the list rather than the
-// message.
+// The warning that a cancelled job's stream carries lists the work its undo
+// hooks left undone as typed entries, each with whether its hook did not run
+// or failed, so a requester parses the list rather than the message.
 func TestTheUndoneWarningIsStable(t *testing.T) {
 	t.Parallel()
 
 	got, err := json.Marshal(progress.Event{
 		Kind:    progress.EventWarning,
 		Step:    "cancel",
-		Message: "undo hooks that did not run: remote-task task-1234",
-		Undone:  []progress.WorkRef{{Kind: "remote-task", ID: "task-1234"}},
+		Message: "undo hooks that did not run: remote-task task-1234; undo hooks that failed: lease lease-7",
+		Undone: []progress.UndoneWork{
+			{WorkRef: progress.WorkRef{Kind: "remote-task", ID: "task-1234"}, State: progress.UndoNotRun},
+			{WorkRef: progress.WorkRef{Kind: "lease", ID: "lease-7"}, State: progress.UndoFailed},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := `{"kind":"warning","step":"cancel","message":"undo hooks that did not run: remote-task task-1234","undone":[{"kind":"remote-task","id":"task-1234"}]}`
+	want := `{"kind":"warning","step":"cancel","message":"undo hooks that did not run: remote-task task-1234; undo hooks that failed: lease lease-7","undone":[{"kind":"remote-task","id":"task-1234","state":"not_run"},{"kind":"lease","id":"lease-7","state":"failed"}]}`
 	if string(got) != want {
 		t.Fatalf("warning = %s, want %s", got, want)
 	}

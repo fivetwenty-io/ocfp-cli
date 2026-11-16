@@ -28,6 +28,9 @@ const verbWait = 10 * time.Second
 type waitingVerb struct {
 	undos atomic.Int32
 
+	// undoErr is what the hook returns.
+	undoErr error
+
 	mu   sync.Mutex
 	proc *verbProc
 }
@@ -42,7 +45,7 @@ func (w *waitingVerb) start(s verbStart) (*verbProc, error) {
 		j.OnCancel(progress.WorkRef{Kind: "remote-task", ID: "task-1234"}, func(context.Context) error {
 			w.undos.Add(1)
 
-			return nil
+			return w.undoErr
 		})
 
 		select {
@@ -88,9 +91,15 @@ func (w *waitingVerb) waitExited(t *testing.T) {
 func stoppedRun(t *testing.T) (*runCase, *waitingVerb, Spool, error) {
 	t.Helper()
 
+	return stoppedRunOf(t, &waitingVerb{})
+}
+
+// stoppedRunOf is stoppedRun for the verb w.
+func stoppedRunOf(t *testing.T, w *waitingVerb) (*runCase, *waitingVerb, Spool, error) {
+	t.Helper()
+
 	root := spoolRoot(t)
 	s := Spool{Dir: filepath.Join(root, "job-0001")}
-	w := &waitingVerb{}
 
 	rc := newRun(t, storeWith(t, liveRecord()), root, signedRequest(t, goodRequest()))
 	rc.opts.start = w.start
@@ -154,6 +163,38 @@ func TestACancelStopsAtTheNextSafePoint(t *testing.T) {
 
 	if out := readFile(t, filepath.Join(s.Dir, outFile)); !bytes.Equal(out, rc.stdout.Bytes()) {
 		t.Fatalf("out differs from stdout\nout:\n%s\nstdout:\n%s", out, rc.stdout)
+	}
+}
+
+// A job that stops at a safe point with an undo hook that failed carries
+// the hook's error on stderr, and then the warning that names the work left
+// undone, before its error.
+func TestAStopNamesTheHooksThatFailed(t *testing.T) {
+	t.Parallel()
+
+	rc, w, _, err := stoppedRunOf(t, &waitingVerb{undoErr: errors.New("boom")})
+	if err == nil {
+		t.Fatal("Run reported success for a cancelled job")
+	}
+
+	if n := w.undos.Load(); n != 1 {
+		t.Fatalf("the undo hook ran %d times, want once", n)
+	}
+
+	recs := records(t, rc.stdout.Bytes())
+
+	want := []progress.Kind{progress.KindHeader, progress.KindEvent, progress.KindEvent, progress.KindEvent, progress.KindLog, progress.KindEvent, progress.KindError, progress.KindResult}
+	if got := streamKindsOf(t, recs); !slices.Equal(got, want) {
+		t.Fatalf("record kinds = %v, want %v:\n%s", got, want, rc.stdout)
+	}
+
+	wantBody := `{"kind":"warning","step":"cancel","message":"undo hooks that failed: remote-task task-1234","undone":[{"kind":"remote-task","id":"task-1234","state":"failed"}]}`
+	if string(recs[5].Body) != wantBody {
+		t.Fatalf("warning = %s\nwant %s", recs[5].Body, wantBody)
+	}
+
+	if r := bodyOf[progress.ResultBody](t, recs[7]); r.ExitCode != 1 || r.Cancel != progress.CancelStopped {
+		t.Fatalf("result = %+v, want exit code 1 and cancel stopped", r)
 	}
 }
 

@@ -524,20 +524,15 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 }
 
 // writeEnd writes the records that end a job's stream: a warning that names
-// the undo hooks that did not run, when a killed verb left any, a
+// the work left undone, when a cancelled verb left any, a
 // JOB_CANCELLED error when a cancel ended the job, and the result, which
 // names the cancel's outcome.
 func writeEnd(enc *progress.Encoder, end verbEnd) error {
 	if len(end.undone) > 0 {
-		names := make([]string, len(end.undone))
-		for i, w := range end.undone {
-			names[i] = w.String()
-		}
-
 		err := enc.Encode(progress.KindEvent, progress.Event{
 			Kind:    progress.EventWarning,
 			Step:    stepCancel,
-			Message: "undo hooks that did not run: " + strings.Join(names, ", "),
+			Message: undoneMessage(end.undone),
 			Undone:  end.undone,
 		})
 		if err != nil {
@@ -555,8 +550,34 @@ func writeEnd(enc *progress.Encoder, end verbEnd) error {
 	return enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: end.code, Cancel: end.cancel})
 }
 
-// stepCancel is the step that the warning about undo hooks that did not run
-// appears under.
+// undoneMessage names the work left undone, first the work whose hooks did
+// not run and then the work whose hooks failed.
+func undoneMessage(undone []progress.UndoneWork) string {
+	var notRun, failed []string
+
+	for _, w := range undone {
+		if w.State == progress.UndoFailed {
+			failed = append(failed, w.String())
+		} else {
+			notRun = append(notRun, w.String())
+		}
+	}
+
+	var parts []string
+
+	if len(notRun) > 0 {
+		parts = append(parts, "undo hooks that did not run: "+strings.Join(notRun, ", "))
+	}
+
+	if len(failed) > 0 {
+		parts = append(parts, "undo hooks that failed: "+strings.Join(failed, ", "))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+// stepCancel is the step that the warning about work left undone appears
+// under.
 const stepCancel = "cancel"
 
 // exitError reports a job whose exit code is not 0, and is nil otherwise.

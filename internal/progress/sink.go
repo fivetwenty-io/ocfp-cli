@@ -37,6 +37,26 @@ func (w WorkRef) String() string {
 	return w.Kind + " " + w.ID
 }
 
+// UndoState says why a piece of work was left undone.
+type UndoState string
+
+// The reasons a piece of work can be left undone.
+const (
+	// UndoNotRun is work whose undo hook never ran.
+	UndoNotRun UndoState = "not_run"
+
+	// UndoFailed is work whose undo hook ran and failed.
+	UndoFailed UndoState = "failed"
+)
+
+// UndoneWork is one piece of work that a job left undone, and why. Its JSON
+// holds the work's kind and id beside the state.
+type UndoneWork struct {
+	WorkRef
+
+	State UndoState `json:"state"`
+}
+
 // Event is one structured report of progress from a step.
 type Event struct {
 	Kind     EventKind `json:"kind"`
@@ -47,9 +67,10 @@ type Event struct {
 	Outcome  string    `json:"outcome,omitempty"`
 	Artifact *Artifact `json:"artifact,omitempty"`
 
-	// Undone lists the work whose undo hooks did not run. Only the warning
-	// that a killed job's stream carries sets it.
-	Undone []WorkRef `json:"undone,omitempty"`
+	// Undone lists the work that a cancelled job left undone, because its
+	// undo hook did not run or failed. Only the warning that a cancelled
+	// job's stream carries sets it.
+	Undone []UndoneWork `json:"undone,omitempty"`
 }
 
 // Sink receives progress events. An adapter decides how to show them.

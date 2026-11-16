@@ -270,7 +270,7 @@ func TestAStopBeforeTheBudgetIsNotAKill(t *testing.T) {
 
 // A killed job's stream carries one warning before its error, which lists
 // the undo hooks that the verb registered and never reported done, oldest
-// first, as typed entries.
+// first, as typed entries that say whether each hook did not run or failed.
 func TestAKillNamesTheHooksLeftUndone(t *testing.T) {
 	t.Parallel()
 
@@ -278,6 +278,8 @@ func TestAKillNamesTheHooksLeftUndone(t *testing.T) {
 		`{"type":"undo","work":{"kind":"remote-task","id":"task-1"},"state":"registered"}`,
 		`{"type":"undo","work":{"kind":"lease","id":"lease-7"},"state":"registered"}`,
 		`{"type":"undo","work":{"kind":"remote-task","id":"task-3"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"lease-9"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"lease-9"},"state":"failed"}`,
 		`{"type":"undo","work":{"kind":"lease","id":"lease-7"},"state":"done"}`,
 	)
 	if err == nil {
@@ -291,7 +293,7 @@ func TestAKillNamesTheHooksLeftUndone(t *testing.T) {
 		t.Fatalf("record kinds = %v, want %v:\n%s", got, want, rc.stdout)
 	}
 
-	wantBody := `{"kind":"warning","step":"cancel","message":"undo hooks that did not run: remote-task task-1, remote-task task-3","undone":[{"kind":"remote-task","id":"task-1"},{"kind":"remote-task","id":"task-3"}]}`
+	wantBody := `{"kind":"warning","step":"cancel","message":"undo hooks that did not run: remote-task task-1, remote-task task-3; undo hooks that failed: lease lease-9","undone":[{"kind":"remote-task","id":"task-1","state":"not_run"},{"kind":"remote-task","id":"task-3","state":"not_run"},{"kind":"lease","id":"lease-9","state":"failed"}]}`
 	if string(recs[3].Body) != wantBody {
 		t.Fatalf("warning = %s\nwant %s", recs[3].Body, wantBody)
 	}
