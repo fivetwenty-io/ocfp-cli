@@ -87,11 +87,11 @@ type control struct {
 
 // envelope is one line that a verb writes on its stdout.
 type envelope struct {
-	Type  string          `json:"type"`
-	Kind  progress.Kind   `json:"kind,omitempty"`
-	Body  json.RawMessage `json:"body,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	State string          `json:"state,omitempty"`
+	Type  string            `json:"type"`
+	Kind  progress.Kind     `json:"kind,omitempty"`
+	Body  json.RawMessage   `json:"body,omitempty"`
+	Work  *progress.WorkRef `json:"work,omitempty"`
+	State string            `json:"state,omitempty"`
 }
 
 // verbStart is what a starter needs to start a verb.
@@ -383,9 +383,9 @@ func (e *envelopeWriter) Encode(kind progress.Kind, body any) error {
 	return e.write(envelope{Type: envelopeRecord, Kind: kind, Body: raw})
 }
 
-// undoState reports that the undo hook name is registered or done.
-func (e *envelopeWriter) undoState(name, state string) error {
-	return e.write(envelope{Type: envelopeUndo, Name: name, State: state})
+// undoState reports that the undo hook for work is registered or done.
+func (e *envelopeWriter) undoState(work progress.WorkRef, state string) error {
+	return e.write(envelope{Type: envelopeUndo, Work: &work, State: state})
 }
 
 // stopped writes the mark that the verb stopped after a cancel.
@@ -427,7 +427,7 @@ func refusedEnvelope(format string, args ...any) error {
 var errSealed = errors.New("relay sealed")
 
 // relay copies a verb's envelopes and stderr into the job's stream. It
-// forwards records through enc until it is sealed, and keeps the names of the
+// forwards records through enc until it is sealed, and keeps the work of the
 // undo hooks that the verb has registered and not yet reported done.
 type relay struct {
 	enc *progress.Encoder
@@ -440,7 +440,7 @@ type relay struct {
 	sealed   bool
 	refused  error // the first envelope the relay refused
 	writeErr error // the first record the relay could not write
-	undo     []string
+	undo     []progress.WorkRef
 	stopped  bool
 }
 
@@ -502,19 +502,19 @@ func (rl *relay) envelope(line []byte) error {
 
 	switch env.Type {
 	case envelopeRecord:
-		if env.Name != "" || env.State != "" {
+		if env.Work != nil || env.State != "" {
 			return refusedEnvelope("a record envelope with an undo field")
 		}
 
 		return rl.record(env.Kind, env.Body)
 	case envelopeUndo:
-		if env.Kind != "" || env.Body != nil || env.Name == "" {
-			return refusedEnvelope("an undo envelope that names no hook, or that holds a record")
+		if env.Kind != "" || env.Body != nil || env.Work == nil || env.Work.Kind == "" {
+			return refusedEnvelope("an undo envelope that names no work, or that holds a record")
 		}
 
-		return rl.undoState(env.Name, env.State)
+		return rl.undoState(*env.Work, env.State)
 	case envelopeStopped:
-		if env.Kind != "" || env.Body != nil || env.Name != "" || env.State != "" {
+		if env.Kind != "" || env.Body != nil || env.Work != nil || env.State != "" {
 			return refusedEnvelope("a stopped envelope with fields")
 		}
 
@@ -561,17 +561,17 @@ func (rl *relay) record(kind progress.Kind, body json.RawMessage) error {
 }
 
 // undoState records the state an undo envelope reports. A hook reported done
-// is the newest one registered under its name.
-func (rl *relay) undoState(name, state string) error {
+// is the newest one registered for its work.
+func (rl *relay) undoState(work progress.WorkRef, state string) error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	switch state {
 	case undoRegistered:
-		rl.undo = append(rl.undo, name)
+		rl.undo = append(rl.undo, work)
 	case undoDone:
 		for i := len(rl.undo) - 1; i >= 0; i-- {
-			if rl.undo[i] == name {
+			if rl.undo[i] == work {
 				rl.undo = append(rl.undo[:i:i], rl.undo[i+1:]...)
 
 				break
@@ -686,11 +686,11 @@ func (rl *relay) failure() (writeErr, refused error) {
 
 // pendingUndo returns the undo hooks that the verb registered and has not
 // reported done, oldest first.
-func (rl *relay) pendingUndo() []string {
+func (rl *relay) pendingUndo() []progress.WorkRef {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	return append([]string(nil), rl.undo...)
+	return append([]progress.WorkRef(nil), rl.undo...)
 }
 
 // sawStopped reports whether the verb wrote the stopped mark.
@@ -716,6 +716,10 @@ type verbEnd struct {
 	// message says how the cancel ended the job, for its JOB_CANCELLED
 	// error.
 	message string
+
+	// undone lists the work of the undo hooks that a killed verb had
+	// registered and had not reported done, oldest first.
+	undone []progress.WorkRef
 }
 
 // runVerb starts v and relays what it writes into enc until it has exited and
@@ -731,6 +735,12 @@ type verbEnd struct {
 // on to it has stopped at a safe point. A verb that exits without that mark
 // has finished, even when the run saw a marker, and the job ends as if no
 // cancel had come.
+//
+// A verb that has not exited once the cancel budget has passed on the run's
+// clock, from when the run first saw the marker, is killed with its whole
+// group. The kill is repeated at each poll until the verb exits. The job was
+// killed unless the verb had written the stopped mark before then, and a
+// killed job names the work of the undo hooks that never ran.
 func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (verbEnd, error) {
 	if s.cancelled() {
 		return verbEnd{
@@ -764,7 +774,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		CancelBudgetMs: v.cancelBudget.Milliseconds(),
 	})
 
-	sv := &supervisor{clock: o.Clock, spool: s, proc: proc, budget: v.cancelBudget}
+	sv := &supervisor{clock: o.Clock, spool: s, proc: proc, relay: rl, budget: v.cancelBudget}
 	sv.watch()
 
 	code, rerr := proc.reap()
@@ -799,6 +809,16 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		return verbEnd{}, writeErr
 	}
 
+	if sv.outcome == progress.CancelKilled {
+		return verbEnd{
+			code:    exitVerbFailed,
+			cancel:  progress.CancelKilled,
+			seenAt:  sv.seenAt,
+			message: fmt.Sprintf("job %s was cancelled and killed when its cancel budget of %s passed", jobID, v.cancelBudget),
+			undone:  rl.pendingUndo(),
+		}, nil
+	}
+
 	if !sv.seenAt.IsZero() && rl.sawStopped() {
 		return verbEnd{
 			code:    exitVerbFailed,
@@ -824,29 +844,39 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 	return verbEnd{code: code}, nil
 }
 
-// supervisor watches a running verb's spool for the cancel marker, on the
-// run's own clock.
+// supervisor watches a running verb's spool for the cancel marker, and ends
+// the verb once its cancel budget has passed, on the run's own clock.
 type supervisor struct {
 	clock  progress.Clock
 	spool  Spool
 	proc   *verbProc
+	relay  *relay
 	budget time.Duration
 
 	// seenAt is the clock's reading at the look that first found the
 	// marker, and zero until one does.
 	seenAt time.Time
+
+	// outcome is how the cancel ended the verb, once the supervisor has
+	// seen which: stopped when the stopped mark came before the budget
+	// passed, and killed when the budget passed first. It is set once.
+	outcome progress.CancelOutcome
 }
 
 // watch looks for the marker every pollInterval until the verb exits. The
 // first time it finds the marker it notes the time and passes the cancel on
-// to the verb, with the whole budget left.
+// to the verb, with the whole budget left. After that, each look checks for
+// the stopped mark and then for the end of the budget, and kills the verb's
+// group once the budget has passed.
 func (sv *supervisor) watch() {
 	for {
 		if isClosed(sv.proc.exited) {
 			return
 		}
 
-		if sv.seenAt.IsZero() && sv.spool.cancelled() {
+		if !sv.seenAt.IsZero() {
+			sv.enforce()
+		} else if sv.spool.cancelled() {
 			sv.seenAt = sv.clock.Now().UTC()
 
 			ms := sv.budget.Milliseconds()
@@ -862,9 +892,35 @@ func (sv *supervisor) watch() {
 	}
 }
 
+// enforce settles the outcome and kills the verb once the budget has passed.
+// The kill reaches only the verb's own group, and only while the verb is
+// unreaped, which it is until watch has returned.
+func (sv *supervisor) enforce() {
+	if sv.outcome == "" && sv.relay.sawStopped() {
+		sv.outcome = progress.CancelStopped
+	}
+
+	if sv.clock.Now().Before(sv.seenAt.Add(sv.budget)) {
+		return
+	}
+
+	if sv.outcome == "" {
+		sv.outcome = progress.CancelKilled
+	}
+
+	// A kill that fails leaves the verb running, and the next look kills
+	// again.
+	_ = sv.proc.kill()
+}
+
 // pause waits pollInterval through c when it can wait, and on a timer when it
-// cannot, or until exited is closed.
+// cannot, or until exited is closed. It does not wait at all once exited is
+// closed.
 func pause(c progress.Clock, exited <-chan struct{}) {
+	if isClosed(exited) {
+		return
+	}
+
 	var ch <-chan time.Time
 
 	if wc, ok := c.(waitClock); ok {

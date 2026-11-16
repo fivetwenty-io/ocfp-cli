@@ -28,6 +28,9 @@ type scriptedProc struct {
 	// stubborn makes the wrapper's close of stdout do nothing, as when a
 	// close does not wake a read that is waiting on the pipe.
 	stubborn bool
+
+	// onKill, when set, runs at each kill before the process exits.
+	onKill func()
 }
 
 // scriptedStart returns a starter whose process runs script on a goroutine
@@ -56,6 +59,11 @@ func scriptedStartOf(p *scriptedProc, script func(p *scriptedProc)) (func(verbSt
 			exited: p.exited,
 			kill: func() error {
 				p.kills.Add(1)
+
+				if p.onKill != nil {
+					p.onKill()
+				}
+
 				p.exit()
 
 				return nil
@@ -240,10 +248,12 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 	bad := []string{
 		`not json`,
 		`{"type":"record","kind":"event","body":{"kind":"step_started","step":"noop","extra":1}}`,
-		`{"type":"record","kind":"log","body":{"stream":"stdout"},"name":"x"}`,
-		`{"type":"undo","name":"","state":"registered"}`,
-		`{"type":"undo","name":"x","state":"lost"}`,
-		`{"type":"stopped","name":"x"}`,
+		`{"type":"record","kind":"log","body":{"stream":"stdout"},"work":{"kind":"x"}}`,
+		`{"type":"undo","state":"registered"}`,
+		`{"type":"undo","work":{"kind":"","id":"x"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"x","name":"y"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"x"},"state":"lost"}`,
+		`{"type":"stopped","work":{"kind":"x"}}`,
 		`{"type":"surprise"}`,
 		`{"type":"record","kind":"event","body":{"kind":"step_started","step":"noop"}} {}`,
 	}
@@ -262,10 +272,11 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 	rl := &relay{enc: progress.NewEncoder(io.Discard, newFakeClock())}
 
 	for _, line := range []string{
-		`{"type":"undo","name":"a","state":"registered"}`,
-		`{"type":"undo","name":"b","state":"registered"}`,
-		`{"type":"undo","name":"c","state":"registered"}`,
-		`{"type":"undo","name":"b","state":"done"}`,
+		`{"type":"undo","work":{"kind":"task","id":"a"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"task","id":"b"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"c"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"lease","id":"b"},"state":"done"}`,
+		`{"type":"undo","work":{"kind":"task","id":"b"},"state":"done"}`,
 		`{"type":"stopped"}`,
 	} {
 		if err := rl.envelope([]byte(line)); err != nil {
@@ -273,8 +284,8 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 		}
 	}
 
-	if got := rl.pendingUndo(); !slices.Equal(got, []string{"a", "c"}) {
-		t.Fatalf("pending undo = %q, want a and c", got)
+	if got, want := rl.pendingUndo(), []progress.WorkRef{{Kind: "task", ID: "a"}, {Kind: "lease", ID: "c"}}; !slices.Equal(got, want) {
+		t.Fatalf("pending undo = %v, want %v", got, want)
 	}
 
 	if !rl.sawStopped() {
@@ -325,15 +336,15 @@ func TestTheChildWritesEnvelopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forget := rt.OnCancel("task", func(context.Context) error { return nil })
+	forget := rt.OnCancel(progress.WorkRef{Kind: "remote-task", ID: "task-1"}, func(context.Context) error { return nil })
 	forget()
 	forget()
 
 	want := strings.Join([]string{
 		`{"type":"record","kind":"event","body":{"kind":"step_started","step":"s"}}`,
 		`{"type":"record","kind":"log","body":{"stream":"stdout","line":"hello"}}`,
-		`{"type":"undo","name":"task","state":"registered"}`,
-		`{"type":"undo","name":"task","state":"done"}`,
+		`{"type":"undo","work":{"kind":"remote-task","id":"task-1"},"state":"registered"}`,
+		`{"type":"undo","work":{"kind":"remote-task","id":"task-1"},"state":"done"}`,
 	}, "\n") + "\n"
 
 	if buf.String() != want {

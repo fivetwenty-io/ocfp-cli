@@ -32,11 +32,12 @@ type Job interface {
 	// channel and wants to reach its next safe point sooner.
 	Done() <-chan struct{}
 
-	// OnCancel registers undo for external work the verb has started. The
+	// OnCancel registers undo for work, which the verb has started outside
+	// the job. The
 	// runtime calls undo at most once, in reverse order of registration, and
 	// only when the verb returns ErrCancelled. The returned forget removes
 	// the hook once the work has finished on its own.
-	OnCancel(name string, undo func(ctx context.Context) error) (forget func())
+	OnCancel(work progress.WorkRef, undo func(ctx context.Context) error) (forget func())
 
 	// Emit writes an event record.
 	Emit(ev progress.Event) error
@@ -48,7 +49,7 @@ type Job interface {
 // undoHook is one registered undo.
 type undoHook struct {
 	id   int
-	name string
+	work progress.WorkRef
 	undo func(ctx context.Context) error
 }
 
@@ -60,7 +61,7 @@ type recordEncoder interface {
 // undoReporter is a recordEncoder that also tells the wrapper which undo hooks
 // are registered, and which are done, and that the verb has stopped.
 type undoReporter interface {
-	undoState(name, state string) error
+	undoState(work progress.WorkRef, state string) error
 	stopped() error
 }
 
@@ -138,14 +139,14 @@ func (r *jobRuntime) Done() <-chan struct{} {
 }
 
 // OnCancel implements Job.
-func (r *jobRuntime) OnCancel(name string, undo func(ctx context.Context) error) (forget func()) {
+func (r *jobRuntime) OnCancel(work progress.WorkRef, undo func(ctx context.Context) error) (forget func()) {
 	r.mu.Lock()
 	r.nextID++
 	id := r.nextID
-	r.hooks = append(r.hooks, undoHook{id: id, name: name, undo: undo})
+	r.hooks = append(r.hooks, undoHook{id: id, work: work, undo: undo})
 	r.mu.Unlock()
 
-	r.report(name, undoRegistered)
+	r.report(work, undoRegistered)
 
 	return func() {
 		r.mu.Lock()
@@ -164,7 +165,7 @@ func (r *jobRuntime) OnCancel(name string, undo func(ctx context.Context) error)
 		r.mu.Unlock()
 
 		if found {
-			r.report(name, undoDone)
+			r.report(work, undoDone)
 		}
 	}
 }
@@ -172,9 +173,9 @@ func (r *jobRuntime) OnCancel(name string, undo func(ctx context.Context) error)
 // report tells the wrapper of a hook's state when enc can. A report that
 // cannot be written means the wrapper has gone, and the verb learns that from
 // its next record.
-func (r *jobRuntime) report(name, state string) {
+func (r *jobRuntime) report(work progress.WorkRef, state string) {
 	if rep, ok := r.enc.(undoReporter); ok {
-		_ = rep.undoState(name, state)
+		_ = rep.undoState(work, state)
 	}
 }
 
@@ -197,24 +198,24 @@ func (r *jobRuntime) Log(stream, line string) error {
 	return r.enc.Encode(progress.KindLog, progress.LogBody{Stream: stream, Line: line})
 }
 
-// pendingHooks returns the names of the hooks that are registered and have
-// not run, oldest first.
-func (r *jobRuntime) pendingHooks() []string {
+// pendingHooks returns the work of the hooks that are registered and have not
+// run, oldest first.
+func (r *jobRuntime) pendingHooks() []progress.WorkRef {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	names := make([]string, len(r.hooks))
+	work := make([]progress.WorkRef, len(r.hooks))
 	for i, h := range r.hooks {
-		names[i] = h.name
+		work[i] = h.work
 	}
 
-	return names
+	return work
 }
 
 // runUndo runs the registered hooks, newest first, once. Each hook gets a
 // context that ends remaining less undoMargin from now, and its start and end
 // appear as step_started and step_finished events for the step undo, with the
-// hook's name as the message. A hook that fails finishes with the outcome
+// hook's work as the message. A hook that fails finishes with the outcome
 // failed, and the others still run. A second call runs nothing. The error
 // joins every failed hook's error and any record that could not be written.
 func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error {
@@ -240,7 +241,7 @@ func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error
 	for i := len(hooks) - 1; i >= 0; i-- {
 		h := hooks[i]
 
-		err := r.Emit(progress.Event{Kind: progress.EventStepStarted, Step: stepUndo, Message: h.name})
+		err := r.Emit(progress.Event{Kind: progress.EventStepStarted, Step: stepUndo, Message: h.work.String()})
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -251,15 +252,15 @@ func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error
 		if uerr != nil {
 			outcome = outcomeFailed
 
-			errs = append(errs, fmt.Errorf("undo %s: %w", quote(h.name), uerr))
+			errs = append(errs, fmt.Errorf("undo %s: %w", quote(h.work.String()), uerr))
 		}
 
-		err = r.Emit(progress.Event{Kind: progress.EventStepFinished, Step: stepUndo, Message: h.name, Outcome: outcome})
+		err = r.Emit(progress.Event{Kind: progress.EventStepFinished, Step: stepUndo, Message: h.work.String(), Outcome: outcome})
 		if err != nil {
 			errs = append(errs, err)
 		}
 
-		r.report(h.name, undoDone)
+		r.report(h.work, undoDone)
 	}
 
 	return errors.Join(errs...)

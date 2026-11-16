@@ -39,7 +39,7 @@ func (w *waitingVerb) start(s verbStart) (*verbProc, error) {
 			return 0, err
 		}
 
-		j.OnCancel("remote-task task-1234", func(context.Context) error {
+		j.OnCancel(progress.WorkRef{Kind: "remote-task", ID: "task-1234"}, func(context.Context) error {
 			w.undos.Add(1)
 
 			return nil

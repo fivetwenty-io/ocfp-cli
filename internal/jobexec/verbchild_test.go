@@ -235,16 +235,16 @@ func TestVerbChildSpeaksTheProtocol(t *testing.T) {
 			t.Fatalf("first envelope = %s, want the step's start", got)
 		}
 
-		if got, want := c.next(t), `{"type":"undo","name":"helper-undo","state":"registered"}`; got != want {
+		if got, want := c.next(t), `{"type":"undo","work":{"kind":"helper-undo","id":"1"},"state":"registered"}`; got != want {
 			t.Fatalf("second envelope = %s, want %s", got, want)
 		}
 
 		c.send(t, `{"type":"cancel","remainingMs":3000}`)
 
 		want := []string{
-			`{"type":"record","kind":"event","body":{"kind":"step_started","step":"undo","message":"helper-undo"}}`,
-			`{"type":"record","kind":"event","body":{"kind":"step_finished","step":"undo","message":"helper-undo","outcome":"succeeded"}}`,
-			`{"type":"undo","name":"helper-undo","state":"done"}`,
+			`{"type":"record","kind":"event","body":{"kind":"step_started","step":"undo","message":"helper-undo 1"}}`,
+			`{"type":"record","kind":"event","body":{"kind":"step_finished","step":"undo","message":"helper-undo 1","outcome":"succeeded"}}`,
+			`{"type":"undo","work":{"kind":"helper-undo","id":"1"},"state":"done"}`,
 			`{"type":"stopped"}`,
 		}
 

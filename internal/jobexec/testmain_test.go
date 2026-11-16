@@ -90,7 +90,7 @@ func runWaitVerb(_ context.Context, j Job, _ func() (string, error)) (int, error
 		return 0, err
 	}
 
-	j.OnCancel("helper-undo", func(context.Context) error {
+	j.OnCancel(progress.WorkRef{Kind: "helper-undo", ID: "1"}, func(context.Context) error {
 		path := os.Getenv(helperUndoFileEnv)
 		if path == "" {
 			return nil

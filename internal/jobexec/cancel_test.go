@@ -64,7 +64,7 @@ func TestUndoHooksRunOnceNewestFirst(t *testing.T) {
 	var order []string
 
 	for _, name := range []string{"first", "second", "third"} {
-		j.OnCancel(name, func(context.Context) error {
+		j.OnCancel(work(name), func(context.Context) error {
 			order = append(order, name)
 
 			return nil
@@ -108,6 +108,22 @@ func TestUndoHooksRunOnceNewestFirst(t *testing.T) {
 	}
 }
 
+// work names the work of a hook by a kind alone, so that the hook's events
+// carry the kind as their message.
+func work(kind string) progress.WorkRef {
+	return progress.WorkRef{Kind: kind}
+}
+
+// works names the work of several hooks by their kinds.
+func works(kinds ...string) []progress.WorkRef {
+	refs := make([]progress.WorkRef, len(kinds))
+	for i, k := range kinds {
+		refs[i] = work(k)
+	}
+
+	return refs
+}
+
 // headerLine returns a header record, so that records can decode a buffer of
 // the records after it.
 func headerLine(t *testing.T) []byte {
@@ -137,18 +153,18 @@ func TestAForgottenHookDoesNotRun(t *testing.T) {
 		}
 	}
 
-	j.OnCancel("kept", keep("kept"))
-	forget := j.OnCancel("forgotten", keep("forgotten"))
-	j.OnCancel("also kept", keep("also kept"))
+	j.OnCancel(work("kept"), keep("kept"))
+	forget := j.OnCancel(work("forgotten"), keep("forgotten"))
+	j.OnCancel(work("also kept"), keep("also kept"))
 
-	if got, want := j.pendingHooks(), []string{"kept", "forgotten", "also kept"}; !slices.Equal(got, want) {
+	if got, want := j.pendingHooks(), works("kept", "forgotten", "also kept"); !slices.Equal(got, want) {
 		t.Fatalf("pending hooks = %v, want %v", got, want)
 	}
 
 	forget()
 	forget()
 
-	if got, want := j.pendingHooks(), []string{"kept", "also kept"}; !slices.Equal(got, want) {
+	if got, want := j.pendingHooks(), works("kept", "also kept"); !slices.Equal(got, want) {
 		t.Fatalf("pending hooks after forget = %v, want %v", got, want)
 	}
 
@@ -170,12 +186,12 @@ func TestAFailedHookDoesNotStopTheOthers(t *testing.T) {
 
 	var ran []string
 
-	j.OnCancel("early", func(context.Context) error {
+	j.OnCancel(work("early"), func(context.Context) error {
 		ran = append(ran, "early")
 
 		return nil
 	})
-	j.OnCancel("broken", func(context.Context) error {
+	j.OnCancel(work("broken"), func(context.Context) error {
 		ran = append(ran, "broken")
 
 		return boom
@@ -212,7 +228,7 @@ func TestHooksGetTheRemainingBudget(t *testing.T) {
 
 	var left time.Duration
 
-	j.OnCancel("deadline", func(ctx context.Context) error {
+	j.OnCancel(work("deadline"), func(ctx context.Context) error {
 		dl, ok := ctx.Deadline()
 		if !ok {
 			t.Error("the hook's context has no deadline")
@@ -238,7 +254,7 @@ func TestHooksGetTheRemainingBudget(t *testing.T) {
 	// A budget the margin eats leaves the hook a context that has ended.
 	j, _ = newTestJob(t)
 
-	j.OnCancel("late", func(ctx context.Context) error {
+	j.OnCancel(work("late"), func(ctx context.Context) error {
 		if ctx.Err() == nil {
 			t.Error("a hook with no budget left got a live context")
 		}

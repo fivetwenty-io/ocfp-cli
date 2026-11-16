@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -114,7 +115,11 @@ type waitClock interface {
 // its verb started, end with a JOB_CANCELLED error and a result whose cancel
 // is stopped, and exit.json records the outcome and when the run first saw
 // the marker. A verb that finishes before it reaches a safe point ends the
-// job as if no cancel had come.
+// job as if no cancel had come. A verb that has not exited once its cancel
+// budget has passed from then is killed with every process in its group,
+// and the job ends with a cancel of killed. Its stream first carries a
+// warning that lists, by kind and id, the work of each undo hook that did
+// not run.
 //
 // Every later run of the job attaches to the spool. It gives the lock on the
 // owner record back, copies out to o.Stdout whole record by whole record,
@@ -400,10 +405,28 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 	return errors.Join(append(errs, exitError(jobID, code))...)
 }
 
-// writeEnd writes the records that end a job's stream: a JOB_CANCELLED error
-// when a cancel ended the job, and the result, which names the cancel's
-// outcome.
+// writeEnd writes the records that end a job's stream: a warning that names
+// the undo hooks that did not run, when a killed verb left any, a
+// JOB_CANCELLED error when a cancel ended the job, and the result, which
+// names the cancel's outcome.
 func writeEnd(enc *progress.Encoder, end verbEnd) error {
+	if len(end.undone) > 0 {
+		names := make([]string, len(end.undone))
+		for i, w := range end.undone {
+			names[i] = w.String()
+		}
+
+		err := enc.Encode(progress.KindEvent, progress.Event{
+			Kind:    progress.EventWarning,
+			Step:    stepCancel,
+			Message: "undo hooks that did not run: " + strings.Join(names, ", "),
+			Undone:  end.undone,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	if end.cancel != "" {
 		err := enc.Encode(progress.KindError, progress.ErrorBody{Code: progress.CodeJobCancelled, Message: end.message})
 		if err != nil {
@@ -413,6 +436,10 @@ func writeEnd(enc *progress.Encoder, end verbEnd) error {
 
 	return enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: end.code, Cancel: end.cancel})
 }
+
+// stepCancel is the step that the warning about undo hooks that did not run
+// appears under.
+const stepCancel = "cancel"
 
 // exitError reports a job whose exit code is not 0, and is nil otherwise.
 func exitError(jobID string, code int) error {

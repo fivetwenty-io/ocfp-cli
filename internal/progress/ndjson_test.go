@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestNDJSONSinkWritesEventRecords(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if got != events[i] {
+		if !reflect.DeepEqual(got, events[i]) {
 			t.Errorf("record %d body %+v, want %+v", i, got, events[i])
 		}
 	}
