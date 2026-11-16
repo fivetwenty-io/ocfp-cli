@@ -84,6 +84,15 @@ type Options struct {
 	// ioGrace bounds how long the run waits for a verb's output to end once
 	// the verb has exited. Zero means defaultIOGrace.
 	ioGrace time.Duration
+
+	// clientGrace bounds how long a run that has finished its job waits on
+	// a client that takes none of the rest of the stream. Zero means
+	// defaultClientGrace.
+	clientGrace time.Duration
+
+	// clientBuffer bounds how much of the stream waits for a client that is
+	// behind. Zero means defaultClientBuffer.
+	clientBuffer int
 }
 
 // waitClock is a Clock that can also wait.
@@ -110,9 +119,12 @@ type waitClock interface {
 // events and logs, and every record goes to o.Stdout and to out. When the verb
 // ends the relay is sealed, and the run writes the result, syncs out, writes
 // exit.json, writes the final status, and only then closes out, which gives
-// its lock back. A failed o.Stdout does not stop
-// the job, so that a later run can still attach to the whole stream, and Run
-// reports it once the job is done.
+// its lock back. The stream reaches o.Stdout on a goroutine of its own,
+// through a bounded buffer, so a client that is slow or stops reading never
+// holds up the job, its cancel, or its spool. A failed o.Stdout, or one that
+// falls too far behind or takes nothing for a while once the job is done,
+// gets nothing more but does not stop the job, so that a later run can still
+// attach to the whole stream, and Run reports it once the job is done.
 //
 // While the verb runs, the first run looks for a cancel marker in the spool
 // every 200 ms, on its own clock. The first time it finds one, it passes the
@@ -192,6 +204,14 @@ func (o Options) withDefaults() (Options, error) {
 
 	if o.ioGrace == 0 {
 		o.ioGrace = defaultIOGrace
+	}
+
+	if o.clientGrace == 0 {
+		o.clientGrace = defaultClientGrace
+	}
+
+	if o.clientBuffer == 0 {
+		o.clientBuffer = defaultClientBuffer
 	}
 
 	return o, nil
@@ -412,13 +432,20 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 
 	closed := false
 
+	var client *clientWriter
+
 	// Closing out gives back the lock that tells an attach this run is live,
 	// so out stays open until exit.json and the final status are written. On
 	// an earlier failure the lock goes, and an attach reports the job
-	// orphaned.
+	// orphaned. Either way the client then gets what is left of the stream
+	// for it, unless it has stopped taking it.
 	defer func() {
 		if !closed {
 			_ = out.Close()
+		}
+
+		if client != nil {
+			_ = client.finish(o.clientGrace)
 		}
 	}()
 
@@ -434,8 +461,8 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return err
 	}
 
-	tee := &teeWriter{spool: out, client: o.Stdout}
-	enc := progress.NewEncoder(tee, o.Clock)
+	client = newClientWriter(o.Stdout, o.clientBuffer)
+	enc := progress.NewEncoder(&teeWriter{spool: out, client: client}, o.Clock)
 
 	err = enc.Header(verbHeader(jobID, v))
 	if err != nil {
@@ -488,8 +515,9 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 
 	var errs []error
 
-	if tee.clientErr != nil {
-		errs = append(errs, fmt.Errorf("job %s: write stream to stdout: %w", jobID, tee.clientErr))
+	cerr := client.finish(o.clientGrace)
+	if cerr != nil {
+		errs = append(errs, fmt.Errorf("job %s: write stream to stdout: %w", jobID, cerr))
 	}
 
 	return errors.Join(append(errs, exitError(jobID, code))...)
@@ -540,13 +568,14 @@ func exitError(jobID string, code int) error {
 	return fmt.Errorf("job %s exited with code %d", jobID, code)
 }
 
-// teeWriter writes to the spool first and then to the client. A failed spool
-// write fails the record. A failed client write is kept, and the client gets
-// nothing more, but the job goes on writing to the spool.
+// teeWriter writes to the spool first and then hands the bytes to the
+// client. A failed spool write fails the record. The client is written on a
+// goroutine of its own, so a client that is slow or has stopped reading
+// never holds up the job. A client that falls too far behind, or whose write
+// fails, gets nothing more, but the job goes on writing to the spool.
 type teeWriter struct {
-	spool     io.Writer
-	client    io.Writer
-	clientErr error
+	spool  io.Writer
+	client *clientWriter
 }
 
 func (t *teeWriter) Write(p []byte) (int, error) {
@@ -555,9 +584,7 @@ func (t *teeWriter) Write(p []byte) (int, error) {
 		return n, err
 	}
 
-	if t.clientErr == nil {
-		_, t.clientErr = t.client.Write(p)
-	}
+	t.client.queue(p)
 
 	return len(p), nil
 }

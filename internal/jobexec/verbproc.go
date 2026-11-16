@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -429,6 +430,9 @@ var errSealed = errors.New("relay sealed")
 // relay copies a verb's envelopes and stderr into the job's stream. It
 // forwards records through enc until it is sealed, and keeps the work of the
 // undo hooks that the verb has registered and not yet reported done.
+//
+// mu is held while a record is written, so the supervisor never takes it:
+// the stopped mark lives apart from it, and the kill needs nothing under it.
 type relay struct {
 	enc *progress.Encoder
 
@@ -436,12 +440,14 @@ type relay struct {
 	// end.
 	kill func() error
 
+	// stopped is set once the verb has written the stopped mark.
+	stopped atomic.Bool
+
 	mu       sync.Mutex
 	sealed   bool
 	refused  error // the first envelope the relay refused
 	writeErr error // the first record the relay could not write
 	undo     []progress.WorkRef
-	stopped  bool
 }
 
 // envelopes relays the envelopes on r, one line at a time, until r ends, the
@@ -518,9 +524,7 @@ func (rl *relay) envelope(line []byte) error {
 			return refusedEnvelope("a stopped envelope with fields")
 		}
 
-		rl.mu.Lock()
-		rl.stopped = true
-		rl.mu.Unlock()
+		rl.stopped.Store(true)
 
 		return nil
 	default:
@@ -668,7 +672,8 @@ func (rl *relay) fail(err error) {
 
 // seal stops the relay from writing any more records. It waits for a record
 // that is being written to finish, so once seal returns the stream belongs to
-// the wrapper.
+// the wrapper. A record goes to the spool and is only queued for the client,
+// so that wait never waits on the client.
 func (rl *relay) seal() {
 	rl.mu.Lock()
 	rl.sealed = true
@@ -693,12 +698,10 @@ func (rl *relay) pendingUndo() []progress.WorkRef {
 	return append([]progress.WorkRef(nil), rl.undo...)
 }
 
-// sawStopped reports whether the verb wrote the stopped mark.
+// sawStopped reports whether the verb wrote the stopped mark. It never
+// waits on a record that is being written.
 func (rl *relay) sawStopped() bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	return rl.stopped
+	return rl.stopped.Load()
 }
 
 // verbEnd is how the verb of a job ended.

@@ -3,7 +3,9 @@ package jobexec
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +45,14 @@ func stubbornVerb(lines ...string) (func(verbStart) (*verbProc, error), *scripte
 // clock's reading when the run first saw the marker, and the clock's
 // reading at each kill.
 func killRun(t *testing.T, lines ...string) (*runCase, *scriptedProc, time.Time, []time.Time, error) {
+	t.Helper()
+
+	return killRunWith(t, nil, lines...)
+}
+
+// killRunWith is killRun with setup, when it is set, run on the run's case
+// before the run starts.
+func killRunWith(t *testing.T, setup func(rc *runCase), lines ...string) (*runCase, *scriptedProc, time.Time, []time.Time, error) {
 	t.Helper()
 
 	start, p, ready := stubbornVerb(lines...)
@@ -96,6 +106,10 @@ func killRun(t *testing.T, lines ...string) (*runCase, *scriptedProc, time.Time,
 			t.Errorf("wait %d goes past the budget", n)
 			p.exit()
 		}
+	}
+
+	if setup != nil {
+		setup(rc)
 	}
 
 	err := rc.run(t)
@@ -285,4 +299,95 @@ func TestAKillNamesTheHooksLeftUndone(t *testing.T) {
 	if r := bodyOf[progress.ResultBody](t, recs[5]); r.Cancel != progress.CancelKilled {
 		t.Fatalf("result = %+v, want cancel killed", r)
 	}
+}
+
+// stalledClient takes its first write, which is the header, and then stops
+// reading: every later write waits until the test ends.
+type stalledClient struct {
+	writes  atomic.Int32
+	release chan struct{}
+}
+
+func newStalledClient(t *testing.T) *stalledClient {
+	t.Helper()
+
+	c := &stalledClient{release: make(chan struct{})}
+	t.Cleanup(func() { close(c.release) })
+
+	return c
+}
+
+func (c *stalledClient) Write(p []byte) (int, error) {
+	if c.writes.Add(1) > 1 {
+		<-c.release
+	}
+
+	return len(p), nil
+}
+
+// A client that stops reading part way through the stream holds up neither
+// the kill nor the end of the job. The kill comes at the budget on the run's
+// clock, the spool's out holds the whole stream with its result, exit.json is
+// written, and the run reports that the client fell behind.
+func TestAStalledClientDoesNotHoldUpTheKill(t *testing.T) {
+	t.Parallel()
+
+	client := newStalledClient(t)
+
+	type ran struct {
+		rc    *runCase
+		seen  time.Time
+		kills []time.Time
+		err   error
+	}
+
+	done := make(chan ran, 1)
+
+	go func() {
+		rc, _, seen, kills, err := killRunWith(t, func(rc *runCase) {
+			rc.opts.Stdout = client
+			rc.opts.clientGrace = 20 * time.Millisecond
+		})
+
+		done <- ran{rc, seen, kills, err}
+	}()
+
+	var r ran
+
+	select {
+	case r = <-done:
+	case <-time.After(verbWait / 2):
+		t.Fatal("the run waited on a client that had stopped reading")
+	}
+
+	budget := verbs[verbNoop].cancelBudget
+
+	if len(r.kills) != 1 || !r.kills[0].Equal(r.seen.Add(budget)) {
+		t.Fatalf("kills at %v, want one at %s", r.kills, r.seen.Add(budget))
+	}
+
+	if r.err == nil || !strings.Contains(r.err.Error(), "stdout") {
+		t.Fatalf("Run = %v, want an error that names the client on stdout", r.err)
+	}
+
+	dir := filepath.Join(r.rc.opts.SpoolRoot, "job-0001")
+	recs := records(t, readFile(t, filepath.Join(dir, outFile)))
+
+	want := []progress.Kind{progress.KindHeader, progress.KindEvent, progress.KindLog, progress.KindError, progress.KindResult}
+	if got := streamKindsOf(t, recs); !slices.Equal(got, want) {
+		t.Fatalf("out holds record kinds %v, want %v", got, want)
+	}
+
+	if res := bodyOf[progress.ResultBody](t, recs[4]); res.Cancel != progress.CancelKilled {
+		t.Fatalf("result = %+v, want cancel killed", res)
+	}
+
+	var e Exit
+
+	decodeStrictFile(t, filepath.Join(dir, exitFile), &e)
+
+	if e.Cancel != progress.CancelKilled {
+		t.Fatalf("exit = %+v, want cancel killed", e)
+	}
+
 }
