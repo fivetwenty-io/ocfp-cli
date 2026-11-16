@@ -275,6 +275,11 @@ func TestRunNoopStreams(t *testing.T) {
 	root := spoolRoot(t)
 	rc := newRun(t, storeWith(t, liveRecord()), root, signedRequest(t, fixtureRequest()))
 
+	// The run looks for a cancel marker between waits while the verb runs,
+	// and the fake clock moves on at every wait. A clock that cannot wait
+	// keeps every record at the one reading the fixture's times stand for.
+	rc.opts.Clock = fixedClock{testNow}
+
 	err := rc.run(t)
 	if err != nil {
 		t.Fatalf("Run = %v", err)

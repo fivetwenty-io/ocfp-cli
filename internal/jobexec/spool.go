@@ -395,6 +395,14 @@ func (s Spool) readCancel() (Cancel, bool, error) {
 	return c, true, nil
 }
 
+// cancelled reports whether the spool holds a cancel marker. A marker that is
+// there but cannot be read still counts, because only a cancel writes one.
+func (s Spool) cancelled() bool {
+	_, ok, err := s.readCancel()
+
+	return ok || err != nil
+}
+
 // readJSON decodes name strictly into v. It reports false when name does not
 // exist.
 func (s Spool) readJSON(name string, v any) (bool, error) {

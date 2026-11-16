@@ -701,16 +701,49 @@ func (rl *relay) sawStopped() bool {
 	return rl.stopped
 }
 
+// verbEnd is how the verb of a job ended.
+type verbEnd struct {
+	// code is the job's exit code.
+	code int
+
+	// cancel is how a cancel ended the job, and empty when none did.
+	cancel progress.CancelOutcome
+
+	// seenAt is when the run first saw the cancel marker. It is zero when
+	// the run saw none.
+	seenAt time.Time
+
+	// message says how the cancel ended the job, for its JOB_CANCELLED
+	// error.
+	message string
+}
+
 // runVerb starts v and relays what it writes into enc until it has exited and
-// its output has ended, or until the grace for that end has passed. The relay
-// is sealed before runVerb returns, so the result the caller writes comes
-// after every record of the verb's. runVerb returns the verb's exit code. An
-// error means a record could not be written or the verb could not be started
-// or waited for, and the stream then gets no result.
-func runVerb(o Options, enc *progress.Encoder, jobID string, v verb) (int, error) {
+// its output has ended, or until the grace for that end has passed. While the
+// verb runs, it watches s for a cancel marker. The relay is sealed before
+// runVerb returns, so the records the caller writes come after every record
+// of the verb's. An error means a record could not be written or the verb
+// could not be started or waited for, and the stream then gets no result.
+//
+// A marker that is already in s before the verb starts stops the job there,
+// with no verb started, since the point before any work is the safest point
+// there is. A verb that writes the stopped mark after the run passed a cancel
+// on to it has stopped at a safe point. A verb that exits without that mark
+// has finished, even when the run saw a marker, and the job ends as if no
+// cancel had come.
+func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (verbEnd, error) {
+	if s.cancelled() {
+		return verbEnd{
+			code:    exitVerbFailed,
+			cancel:  progress.CancelStopped,
+			seenAt:  o.Clock.Now().UTC(),
+			message: fmt.Sprintf("job %s was cancelled and stopped before its verb started", jobID),
+		}, nil
+	}
+
 	proc, err := o.start(verbStart{jobID: jobID, verb: v, hostname: o.Hostname})
 	if err != nil {
-		return 0, fmt.Errorf("start verb %s: %w", v.name, err)
+		return verbEnd{}, fmt.Errorf("start verb %s: %w", v.name, err)
 	}
 
 	rl := &relay{enc: enc, kill: proc.kill}
@@ -731,7 +764,8 @@ func runVerb(o Options, enc *progress.Encoder, jobID string, v verb) (int, error
 		CancelBudgetMs: v.cancelBudget.Milliseconds(),
 	})
 
-	<-proc.exited
+	sv := &supervisor{clock: o.Clock, spool: s, proc: proc, budget: v.cancelBudget}
+	sv.watch()
 
 	code, rerr := proc.reap()
 
@@ -757,28 +791,105 @@ func runVerb(o Options, enc *progress.Encoder, jobID string, v verb) (int, error
 	waitDrained(drained, o.ioGrace)
 
 	if rerr != nil {
-		return 0, fmt.Errorf("wait for verb %s: %w", v.name, rerr)
+		return verbEnd{}, fmt.Errorf("wait for verb %s: %w", v.name, rerr)
 	}
 
 	writeErr, refused := rl.failure()
 	if writeErr != nil {
-		return 0, writeErr
+		return verbEnd{}, writeErr
+	}
+
+	if !sv.seenAt.IsZero() && rl.sawStopped() {
+		return verbEnd{
+			code:    exitVerbFailed,
+			cancel:  progress.CancelStopped,
+			seenAt:  sv.seenAt,
+			message: fmt.Sprintf("job %s was cancelled and stopped at a safe point", jobID),
+		}, nil
 	}
 
 	if refused != nil {
 		err := enc.Encode(progress.KindLog, progress.LogBody{Stream: stderrStream, Line: fmt.Sprintf("job %s: verb %s stopped: %v", jobID, v.name, refused)})
 		if err != nil {
-			return 0, fmt.Errorf("job %s: %w", jobID, err)
+			return verbEnd{}, fmt.Errorf("job %s: %w", jobID, err)
 		}
 
-		return exitVerbFailed, nil
+		return verbEnd{code: exitVerbFailed}, nil
 	}
 
 	if code < 0 {
-		return exitVerbFailed, nil
+		return verbEnd{code: exitVerbFailed}, nil
 	}
 
-	return code, nil
+	return verbEnd{code: code}, nil
+}
+
+// supervisor watches a running verb's spool for the cancel marker, on the
+// run's own clock.
+type supervisor struct {
+	clock  progress.Clock
+	spool  Spool
+	proc   *verbProc
+	budget time.Duration
+
+	// seenAt is the clock's reading at the look that first found the
+	// marker, and zero until one does.
+	seenAt time.Time
+}
+
+// watch looks for the marker every pollInterval until the verb exits. The
+// first time it finds the marker it notes the time and passes the cancel on
+// to the verb, with the whole budget left.
+func (sv *supervisor) watch() {
+	for {
+		if isClosed(sv.proc.exited) {
+			return
+		}
+
+		if sv.seenAt.IsZero() && sv.spool.cancelled() {
+			sv.seenAt = sv.clock.Now().UTC()
+
+			ms := sv.budget.Milliseconds()
+
+			// A verb reads its control lines on a goroutine of its own, so
+			// the write ends at once. It is not waited for all the same,
+			// so that a verb that has stopped reading cannot stall the
+			// run, and closing stdin ends it.
+			go func() { _ = writeControl(sv.proc.stdin, control{Type: controlCancel, RemainingMs: &ms}) }()
+		}
+
+		pause(sv.clock, sv.proc.exited)
+	}
+}
+
+// pause waits pollInterval through c when it can wait, and on a timer when it
+// cannot, or until exited is closed.
+func pause(c progress.Clock, exited <-chan struct{}) {
+	var ch <-chan time.Time
+
+	if wc, ok := c.(waitClock); ok {
+		ch = wc.After(pollInterval)
+	} else {
+		t := time.NewTimer(pollInterval)
+		defer t.Stop()
+
+		ch = t.C
+	}
+
+	select {
+	case <-exited:
+	case <-ch:
+	}
+}
+
+// isClosed reports whether ch is closed.
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 // waitDrained waits for drained to close, for at most d.

@@ -107,6 +107,15 @@ type waitClock interface {
 // the job, so that a later run can still attach to the whole stream, and Run
 // reports it once the job is done.
 //
+// While the verb runs, the first run looks for a cancel marker in the spool
+// every 200 ms, on its own clock. The first time it finds one, it passes the
+// cancel on to the verb, which stops at its next safe point and runs its undo
+// hooks. A job that stops that way, and a job whose marker was there before
+// its verb started, end with a JOB_CANCELLED error and a result whose cancel
+// is stopped, and exit.json records the outcome and when the run first saw
+// the marker. A verb that finishes before it reaches a safe point ends the
+// job as if no cancel had come.
+//
 // Every later run of the job attaches to the spool. It gives the lock on the
 // owner record back, copies out to o.Stdout whole record by whole record,
 // and, while exit.json is missing, looks again every 200 ms until exit.json
@@ -338,12 +347,14 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	code, err := runVerb(o, enc, jobID, v)
+	end, err := runVerb(o, enc, s, jobID, v)
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	err = enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: code})
+	code := end.code
+
+	err = writeEnd(enc, end)
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
@@ -353,7 +364,14 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return fmt.Errorf("job %s: sync out: %w", jobID, err)
 	}
 
-	err = s.WriteExit(Exit{ExitCode: code, FinishedAt: o.Clock.Now().UTC()})
+	exit := Exit{ExitCode: code, FinishedAt: o.Clock.Now().UTC()}
+
+	if end.cancel != "" {
+		seen := end.seenAt
+		exit.Cancel, exit.CancelSeenAt = end.cancel, &seen
+	}
+
+	err = s.WriteExit(exit)
 	if err != nil {
 		return err
 	}
@@ -380,6 +398,20 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 	}
 
 	return errors.Join(append(errs, exitError(jobID, code))...)
+}
+
+// writeEnd writes the records that end a job's stream: a JOB_CANCELLED error
+// when a cancel ended the job, and the result, which names the cancel's
+// outcome.
+func writeEnd(enc *progress.Encoder, end verbEnd) error {
+	if end.cancel != "" {
+		err := enc.Encode(progress.KindError, progress.ErrorBody{Code: progress.CodeJobCancelled, Message: end.message})
+		if err != nil {
+			return err
+		}
+	}
+
+	return enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: end.code, Cancel: end.cancel})
 }
 
 // exitError reports a job whose exit code is not 0, and is nil otherwise.
