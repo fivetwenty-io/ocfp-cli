@@ -49,6 +49,10 @@ const (
 	// proof that gives up the owner record, for an org or a bloc other than
 	// the one the host's owner record names.
 	CodeOrgBlocMismatch Code = "ORG_BLOC_MISMATCH"
+
+	// CodeJobCancelled reports a job that ended because a cancel asked it to
+	// stop.
+	CodeJobCancelled Code = "JOB_CANCELLED"
 )
 
 // Refusal is an error that carries a Code, so a caller can act on the reason

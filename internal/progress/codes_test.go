@@ -24,10 +24,11 @@ func TestRefusalCodesAreUpperSnake(t *testing.T) {
 		"JOB_ORPHANED":              progress.CodeJobOrphaned,
 		"OWNER_RECORD_INVALID":      progress.CodeOwnerRecordInvalid,
 		"ORG_BLOC_MISMATCH":         progress.CodeOrgBlocMismatch,
+		"JOB_CANCELLED":             progress.CodeJobCancelled,
 	}
 
-	if len(codes) != 11 {
-		t.Fatalf("have %d codes, want 11", len(codes))
+	if len(codes) != 12 {
+		t.Fatalf("have %d codes, want 12", len(codes))
 	}
 
 	shape := regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)

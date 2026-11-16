@@ -34,6 +34,11 @@ type Header struct {
 	Producer     string `json:"producer"`
 	Version      string `json:"version"`
 	JobID        string `json:"jobId,omitempty"`
+
+	// CancelBudgetMs is how long, in whole milliseconds, the verb that runs
+	// has to stop once a cancel arrives. It is absent from a header that
+	// names no verb.
+	CancelBudgetMs int64 `json:"cancelBudgetMs,omitempty"`
 }
 
 // ErrorBody is the body of an error record.
@@ -42,9 +47,28 @@ type ErrorBody struct {
 	Message string `json:"message"`
 }
 
-// ResultBody is the body of the final record of a stream.
+// CancelOutcome says how a cancelled job ended.
+type CancelOutcome string
+
+// The cancel outcomes. A run stores only stopped and killed. A requester
+// derives already_finished from a stream that carries no cancel.
+const (
+	// CancelStopped means the verb reached a safe point and stopped.
+	CancelStopped CancelOutcome = "stopped"
+
+	// CancelKilled means the cancel budget passed and the verb was killed.
+	CancelKilled CancelOutcome = "killed"
+
+	// CancelAlreadyFinished means the job had ended before the cancel took
+	// effect.
+	CancelAlreadyFinished CancelOutcome = "already_finished"
+)
+
+// ResultBody is the body of the final record of a stream. Cancel is set only
+// when a cancel ended the job.
 type ResultBody struct {
-	ExitCode int `json:"exitCode"`
+	ExitCode int           `json:"exitCode"`
+	Cancel   CancelOutcome `json:"cancel,omitempty"`
 }
 
 // LogBody is the body of a log record.
