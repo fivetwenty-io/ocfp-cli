@@ -52,10 +52,22 @@ type undoHook struct {
 	undo func(ctx context.Context) error
 }
 
+// recordEncoder writes the records a verb makes.
+type recordEncoder interface {
+	Encode(kind progress.Kind, body any) error
+}
+
+// undoReporter is a recordEncoder that also tells the wrapper which undo hooks
+// are registered, and which are done, and that the verb has stopped.
+type undoReporter interface {
+	undoState(name, state string) error
+	stopped() error
+}
+
 // jobRuntime is the Job a verb runs against. It holds the cancel signal and
 // the undo hooks, and it writes the verb's records with enc.
 type jobRuntime struct {
-	enc *progress.Encoder
+	enc recordEncoder
 
 	done       chan struct{}
 	cancelOnce sync.Once
@@ -67,7 +79,7 @@ type jobRuntime struct {
 }
 
 // newJobRuntime returns a jobRuntime that writes records with enc.
-func newJobRuntime(enc *progress.Encoder) *jobRuntime {
+func newJobRuntime(enc recordEncoder) *jobRuntime {
 	return &jobRuntime{enc: enc, done: make(chan struct{})}
 }
 
@@ -95,25 +107,51 @@ func (r *jobRuntime) Done() <-chan struct{} {
 // OnCancel implements Job.
 func (r *jobRuntime) OnCancel(name string, undo func(ctx context.Context) error) (forget func()) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.nextID++
 	id := r.nextID
-
 	r.hooks = append(r.hooks, undoHook{id: id, name: name, undo: undo})
+	r.mu.Unlock()
+
+	r.report(name, undoRegistered)
 
 	return func() {
 		r.mu.Lock()
-		defer r.mu.Unlock()
+
+		found := false
 
 		for i, h := range r.hooks {
 			if h.id == id {
 				r.hooks = append(r.hooks[:i:i], r.hooks[i+1:]...)
+				found = true
 
-				return
+				break
 			}
 		}
+
+		r.mu.Unlock()
+
+		if found {
+			r.report(name, undoDone)
+		}
 	}
+}
+
+// report tells the wrapper of a hook's state when enc can. A report that
+// cannot be written means the wrapper has gone, and the verb learns that from
+// its next record.
+func (r *jobRuntime) report(name, state string) {
+	if rep, ok := r.enc.(undoReporter); ok {
+		_ = rep.undoState(name, state)
+	}
+}
+
+// stopped writes the mark that the verb stopped after a cancel, when enc can.
+func (r *jobRuntime) stopped() error {
+	if rep, ok := r.enc.(undoReporter); ok {
+		return rep.stopped()
+	}
+
+	return nil
 }
 
 // Emit implements Job.
@@ -187,6 +225,8 @@ func (r *jobRuntime) runUndo(ctx context.Context, remaining time.Duration) error
 		if err != nil {
 			errs = append(errs, err)
 		}
+
+		r.report(h.name, undoDone)
 	}
 
 	return errors.Join(errs...)

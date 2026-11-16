@@ -67,6 +67,14 @@ type Options struct {
 	// held reports whether the run that made a spool still holds its lock
 	// on out, given the attach's own descriptor of out. Nil means outHeld.
 	held func(out *os.File) (bool, error)
+
+	// start starts the verb of a job that this run made. Nil means
+	// startInProcess.
+	start func(verbStart) (*verbProc, error)
+
+	// ioGrace bounds how long the run waits for a verb's output to end once
+	// the verb has exited. Zero means defaultIOGrace.
+	ioGrace time.Duration
 }
 
 // waitClock is a Clock that can also wait.
@@ -88,10 +96,12 @@ type waitClock interface {
 //
 // The first run of a job makes its spool with CreateSpool, makes out and takes
 // an exclusive lock on it, writes status.json with state running and its own
-// process id, runs the verb in this process while it holds the shared lock on
-// the owner record, and writes every record to o.Stdout and to out. When the
-// verb ends it syncs out, writes exit.json, writes the final status, and only
-// then closes out, which gives its lock back. A failed o.Stdout does not stop
+// process id, and runs the verb while it holds the shared lock on the owner
+// record. The verb's records reach the stream through a relay that takes only
+// events and logs, and every record goes to o.Stdout and to out. When the verb
+// ends the relay is sealed, and the run writes the result, syncs out, writes
+// exit.json, writes the final status, and only then closes out, which gives
+// its lock back. A failed o.Stdout does not stop
 // the job, so that a later run can still attach to the whole stream, and Run
 // reports it once the job is done.
 //
@@ -144,6 +154,14 @@ func (o Options) withDefaults() (Options, error) {
 
 	if o.held == nil {
 		o.held = outHeld
+	}
+
+	if o.start == nil {
+		o.start = startInProcess
+	}
+
+	if o.ioGrace == 0 {
+		o.ioGrace = defaultIOGrace
 	}
 
 	return o, nil
@@ -318,7 +336,7 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	code, err := v.run(context.Background(), newJobRuntime(enc), o.Hostname)
+	code, err := runVerb(o, enc, jobID, v)
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
