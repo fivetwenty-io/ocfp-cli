@@ -50,8 +50,9 @@ func newJobVerbCmd() *cobra.Command {
 
 Job exec writes a start line on stdin that names the verb, and then reads
 the verb's records from stdout. A start line from a job exec of another
-version is refused before the verb runs. The end of stdin tells the verb to
-stop at its next safe point and undo what it has done.`,
+version is refused before the verb runs. A cancel line, or the end of
+stdin, tells the verb to stop at its next safe point and undo what it has
+done.`,
 		Args:          cobra.NoArgs,
 		Hidden:        true,
 		SilenceErrors: true,
@@ -80,6 +81,19 @@ The job keeps its own copy of the stream in a spool under --spool-root, so
 a job whose caller goes away still runs to the end. Sending the same request
 again attaches to that job and replays its stream from the start.
 
+A request whose action is cancel asks the job it names to stop. It passes
+the same owner checks as any other request, and it never starts a job. A
+cancel of a job with no spool on this host is refused with JOB_NOT_FOUND,
+and a cancel of a job that a run of an older wire contract started is
+refused with WIRE_CONTRACT_UNSUPPORTED. Otherwise the cancel leaves a
+marker in the job's spool and attaches to the job, the same way a repeated
+request does, so stdout carries the job's stream. The job stops at its next
+safe point and undoes what it has done. A job that has not stopped once its
+verb's cancel budget has passed is killed along with every process it
+started, and its stream first warns of each undo that did not run. Once the
+stream ends, stderr names the outcome as stopped, killed, or
+already_finished, and the command exits with the job's own exit code.
+
 A request that is not signed by the owner, that names an org or a bloc
 other than the ones the owner record names, or that the owner record cannot
 vouch for, is refused before anything runs: the stream carries the refusal
@@ -95,7 +109,8 @@ link to a directory that does not exist yet is refused the same way. So are
 a custom --owner-dir, and a --spool-root used with one, when a directory or
 link above the nearest existing directory on the default directory's path
 fails the ownership and mode check.`,
-		Example:       `  ocfp job exec --spool-root /data/ocfp-jobs < request.json`,
+		Example: `  ocfp job exec --spool-root /data/ocfp-jobs < request.json
+  ocfp job exec --spool-root /data/ocfp-jobs < cancel-request.json`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
