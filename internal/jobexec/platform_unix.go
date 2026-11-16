@@ -142,7 +142,13 @@ func startGroup(cmd *exec.Cmd) (*groupProc, error) {
 			return nil
 		case errors.Is(err, unix.EPERM) && g.hasExited():
 			// Darwin refuses to signal a group whose only member left is
-			// its exited leader, so there is nothing left to kill.
+			// its exited leader, so there is nothing left to kill. Darwin
+			// may also refuse a group that still holds a member this user
+			// cannot signal, such as one that has changed its user, and
+			// that member is then left running unseen. Linux is no
+			// stricter, since it reports success once any member takes
+			// the signal, so on neither system does the kill reach a
+			// member that this user cannot signal.
 			return nil
 		default:
 			return fmt.Errorf("kill the verb's process group %d: %w", pid, err)
