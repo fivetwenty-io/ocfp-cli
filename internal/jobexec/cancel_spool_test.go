@@ -1,9 +1,11 @@
 package jobexec
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -336,5 +338,57 @@ func TestARunRecordsItsWireContractInStatus(t *testing.T) {
 	st, ok, err := s.readStatus()
 	if err != nil || !ok || st.WireContract != progress.WireContract {
 		t.Fatalf("status = %+v, %v, %v; want wire contract %d", st, ok, err, progress.WireContract)
+	}
+}
+
+// Only a marker that is there counts as a cancel. One that opens and reads
+// but does not decode, or is too large, counts, because only a cancel writes
+// one. One that cannot be opened or read, as when the process is out of
+// descriptors, is not seen yet, and the run looks again at its next poll.
+func TestOnlyAMarkerThatIsThereCountsAsACancel(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("the spool does not run on Windows")
+	}
+
+	for name, tc := range map[string]struct {
+		make func(t *testing.T, path string)
+		want bool
+	}{
+		"none": {func(*testing.T, string) {}, false},
+		"good": {func(t *testing.T, path string) {
+			t.Helper()
+			must(t, os.WriteFile(path, []byte(`{"requestedAt":"2026-11-11T12:00:00Z"}`), 0o600))
+		}, true},
+		"not json": {func(t *testing.T, path string) {
+			t.Helper()
+			must(t, os.WriteFile(path, []byte("not json"), 0o600))
+		}, true},
+		"too large": {func(t *testing.T, path string) {
+			t.Helper()
+			must(t, os.WriteFile(path, bytes.Repeat([]byte(" "), maxSpoolJSON+1), 0o600))
+		}, true},
+		"cannot be opened": {func(t *testing.T, path string) {
+			t.Helper()
+			must(t, os.Symlink(filepath.Base(path), path))
+		}, false},
+		"cannot be read": {func(t *testing.T, path string) {
+			t.Helper()
+			must(t, os.Mkdir(path, 0o700))
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, _, err := CreateSpool(spoolRoot(t), "job-0001")
+			must(t, err)
+
+			tc.make(t, filepath.Join(s.Dir, cancelFile))
+
+			if got := s.cancelled(); got != tc.want {
+				t.Fatalf("cancelled = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

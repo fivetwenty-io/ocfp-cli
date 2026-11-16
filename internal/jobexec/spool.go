@@ -395,16 +395,33 @@ func (s Spool) readCancel() (Cancel, bool, error) {
 	return c, true, nil
 }
 
-// cancelled reports whether the spool holds a cancel marker. A marker that is
-// there but cannot be read still counts, because only a cancel writes one.
+// cancelled reports whether the spool holds a cancel marker. A marker that
+// opens and reads but does not decode, or is too large, still counts,
+// because only a cancel writes one. A marker that cannot be opened or read
+// is not seen yet, since that can happen with no marker there at all, as
+// when the process is out of descriptors, and the run looks again at its
+// next poll.
 func (s Spool) cancelled() bool {
 	_, ok, err := s.readCancel()
 
-	return ok || err != nil
+	var bad *malformedError
+
+	return ok || errors.As(err, &bad)
 }
 
+// malformedError is a spool file that opened and read in full but does not
+// hold what it should.
+type malformedError struct {
+	err error
+}
+
+func (e *malformedError) Error() string { return e.err.Error() }
+
+func (e *malformedError) Unwrap() error { return e.err }
+
 // readJSON decodes name strictly into v. It reports false when name does not
-// exist.
+// exist. A file that opened and read but is too large or does not decode
+// gives a *malformedError.
 func (s Spool) readJSON(name string, v any) (bool, error) {
 	f, err := os.Open(filepath.Join(s.Dir, name)) //nolint:gosec // name is one of the spool's own file names
 	if errors.Is(err, fs.ErrNotExist) {
@@ -423,12 +440,12 @@ func (s Spool) readJSON(name string, v any) (bool, error) {
 	}
 
 	if len(data) > maxSpoolJSON {
-		return false, fmt.Errorf("spool: %s is larger than %d bytes", name, maxSpoolJSON)
+		return false, &malformedError{err: fmt.Errorf("spool: %s is larger than %d bytes", name, maxSpoolJSON)}
 	}
 
 	err = strictjson.Decode(data, v)
 	if err != nil {
-		return false, fmt.Errorf("spool: %s: %w", name, err)
+		return false, &malformedError{err: fmt.Errorf("spool: %s: %w", name, err)}
 	}
 
 	return true, nil
