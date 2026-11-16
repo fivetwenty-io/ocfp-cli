@@ -340,13 +340,22 @@ func writeControl(w io.Writer, c control) error {
 // runVerbChild runs v against rt, on the side of the protocol that runs the
 // verb, and returns the exit code that side exits with. A verb that stops at
 // a safe point after a cancel has its undo hooks run, and the stopped mark
-// written, and exits with exitVerbFailed. A verb that fails with any other
-// error has the error written to stderr and exits with exitVerbFailed.
+// written, and exits with exitVerbFailed. So does a verb that fails with any
+// error once a cancel has come, since a wrapper that has gone fails its
+// writes before it reaches a safe point, and its error goes to stderr first.
+// A verb that fails with an error and no cancel has the error written to
+// stderr and exits with exitVerbFailed.
 func runVerbChild(ctx context.Context, v verb, hostname func() (string, error), rt *jobRuntime, stderr io.Writer) int {
 	code, err := v.run(ctx, rt, hostname)
 
+	cancelled := errors.Is(err, ErrCancelled)
+
 	switch {
-	case errors.Is(err, ErrCancelled):
+	case cancelled || (err != nil && rt.Checkpoint() != nil):
+		if !cancelled {
+			_, _ = fmt.Fprintf(stderr, "job verb %s: %v\n", v.name, err)
+		}
+
 		uerr := rt.runUndo(ctx, rt.budgetLeft(v.cancelBudget))
 		if uerr != nil {
 			_, _ = fmt.Fprintf(stderr, "job verb %s: %v\n", v.name, uerr)

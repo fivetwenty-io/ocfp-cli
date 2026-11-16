@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
+	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
 // newTestJob returns a runtime that writes to a buffer.
@@ -282,5 +286,142 @@ func TestNoopStopsAtACheckpoint(t *testing.T) {
 	recs := records(t, append(headerLine(t), buf.Bytes()...))
 	if len(recs) != 2 || recs[1].Kind != progress.KindEvent {
 		t.Fatalf("a cancelled noop wrote %d records, want the header and step_started:\n%s", len(recs), buf)
+	}
+}
+
+// serveTestVerb serves run as noop, with the start line and then whatever
+// stdin holds, and returns the exit code and what the verb wrote on stderr.
+func serveTestVerb(t *testing.T, run func(context.Context, Job, func() (string, error)) (int, error), stdin io.Reader, stdout io.Writer) (int, string) {
+	t.Helper()
+
+	cfg := verbConfig{
+		version:  version.Get().Version,
+		verbs:    map[string]verb{verbNoop: {name: verbNoop, cancelBudget: time.Second, run: run}},
+		hostname: func() (string, error) { return testHost, nil },
+	}
+
+	in := io.MultiReader(strings.NewReader(startLine(t, goodStart())+"\n"), stdin)
+
+	var stderr bytes.Buffer
+
+	code := serveVerb(t.Context(), cfg, in, stdout, &stderr)
+
+	return code, stderr.String()
+}
+
+// A wrapper that goes away ends the verb's stdin and breaks its stdout at
+// once. A verb that writes before its next safe point gets an error that is
+// a cancel, and its undo hooks run whatever it returns.
+func TestAVerbWhoseWriteFailsAfterTheWrapperGoesIsUndone(t *testing.T) {
+	t.Parallel()
+
+	var (
+		undos  int
+		logErr error
+	)
+
+	code, stderr := serveTestVerb(t, func(_ context.Context, j Job, _ func() (string, error)) (int, error) {
+		j.OnCancel(work("task-1"), func(context.Context) error {
+			undos++
+
+			return nil
+		})
+
+		<-j.Done()
+
+		logErr = j.Log("stdout", "progress")
+		if logErr != nil {
+			return 0, fmt.Errorf("log progress: %v", logErr) //nolint:errorlint // a verb that drops the wrap
+		}
+
+		return 0, j.Checkpoint()
+	}, strings.NewReader(""), failingWriter{})
+
+	if undos != 1 {
+		t.Fatalf("the undo hook ran %d times, want once (stderr %q)", undos, stderr)
+	}
+
+	if !errors.Is(logErr, ErrCancelled) || !strings.Contains(logErr.Error(), "broken pipe") {
+		t.Fatalf("the log after the cancel = %v, want a cancel that holds the write's error", logErr)
+	}
+
+	if code != exitVerbFailed {
+		t.Fatalf("exit code = %d, want %d", code, exitVerbFailed)
+	}
+}
+
+// A verb that fails with an error of its own once a cancel has come stops
+// all the same: its undo hooks run, its error reaches stderr, and it writes
+// the stopped mark.
+func TestAVerbThatFailsAfterACancelIsUndone(t *testing.T) {
+	t.Parallel()
+
+	var (
+		undos int
+		out   strings.Builder
+	)
+
+	code, stderr := serveTestVerb(t, func(_ context.Context, j Job, _ func() (string, error)) (int, error) {
+		j.OnCancel(work("task-1"), func(context.Context) error {
+			undos++
+
+			return nil
+		})
+
+		<-j.Done()
+
+		return 0, errors.New("the remote call failed")
+	}, strings.NewReader(""), &out)
+
+	if undos != 1 {
+		t.Fatalf("the undo hook ran %d times, want once", undos)
+	}
+
+	if !strings.Contains(stderr, "the remote call failed") {
+		t.Fatalf("stderr %q does not name the verb's error", stderr)
+	}
+
+	if !strings.HasSuffix(out.String(), `{"type":"stopped"}`+"\n") {
+		t.Fatalf("envelopes end\n%s\nwant the stopped mark last", out.String())
+	}
+
+	if code != exitVerbFailed {
+		t.Fatalf("exit code = %d, want %d", code, exitVerbFailed)
+	}
+}
+
+// A verb that fails with no cancel has no undo hooks run, and writes no
+// stopped mark.
+func TestAVerbThatFailsWithNoCancelIsNotUndone(t *testing.T) {
+	t.Parallel()
+
+	stdin, closeStdin := io.Pipe()
+	t.Cleanup(func() { _ = closeStdin.Close() })
+
+	var (
+		undos int
+		out   strings.Builder
+	)
+
+	code, stderr := serveTestVerb(t, func(_ context.Context, j Job, _ func() (string, error)) (int, error) {
+		j.OnCancel(work("task-1"), func(context.Context) error {
+			undos++
+
+			return nil
+		})
+
+		return 0, errors.New("the remote call failed")
+	}, stdin, &out)
+
+	if undos != 0 {
+		t.Fatalf("the undo hook ran %d times with no cancel", undos)
+	}
+
+	if strings.Contains(out.String(), `"stopped"`) || !strings.Contains(stderr, "the remote call failed") {
+		t.Fatalf("envelopes\n%s\nstderr %q, want no stopped mark and the error on stderr", out.String(), stderr)
+	}
+
+	if code != exitVerbFailed {
+		t.Fatalf("exit code = %d, want %d", code, exitVerbFailed)
 	}
 }

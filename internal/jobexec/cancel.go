@@ -33,16 +33,18 @@ type Job interface {
 	Done() <-chan struct{}
 
 	// OnCancel registers undo for work, which the verb has started outside
-	// the job. The
-	// runtime calls undo at most once, in reverse order of registration, and
-	// only when the verb returns ErrCancelled. The returned forget removes
-	// the hook once the work has finished on its own.
+	// the job. The runtime calls undo at most once, in reverse order of
+	// registration, and only when the verb returns ErrCancelled or fails
+	// with any error once a cancel has come. The returned forget removes the
+	// hook once the work has finished on its own.
 	OnCancel(work progress.WorkRef, undo func(ctx context.Context) error) (forget func())
 
-	// Emit writes an event record.
+	// Emit writes an event record. A write that fails once a cancel has
+	// come returns an error that matches ErrCancelled as well as the
+	// write's own error, since the wrapper may have gone.
 	Emit(ev progress.Event) error
 
-	// Log writes a log record on the named stream.
+	// Log writes a log record on the named stream. It fails as Emit does.
 	Log(stream, line string) error
 }
 
@@ -190,12 +192,23 @@ func (r *jobRuntime) stopped() error {
 
 // Emit implements Job.
 func (r *jobRuntime) Emit(ev progress.Event) error {
-	return r.enc.Encode(progress.KindEvent, ev)
+	return r.write(progress.KindEvent, ev)
 }
 
 // Log implements Job.
 func (r *jobRuntime) Log(stream, line string) error {
-	return r.enc.Encode(progress.KindLog, progress.LogBody{Stream: stream, Line: line})
+	return r.write(progress.KindLog, progress.LogBody{Stream: stream, Line: line})
+}
+
+// write writes one record. A write that fails once a cancel has come also
+// matches ErrCancelled.
+func (r *jobRuntime) write(kind progress.Kind, body any) error {
+	err := r.enc.Encode(kind, body)
+	if err != nil && r.Checkpoint() != nil {
+		return fmt.Errorf("%w: %w", ErrCancelled, err)
+	}
+
+	return err //nolint:wrapcheck // the encoder's errors name what failed
 }
 
 // pendingHooks returns the work of the hooks that are registered and have not
