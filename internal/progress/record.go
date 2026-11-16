@@ -71,6 +71,32 @@ type ResultBody struct {
 	Cancel   CancelOutcome `json:"cancel,omitempty"`
 }
 
+// CancelOutcomeOf is the outcome that a cancel requester reads from the
+// stream it got back, given the stream's last error, if any, and its result.
+// A result whose cancel is stopped or killed gives that outcome. A complete
+// stream with no error and no cancel in its result means the job had
+// already finished. A stream that ends in JOB_ORPHANED or in a refusal, or
+// whose result names a cancel this CLI does not know, has no outcome, and
+// CancelOutcomeOf then reports false.
+func CancelOutcomeOf(lastError *ErrorBody, res ResultBody) (CancelOutcome, bool) {
+	switch res.Cancel {
+	case CancelStopped, CancelKilled:
+		return res.Cancel, true
+	case "":
+	case CancelAlreadyFinished:
+		// A run never stores it, so a result that names it is not one.
+		return "", false
+	default:
+		return "", false
+	}
+
+	if lastError != nil {
+		return "", false
+	}
+
+	return CancelAlreadyFinished, true
+}
+
 // LogBody is the body of a log record.
 type LogBody struct {
 	Stream string `json:"stream"`

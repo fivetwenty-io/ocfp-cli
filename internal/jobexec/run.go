@@ -67,6 +67,12 @@ type Options struct {
 	// os.Hostname.
 	Hostname func() (string, error)
 
+	// CancelOutcome, when set, is told how a cancel request ended the job
+	// it names, as progress.CancelOutcomeOf reads it from the stream the
+	// request got back. It is not called for a refused request, nor for a
+	// job that is orphaned.
+	CancelOutcome func(jobID string, outcome progress.CancelOutcome)
+
 	// held reports whether the run that made a spool still holds its lock
 	// on out, given the attach's own descriptor of out. Nil means outHeld.
 	held func(out *os.File) (bool, error)
@@ -236,7 +242,9 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		return fmt.Errorf("release owner record lock: %w", err)
 	}
 
-	return attach(ctx, o, s, req.JobID, verbHeader(req.JobID, v))
+	_, err = attach(ctx, o, s, req.JobID, verbHeader(req.JobID, v))
+
+	return err
 }
 
 // cancelJob asks the job that a cancel request names to stop, and then
@@ -294,7 +302,15 @@ func cancelJob(ctx context.Context, o Options, req Request, release func() error
 		return fmt.Errorf("release owner record lock: %w", err)
 	}
 
-	return attach(ctx, o, s, req.JobID, streamHeader(req.JobID))
+	end, err := attach(ctx, o, s, req.JobID, streamHeader(req.JobID))
+
+	if o.CancelOutcome != nil && end.result != nil {
+		if outcome, ok := progress.CancelOutcomeOf(end.lastError, *end.result); ok {
+			o.CancelOutcome(req.JobID, outcome)
+		}
+	}
+
+	return err
 }
 
 // readRequest reads one line from r, one byte at a time so that nothing
@@ -546,11 +562,28 @@ func (t *teeWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// streamEnd is how the stream that an attach wrote ended: its last error,
+// if any, and its result, once it has one.
+type streamEnd struct {
+	lastError *progress.ErrorBody
+	result    *progress.ResultBody
+}
+
 // attach follows the spool of a job that another run made. header is the
-// header it writes for a spool whose out holds none.
-func attach(ctx context.Context, o Options, s Spool, jobID string, header progress.Header) error {
+// header it writes for a spool whose out holds none. It returns how the
+// stream it wrote ended, along with its error.
+func attach(ctx context.Context, o Options, s Spool, jobID string, header progress.Header) (streamEnd, error) {
 	fl := &follower{spool: s, jobID: jobID, w: o.Stdout, clock: o.Clock, header: header}
 	defer fl.close()
+
+	err := fl.follow(ctx, o)
+
+	return streamEnd{lastError: fl.lastError, result: fl.result}, err
+}
+
+// follow copies the spool until its stream is complete or its run is gone.
+func (fl *follower) follow(ctx context.Context, o Options) error {
+	s := fl.spool
 
 	start := o.Clock.Now()
 
@@ -632,10 +665,11 @@ type follower struct {
 	// header is the header the follower writes for a spool that holds none.
 	header progress.Header
 
-	out     *os.File
-	partial []byte // the start of a record whose newline is not yet in out
-	next    int64  // the seq of the next record
-	result  *int   // the exit code of the result record, once one is seen
+	out       *os.File
+	partial   []byte               // the start of a record whose newline is not yet in out
+	next      int64                // the seq of the next record
+	lastError *progress.ErrorBody  // the body of the last error record written
+	result    *progress.ResultBody // the body of the result record, once one is written
 }
 
 // live reports whether the run that made the spool still holds its lock on
@@ -795,7 +829,16 @@ func (fl *follower) check(line []byte) error {
 			return fl.damaged(fmt.Sprintf("result record %d does not decode: %s", fl.next, quote(err.Error())))
 		}
 
-		fl.result = &res.ExitCode
+		fl.result = &res
+	case r.Kind == progress.KindError:
+		var e progress.ErrorBody
+
+		err := json.Unmarshal(r.Body, &e)
+		if err != nil {
+			return fl.damaged(fmt.Sprintf("error record %d does not decode: %s", fl.next, quote(err.Error())))
+		}
+
+		fl.lastError = &e
 	}
 
 	fl.next++
@@ -814,7 +857,7 @@ func (fl *follower) damaged(what string) error {
 // result's exit code.
 func (fl *follower) orphan(why string) error {
 	if fl.result != nil {
-		return exitError(fl.jobID, *fl.result)
+		return exitError(fl.jobID, fl.result.ExitCode)
 	}
 
 	msg := fmt.Sprintf("job %s is orphaned: %s", fl.jobID, why)
@@ -825,13 +868,18 @@ func (fl *follower) orphan(why string) error {
 		err = fl.emit(progress.KindHeader, fl.header)
 	}
 
+	orphaned := progress.ErrorBody{Code: progress.CodeJobOrphaned, Message: msg}
+	result := progress.ResultBody{ExitCode: 1}
+
 	if err == nil {
-		err = fl.emit(progress.KindError, progress.ErrorBody{Code: progress.CodeJobOrphaned, Message: msg})
+		err = fl.emit(progress.KindError, orphaned)
 	}
 
 	if err == nil {
-		err = fl.emit(progress.KindResult, progress.ResultBody{ExitCode: 1})
+		err = fl.emit(progress.KindResult, result)
 	}
+
+	fl.lastError, fl.result = &orphaned, &result
 
 	return errors.Join(errors.New(string(progress.CodeJobOrphaned)+": "+msg), err)
 }

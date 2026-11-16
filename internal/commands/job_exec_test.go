@@ -523,3 +523,39 @@ func TestJobExecIgnoresHangUpAndBrokenPipe(t *testing.T) {
 		}
 	}
 }
+
+// A cancel request names on stderr how the job it names ended, and a
+// refused cancel names only its refusal.
+func TestJobExecPrintsTheCancelOutcome(t *testing.T) {
+	t.Parallel()
+
+	spool := filepath.Join(t.TempDir(), "spool")
+	owner := ownerDirWith(t)
+	cancel := func(r *jobexec.Request) { r.Action, r.Verb = jobexec.ActionCancel, "" }
+
+	res := runCmd(t, NewJobCmd(), bytes.NewReader(jobRequest(t, "job-0001", ownerrecordtest.TestKey())),
+		"exec", "--spool-root", spool, "--owner-dir", owner)
+	if res.code != 0 {
+		t.Fatalf("job exec = %d, %v, stderr %q", res.code, res.err, res.stderr)
+	}
+
+	res = runCmd(t, NewJobCmd(), bytes.NewReader(jobRequestWith(t, "job-0001", ownerrecordtest.TestKey(), cancel)),
+		"exec", "--spool-root", spool, "--owner-dir", owner)
+	if res.code != 0 {
+		t.Fatalf("a cancel of a finished job = %d, %v, stderr %q", res.code, res.err, res.stderr)
+	}
+
+	if want := "job exec: cancel of job job-0001: already_finished\n"; res.stderr != want {
+		t.Fatalf("stderr = %q, want %q", res.stderr, want)
+	}
+
+	res = runCmd(t, NewJobCmd(), bytes.NewReader(jobRequestWith(t, "job-0002", ownerrecordtest.TestKey(), cancel)),
+		"exec", "--spool-root", spool, "--owner-dir", owner)
+	if res.code != 2 {
+		t.Fatalf("a cancel of an unknown job = %d, %v, want exit code 2", res.code, res.err)
+	}
+
+	if strings.Contains(res.stderr, "cancel of job") || !strings.Contains(res.stderr, string(progress.CodeJobNotFound)) {
+		t.Fatalf("stderr of a refused cancel = %q", res.stderr)
+	}
+}

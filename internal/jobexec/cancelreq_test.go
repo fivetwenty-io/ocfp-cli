@@ -5,9 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/ownerrecord"
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
@@ -351,4 +353,152 @@ func TestACancelOfAContractTwoJobIsRefused(t *testing.T) {
 
 		must(t, rc.run(t))
 	})
+}
+
+// outcomes records each cancel outcome a run reports.
+type outcomes struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (oc *outcomes) report(jobID string, outcome progress.CancelOutcome) {
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+
+	oc.got = append(oc.got, jobID+" "+string(outcome))
+}
+
+func (oc *outcomes) all() []string {
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+
+	return append([]string(nil), oc.got...)
+}
+
+// A cancel request reports how the job it names ended: stopped when the
+// cancel stopped it, and already_finished when it had ended first. A refused
+// cancel and a cancel of an orphaned job report nothing.
+func TestACancelReportsItsOutcome(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stopped", func(t *testing.T) {
+		t.Parallel()
+
+		root := spoolRoot(t)
+		store := storeWith(t, liveRecord())
+		s := Spool{Dir: filepath.Join(root, "job-0001")}
+		w := &waitingVerb{}
+
+		oc := &outcomes{}
+		cancel := cancelRun(t, store, root)
+		cancel.opts.CancelOutcome = oc.report
+
+		cancelled := make(chan error, 1)
+
+		job := newRun(t, store, root, signedRequest(t, goodRequest()))
+		job.opts.start = w.start
+		job.clock.onWait = func(n int) {
+			if n == 1 {
+				go func() { cancelled <- cancel.run(t) }()
+
+				waitFor(t, func() bool {
+					_, ok, _ := s.readCancel()
+
+					return ok
+				})
+
+				return
+			}
+
+			w.waitExited(t)
+		}
+
+		if err := job.run(t); err == nil {
+			t.Fatal("the cancelled job reported success")
+		}
+
+		if err := <-cancelled; err == nil {
+			t.Fatal("the cancel of a job that stopped reported success")
+		}
+
+		if got, want := oc.all(), []string{"job-0001 stopped"}; !slices.Equal(got, want) {
+			t.Fatalf("outcomes = %q, want %q", got, want)
+		}
+
+		if !bytes.Equal(cancel.stdout.Bytes(), job.stdout.Bytes()) {
+			t.Fatalf("the cancel's reply differs from the job's stream\njob:\n%s\ncancel:\n%s", job.stdout, cancel.stdout)
+		}
+	})
+
+	t.Run("already finished", func(t *testing.T) {
+		t.Parallel()
+
+		root := spoolRoot(t)
+		store := storeWith(t, liveRecord())
+
+		must(t, newRun(t, store, root, signedRequest(t, goodRequest())).run(t))
+
+		oc := &outcomes{}
+		rc := cancelRun(t, store, root)
+		rc.opts.CancelOutcome = oc.report
+
+		must(t, rc.run(t))
+
+		if got, want := oc.all(), []string{"job-0001 already_finished"}; !slices.Equal(got, want) {
+			t.Fatalf("outcomes = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("refused", func(t *testing.T) {
+		t.Parallel()
+
+		oc := &outcomes{}
+		rc := cancelRun(t, storeWith(t, liveRecord()), spoolRoot(t))
+		rc.opts.CancelOutcome = oc.report
+
+		wantRefusal(t, rc.run(t), progress.CodeJobNotFound)
+
+		if got := oc.all(); len(got) != 0 {
+			t.Fatalf("a refused cancel reported %q", got)
+		}
+	})
+
+	t.Run("orphaned", func(t *testing.T) {
+		t.Parallel()
+
+		root := spoolRoot(t)
+		st := runningStatus(os.Getpid())
+		st.WireContract = progress.WireContract
+		partialSpool(t, root, st)
+
+		oc := &outcomes{}
+		rc := cancelRun(t, storeWith(t, liveRecord()), root)
+		rc.opts.CancelOutcome = oc.report
+
+		if err := rc.run(t); err == nil || !strings.Contains(err.Error(), string(progress.CodeJobOrphaned)) {
+			t.Fatalf("a cancel of an orphaned job = %v", err)
+		}
+
+		if got := oc.all(); len(got) != 0 {
+			t.Fatalf("a cancel of an orphaned job reported %q", got)
+		}
+	})
+}
+
+// waitFor waits, in real time, until cond holds, and fails the test when it
+// does not hold within verbWait.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(verbWait)
+
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Error("the condition did not hold in time")
+
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
 }

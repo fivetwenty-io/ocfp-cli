@@ -127,6 +127,9 @@ fails the ownership and mode check.`,
 				Owner:     newStore(ownerDir),
 				Stdin:     cmd.InOrStdin(),
 				Stdout:    cmd.OutOrStdout(),
+				CancelOutcome: func(jobID string, outcome progress.CancelOutcome) {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "job exec: cancel of job %s: %s\n", jobID, outcome)
+				},
 			})
 			if err == nil {
 				return nil
