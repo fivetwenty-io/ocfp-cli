@@ -97,8 +97,9 @@ func runTreeVerb(_ context.Context, j Job, _ func() (string, error)) (int, error
 }
 
 // holdLock takes an exclusive lock on the file helperLockFileEnv names,
-// writes its pid and process group id to the file helperReadyFileEnv names,
-// and then holds the lock until it is killed or ends itself.
+// writes its pid, its process group id, and its parent's pid to the file
+// helperReadyFileEnv names, and then holds the lock until it is killed or
+// ends itself.
 func holdLock() int {
 	f, err := os.OpenFile(os.Getenv(helperLockFileEnv), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
@@ -112,7 +113,7 @@ func holdLock() int {
 	ready := os.Getenv(helperReadyFileEnv)
 	tmp := ready + ".tmp"
 
-	if os.WriteFile(tmp, fmt.Appendf(nil, "%d %d", os.Getpid(), unix.Getpgrp()), 0o600) != nil || os.Rename(tmp, ready) != nil {
+	if os.WriteFile(tmp, fmt.Appendf(nil, "%d %d %d", os.Getpid(), unix.Getpgrp(), os.Getppid()), 0o600) != nil || os.Rename(tmp, ready) != nil {
 		return 1
 	}
 
