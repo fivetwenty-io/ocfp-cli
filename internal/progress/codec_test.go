@@ -52,11 +52,11 @@ func TestEncoderWritesHeaderFirst(t *testing.T) {
 		t.Fatalf("first line %q: %v", first, err)
 	}
 
-	if rec.Kind != "header" || rec.Seq != 0 || rec.Body.WireContract != 2 {
+	if rec.Kind != "header" || rec.Seq != 0 || rec.Body.WireContract != 3 {
 		t.Errorf("header line = %q", first)
 	}
 
-	if !strings.Contains(first, `"wireContract":2`) {
+	if !strings.Contains(first, `"wireContract":3`) {
 		t.Errorf("header body lacks wireContract: %q", first)
 	}
 }

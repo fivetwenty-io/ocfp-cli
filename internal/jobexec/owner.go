@@ -235,9 +235,18 @@ func checkOwnerFields(req Request, rec ownerrecord.Record) error {
 	return nil
 }
 
-// orgBlocWireContract is the first wire contract whose requests name an org
-// and a bloc.
-const orgBlocWireContract = 2
+// The first wire contracts that added to the job request. A request of an
+// older contract is refused with a message that names what its contract
+// lacks.
+const (
+	// orgBlocWireContract is the first contract whose requests name an org
+	// and a bloc.
+	orgBlocWireContract = 2
+
+	// actionWireContract is the first contract whose requests name an
+	// action.
+	actionWireContract = 3
+)
 
 // checkContract refuses a request of any wire contract but this CLI's. It runs
 // before any field that a contract added is read, so a request of an older
@@ -248,8 +257,12 @@ func checkContract(req Request) error {
 	}
 
 	msg := fmt.Sprintf("job request wire contract is %d, this CLI reads %d", req.WireContract, progress.WireContract)
-	if req.WireContract > 0 && req.WireContract < orgBlocWireContract {
-		msg += ", and a request of that contract names no org or bloc"
+
+	switch {
+	case req.WireContract > 0 && req.WireContract < orgBlocWireContract:
+		msg += ", and a request of that contract names no org, bloc, or action"
+	case req.WireContract > 0 && req.WireContract < actionWireContract:
+		msg += ", and a request of that contract names no action"
 	}
 
 	return refuse(progress.CodeWireContractUnsupported, msg)

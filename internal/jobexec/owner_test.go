@@ -227,7 +227,7 @@ func faults() []fault {
 		{"newer contract", progress.CodeWireContractUnsupported, "wire contract", func(s *scenario) {
 			s.request.WireContract = progress.WireContract + 1
 		}},
-		{"older contract", progress.CodeWireContractUnsupported, "names no org or bloc", func(s *scenario) {
+		{"older contract", progress.CodeWireContractUnsupported, "names no action", func(s *scenario) {
 			s.request.WireContract = progress.WireContract - 1
 		}},
 		{"other org", progress.CodeOrgBlocMismatch, "names org", func(s *scenario) { s.request.Org = "org-other" }},
@@ -496,7 +496,7 @@ func TestCheckOwnerZeroContractAndFormat(t *testing.T) {
 		t.Parallel()
 
 		st := storeWith(t, liveRecord())
-		payload := replaceOnce(t, mustMarshal(t, goodRequest()), `"wireContract":2,`, ``)
+		payload := replaceOnce(t, mustMarshal(t, goodRequest()), `"wireContract":3,`, ``)
 
 		_, _, err := checkOwner(t.Context(), signPayload(payload, ownerKey()), st, fixedClock{testNow})
 		wantRefusal(t, err, progress.CodeWireContractUnsupported)
@@ -1380,4 +1380,28 @@ func TestCheckOwnerRefusesAModeNotLive(t *testing.T) {
 
 		wantUnlocked(t, st)
 	}
+}
+
+// TestCheckOwnerRefusesAContractTwoRequest checks that a request of the
+// second wire contract, signed by the owner, is refused as one and says what
+// that contract lacks, and that nothing stays locked.
+func TestCheckOwnerRefusesAContractTwoRequest(t *testing.T) {
+	t.Parallel()
+
+	st := storeWith(t, liveRecord())
+	req := goodRequest()
+	req.WireContract = 2
+
+	_, release, err := checkOwner(t.Context(), signPayload(mustMarshal(t, req), ownerKey()), st, fixedClock{testNow})
+
+	r := wantRefusal(t, err, progress.CodeWireContractUnsupported)
+	if !strings.Contains(r.Message, "wire contract is 2, this CLI reads 3") || !strings.Contains(r.Message, "names no action") {
+		t.Errorf("message %q does not say why a contract 2 request is refused", r.Message)
+	}
+
+	if release != nil {
+		t.Error("a refusal returned a release")
+	}
+
+	wantUnlocked(t, st)
 }

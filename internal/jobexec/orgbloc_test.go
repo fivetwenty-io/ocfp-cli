@@ -215,7 +215,7 @@ func TestCheckOwnerRefusesAnOldFormatRequest(t *testing.T) {
 	_, release, err := checkOwner(t.Context(), signPayload(payload, ownerKey()), st, fixedClock{testNow})
 
 	r := wantRefusal(t, err, progress.CodeWireContractUnsupported)
-	if !strings.Contains(r.Message, "wire contract is 1, this CLI reads 2") || !strings.Contains(r.Message, "names no org or bloc") {
+	if !strings.Contains(r.Message, "wire contract is 1, this CLI reads 3") || !strings.Contains(r.Message, "names no org, bloc, or action") {
 		t.Errorf("message %q does not say why a contract 1 request is refused", r.Message)
 	}
 
