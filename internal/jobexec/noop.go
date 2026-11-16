@@ -1,6 +1,7 @@
 package jobexec
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -24,14 +25,22 @@ type noopOutput struct {
 	Version  string `json:"version"`
 }
 
-// runNoop runs the no-op verb and writes its records with enc: step_started
-// for the step noop, one log line, step_finished, and the result. The log
-// line is the JSON {"hostname":...,"version":...} on stdout. When the host
-// name cannot be read, the line names the failure on stderr instead, the
-// step fails, and the exit code is 1. runNoop returns the job's exit code,
-// and an error only when a record could not be written.
-func runNoop(enc *progress.Encoder, hostname func() (string, error)) (int, error) {
-	err := enc.Encode(progress.KindEvent, progress.Event{Kind: progress.EventStepStarted, Step: verbNoop})
+// runNoop runs the no-op verb and writes its records through j: step_started
+// for the step noop, one log line, and step_finished. The log line is the JSON
+// {"hostname":...,"version":...} on stdout. When the host name cannot be read,
+// the line names the failure on stderr instead, the step fails, and the exit
+// code is 1. It marks a safe point before the log line and again before
+// step_finished, and returns ErrCancelled at either one once a cancel has
+// arrived. runNoop returns the job's exit code, and an error only when a
+// record could not be written or the job was cancelled. It writes no result,
+// which belongs to the wrapper.
+func runNoop(_ context.Context, j Job, hostname func() (string, error)) (int, error) {
+	err := j.Emit(progress.Event{Kind: progress.EventStepStarted, Step: verbNoop})
+	if err != nil {
+		return 0, err
+	}
+
+	err = j.Checkpoint()
 	if err != nil {
 		return 0, err
 	}
@@ -52,17 +61,17 @@ func runNoop(enc *progress.Encoder, hostname func() (string, error)) (int, error
 		logLine.Line = string(line)
 	}
 
-	err = enc.Encode(progress.KindLog, logLine)
+	err = j.Log(logLine.Stream, logLine.Line)
 	if err != nil {
 		return 0, err
 	}
 
-	err = enc.Encode(progress.KindEvent, progress.Event{Kind: progress.EventStepFinished, Step: verbNoop, Outcome: outcome})
+	err = j.Checkpoint()
 	if err != nil {
 		return 0, err
 	}
 
-	err = enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: code})
+	err = j.Emit(progress.Event{Kind: progress.EventStepFinished, Step: verbNoop, Outcome: outcome})
 	if err != nil {
 		return 0, err
 	}

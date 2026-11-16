@@ -1,13 +1,12 @@
 package jobexec
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 )
 
 // verb is one entry in the verb table.
@@ -19,8 +18,10 @@ type verb struct {
 	// It must be more than zero, and the header reports it.
 	cancelBudget time.Duration
 
-	// run runs the verb and writes its records with enc.
-	run func(enc *progress.Encoder, hostname func() (string, error)) (exitCode int, err error)
+	// run runs the verb against j. It returns the job's exit code, and an
+	// error that matches ErrCancelled when it stopped at a safe point after a
+	// cancel. It writes no header and no result.
+	run func(ctx context.Context, j Job, hostname func() (string, error)) (exitCode int, err error)
 }
 
 // verbs is the table of verbs this host runs, filed by name.

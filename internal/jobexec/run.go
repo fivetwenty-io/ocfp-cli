@@ -318,7 +318,12 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	code, err := v.run(enc, o.Hostname)
+	code, err := v.run(context.Background(), newJobRuntime(enc), o.Hostname)
+	if err != nil {
+		return fmt.Errorf("job %s: %w", jobID, err)
+	}
+
+	err = enc.Encode(progress.KindResult, progress.ResultBody{ExitCode: code})
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
