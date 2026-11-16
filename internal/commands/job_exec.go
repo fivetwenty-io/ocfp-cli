@@ -90,9 +90,11 @@ marker in the job's spool and attaches to the job, the same way a repeated
 request does, so stdout carries the job's stream. The job stops at its next
 safe point and undoes what it has done. A job that has not stopped once its
 verb's cancel budget has passed is killed along with every process it
-started, and its stream first warns of each undo that did not run. Once the
-stream ends, stderr names the outcome as stopped, killed, or
-already_finished, and the command exits with the job's own exit code.
+started. A job that left work undone, because an undo did not run or
+failed, says so in a warning before its stream ends. Once the stream ends,
+stderr names the outcome as stopped, killed, or already_finished, and the
+command exits as it does for any job: 0 when the job succeeded and 1
+otherwise, so 1 for a job that stopped or was killed.
 
 A request that is not signed by the owner, that names an org or a bloc
 other than the ones the owner record names, or that the owner record cannot
