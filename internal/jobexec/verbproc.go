@@ -554,6 +554,10 @@ func (rl *relay) record(kind progress.Kind, body json.RawMessage) error {
 		var ev progress.Event
 
 		err = strictjson.Decode(body, &ev)
+		if err == nil && ev.Undone != nil {
+			return refusedEnvelope("an event that names work left undone, which only the wrapper reports")
+		}
+
 		v = ev
 	case progress.KindLog:
 		var l progress.LogBody

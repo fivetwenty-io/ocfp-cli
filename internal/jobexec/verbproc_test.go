@@ -249,6 +249,8 @@ func TestTheRelayChecksEveryEnvelope(t *testing.T) {
 		`not json`,
 		`{"type":"record","kind":"event","body":{"kind":"step_started","step":"noop","extra":1}}`,
 		`{"type":"record","kind":"log","body":{"stream":"stdout"},"work":{"kind":"x"}}`,
+		`{"type":"record","kind":"event","body":{"kind":"warning","undone":[{"kind":"x","id":"1"}]}}`,
+		`{"type":"record","kind":"event","body":{"kind":"warning","undone":[]}}`,
 		`{"type":"undo","state":"registered"}`,
 		`{"type":"undo","work":{"kind":"","id":"x"},"state":"registered"}`,
 		`{"type":"undo","work":{"kind":"x","name":"y"},"state":"registered"}`,
