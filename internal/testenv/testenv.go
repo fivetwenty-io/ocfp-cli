@@ -50,6 +50,11 @@ var homeVars = [...]struct{ name, dir string }{ //nolint:gochecknoglobals // a f
 // tree must not move.
 var goVars = [...]string{"GOENV", "GOCACHE", "GOMODCACHE", "GOPATH"} //nolint:gochecknoglobals // a fixed list
 
+// VerbChildEnv marks a process that job exec started to run a verb. It is
+// jobexec.VerbChildEnv, named here apart since this package cannot import
+// that one, and a test there checks that the two agree.
+const VerbChildEnv = "OCFP_JOB_VERB_CHILD"
+
 // Main runs m's tests in a temporary home and exits with their code.
 func Main(m Runner) {
 	os.Exit(Run(m.Run))
@@ -57,13 +62,22 @@ func Main(m Runner) {
 
 // Run runs run in a temporary home, removes the home, and returns run's
 // code. It returns 1 without running anything when it can't set the home
-// up, after saying why on stderr.
+// up, or when the process holds VerbChildEnv, after saying why on stderr. A
+// process that holds the mark is a job's verb process whose TestMain did not
+// serve the verb first, and running the tests in it again could start it
+// again, without end.
 //
 // A panic in a test goroutine ends the test binary without unwinding Run,
 // so the tree stays in the temporary directory. The write guard panics when
 // it catches a write, so a real violation leaves its ocfp-test-home-*
 // directory behind. Nothing reads it later, and it can be deleted.
 func Run(run func() int) int {
+	if os.Getenv(VerbChildEnv) != "" {
+		_, _ = fmt.Fprintln(os.Stderr, "testenv: this test binary was started to run a job's verb, and its TestMain must serve job verb before it runs any test")
+
+		return 1
+	}
+
 	tree, err := os.MkdirTemp("", "ocfp-test-home-*")
 	if err != nil {
 		return failed(os.Stderr, fmt.Errorf("make the temporary home: %w", err))

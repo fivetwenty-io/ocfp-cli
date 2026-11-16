@@ -217,6 +217,10 @@ func verbProcessConfig() verbConfig {
 func serveVerbProcess(ctx context.Context, cfg verbConfig, stdin io.Reader, stdout, stderr io.Writer) int {
 	signal.Ignore(syscall.SIGPIPE, syscall.SIGHUP)
 
+	// The mark is for this process alone, so the processes the verb starts
+	// do not inherit it.
+	_ = os.Unsetenv(VerbChildEnv)
+
 	return serveVerb(ctx, cfg, stdin, stdout, stderr)
 }
 

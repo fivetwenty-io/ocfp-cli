@@ -144,6 +144,26 @@ func TestRunRemovesItsTreeAndReturnsTheCode(t *testing.T) {
 	assert.NoDirExists(t, filepath.Dir(home), "Run removes the tree")
 }
 
+// A test binary that job exec started as a verb's process, but whose
+// TestMain did not serve the verb first, runs none of its tests. It would
+// otherwise run them all again, and any job exec among them would start it
+// once more.
+func TestRunRefusesAVerbProcess(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": t.TempDir(), "GOCACHE": os.Getenv("GOCACHE")})
+	t.Setenv(testenv.VerbChildEnv, "1")
+
+	ran := false
+
+	code := testenv.Run(func() int {
+		ran = true
+
+		return 0
+	})
+
+	assert.Equal(t, 1, code)
+	assert.False(t, ran, "Run ran the tests in a verb's process")
+}
+
 // pathPackages are the packages through which a test reaches ocfp's real
 // directories: config resolves every one of them, and writeguard sits at
 // every write. A package whose test binary links either must isolate its

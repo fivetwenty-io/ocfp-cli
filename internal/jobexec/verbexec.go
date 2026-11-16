@@ -9,8 +9,14 @@ import (
 	"sync"
 )
 
+// VerbChildEnv marks a process that job exec started to run a verb. The verb
+// process clears it before the verb runs, so only that process holds it. A
+// test binary that sees it without having served the verb has been started
+// by a job exec among its own tests, and must not run them again.
+const VerbChildEnv = "OCFP_JOB_VERB_CHILD"
+
 // reexec starts each verb in a process of its own, from the binary that is
-// running, as `ocfp job verb`.
+// running, as `ocfp job verb`, with VerbChildEnv set.
 type reexec struct {
 	// env is added to the environment the verb process inherits.
 	env []string
@@ -68,7 +74,7 @@ func (r reexec) start(verbStart) (*verbProc, error) {
 
 	cmd := exec.Command(path, "job", "verb") //nolint:gosec,noctx // this binary; the wrapper ends the process itself
 
-	cmd.Env = append(os.Environ(), r.env...)
+	cmd.Env = append(append(os.Environ(), r.env...), VerbChildEnv+"=1")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = child[0], child[1], child[2]
 
 	g, err := startGroup(cmd)

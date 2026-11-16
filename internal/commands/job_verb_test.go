@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/fivetwenty-io/ocfp-cli/internal/jobexec"
+	"github.com/fivetwenty-io/ocfp-cli/internal/testenv"
 )
 
 // isJobVerb reports whether args, which follow the binary's name, start the
@@ -75,5 +78,16 @@ func TestJobVerbRefusesAMissingStartLine(t *testing.T) {
 
 	if !strings.Contains(stderr.String(), "start line") {
 		t.Fatalf("stderr %q does not name the start line", stderr.String())
+	}
+}
+
+// testenv refuses to run tests in a process that holds the mark job exec
+// gives a verb's process, and names the mark apart, since it cannot import
+// jobexec.
+func TestTestenvKnowsTheVerbMark(t *testing.T) {
+	t.Parallel()
+
+	if jobexec.VerbChildEnv != testenv.VerbChildEnv {
+		t.Fatalf("the verb mark is %q in jobexec and %q in testenv", jobexec.VerbChildEnv, testenv.VerbChildEnv)
 	}
 }

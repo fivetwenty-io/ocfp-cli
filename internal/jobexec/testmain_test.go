@@ -86,9 +86,10 @@ func helperVerbProcess() int {
 //
 //nolint:gochecknoglobals // a test table
 var helperVerbs = map[string]func(context.Context, Job, func() (string, error)) (int, error){
-	"wait": runWaitVerb,
-	"fds":  runFDsVerb,
-	"tree": runTreeVerb,
+	"wait":   runWaitVerb,
+	"fds":    runFDsVerb,
+	"tree":   runTreeVerb,
+	"marker": runMarkerVerb,
 }
 
 // runWaitVerb starts its step, registers an undo hook, and waits for a
