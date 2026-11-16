@@ -10,18 +10,24 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 	"github.com/fivetwenty-io/ocfp-cli/internal/safedir"
 	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
 )
 
 // The files in a spool directory. A run writes every record of its stream to
 // out, writes status.json when it starts and again when it ends, and writes
-// exit.json once out holds the whole stream.
+// exit.json once out holds the whole stream. A cancel writes cancel.json, and
+// only a cancel does.
 const (
 	outFile    = "out"
 	statusFile = "status.json"
 	exitFile   = "exit.json"
+	cancelFile = "cancel.json"
 )
+
+// ErrSpoolNotFound is what OpenSpool returns for a job that has no spool.
+var ErrSpoolNotFound = errors.New("spool: no such spool")
 
 // The states a status names.
 const (
@@ -39,18 +45,33 @@ type Spool struct {
 }
 
 // Status is the content of status.json. ExitCode is null while the job runs.
+// WireContract is the contract of the run that wrote it, and a run of a
+// contract before 3 left it out, so a cancel can tell a job that would never
+// read a cancel marker.
 type Status struct {
-	State     string    `json:"state"`
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"startedAt"`
-	ExitCode  *int      `json:"exitCode"`
+	State        string    `json:"state"`
+	PID          int       `json:"pid"`
+	StartedAt    time.Time `json:"startedAt"`
+	ExitCode     *int      `json:"exitCode"`
+	WireContract int       `json:"wireContract,omitempty"`
 }
 
 // Exit is the content of exit.json, which a run writes once its whole stream
-// is in out.
+// is in out. Cancel is set only when a cancel ended the job, and then to
+// stopped or killed, never to already_finished, which a requester derives and
+// a run never stores. CancelSeenAt is when the run first saw the marker.
 type Exit struct {
-	ExitCode   int       `json:"exitCode"`
-	FinishedAt time.Time `json:"finishedAt"`
+	ExitCode     int                    `json:"exitCode"`
+	FinishedAt   time.Time              `json:"finishedAt"`
+	Cancel       progress.CancelOutcome `json:"cancel,omitempty"`
+	CancelSeenAt *time.Time             `json:"cancelSeenAt,omitempty"`
+}
+
+// Cancel is the content of cancel.json. RequestedAt is the cancel process's
+// clock reading, for people to read. The run's cancel budget starts from its
+// own reading when it first sees the marker.
+type Cancel struct {
+	RequestedAt time.Time `json:"requestedAt"`
 }
 
 // CreateSpool makes the spool directory root/jobID with os.Mkdir, so that of
@@ -104,19 +125,67 @@ func CreateSpool(root, jobID string) (s Spool, created bool, err error) {
 	return s, false, nil
 }
 
-// prepareRoot checks that no other user can replace root by way of one of
-// its ancestors, makes root when it is missing, and checks that it is a
-// private directory. It returns root with the symbolic links above it
-// resolved, which is the root it checked and the one the caller must use.
+// OpenSpool returns the spool of a job that has one, and never makes a root or
+// a spool. It makes the checks CreateSpool makes on the job id, the root and
+// its ancestors, and the spool directory. A job with no spool, or a root that
+// does not exist, gives an error that wraps ErrSpoolNotFound.
+func OpenSpool(root, jobID string) (Spool, error) {
+	if !jobIDPattern.MatchString(jobID) {
+		return Spool{}, fmt.Errorf("spool: job id %s is not of the form %s", quote(jobID), jobIDPattern)
+	}
+
+	if root == "" {
+		return Spool{}, errors.New("spool: no spool root")
+	}
+
+	root, err := checkRoot(filepath.Clean(root), false)
+	if err != nil {
+		return Spool{}, err
+	}
+
+	s := Spool{Dir: filepath.Join(root, jobID)}
+
+	_, err = os.Lstat(s.Dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Spool{}, fmt.Errorf("%w: job %s", ErrSpoolNotFound, jobID)
+	}
+
+	if err != nil {
+		return Spool{}, fmt.Errorf("spool: %w", err)
+	}
+
+	err = checkPrivateDir(s.Dir, "spool directory")
+	if err != nil {
+		return Spool{}, err
+	}
+
+	return s, nil
+}
+
+// prepareRoot checks the root as checkRoot does and makes it when it is
+// missing.
 func prepareRoot(root string) (string, error) {
+	return checkRoot(root, true)
+}
+
+// checkRoot checks that no other user can replace root by way of one of
+// its ancestors, makes root when it is missing and create is set, and checks
+// that it is a private directory. It returns root with the symbolic links
+// above it resolved, which is the root it checked and the one the caller must
+// use. A missing root with create unset wraps ErrSpoolNotFound.
+func checkRoot(root string, create bool) (string, error) {
 	resolved, err := safedir.Resolve(root)
 	if err != nil {
 		return "", fmt.Errorf("spool: %w", err)
 	}
 
-	err = os.Mkdir(resolved, 0o700)
-	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return "", fmt.Errorf("spool: make root: %w", err)
+	if create {
+		err = os.Mkdir(resolved, 0o700)
+		if err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", fmt.Errorf("spool: make root: %w", err)
+		}
+	} else if _, serr := os.Lstat(resolved); errors.Is(serr, fs.ErrNotExist) {
+		return "", fmt.Errorf("%w: no spool root %s", ErrSpoolNotFound, resolved)
 	}
 
 	err = checkPrivateDir(resolved, "spool root")
@@ -151,6 +220,54 @@ func checkPrivateDir(path, what string) error {
 // one and never part of either.
 func (s Spool) WriteStatus(st Status) error {
 	return s.writeJSON(statusFile, st)
+}
+
+// WriteCancel publishes the cancel marker. It writes a temporary file, syncs
+// it, and links it to cancel.json, which fails when a marker is already there.
+// It reports true when this call made the marker, and false when one was
+// already there, which is not an error, so two cancels leave one marker and
+// both succeed. The marker never replaces another, so a reader sees a whole
+// marker or none.
+func (s Spool) WriteCancel(c Cancel) (created bool, err error) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return false, fmt.Errorf("spool: encode %s: %w", cancelFile, err)
+	}
+
+	tmp, err := os.CreateTemp(s.Dir, "."+cancelFile+".tmp-*")
+	if err != nil {
+		return false, fmt.Errorf("spool: write %s: %w", cancelFile, err)
+	}
+
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	_, err = tmp.Write(append(data, '\n'))
+	if err == nil {
+		err = tmp.Sync()
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("spool: write %s: %w", cancelFile, err)
+	}
+
+	err = os.Link(tmp.Name(), filepath.Join(s.Dir, cancelFile))
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("spool: write %s: %w", cancelFile, err)
+	}
+
+	err = syncDir(s.Dir)
+	if err != nil {
+		return true, fmt.Errorf("spool: sync %s: %w", s.Dir, err)
+	}
+
+	return true, nil
 }
 
 // WriteExit writes exit.json the same way. A run calls it only once out holds
@@ -254,7 +371,28 @@ func (s Spool) readExit() (Exit, bool, error) {
 		return Exit{}, ok, err
 	}
 
+	switch e.Cancel {
+	case "", progress.CancelStopped, progress.CancelKilled:
+	case progress.CancelAlreadyFinished:
+		return Exit{}, false, fmt.Errorf("spool: %s names the cancel outcome %s, which a run never stores", exitFile, e.Cancel)
+	default:
+		return Exit{}, false, fmt.Errorf("spool: %s names the cancel outcome %s", exitFile, quote(string(e.Cancel)))
+	}
+
 	return e, true, nil
+}
+
+// readCancel reads cancel.json. It reports false when the file does not
+// exist.
+func (s Spool) readCancel() (Cancel, bool, error) {
+	var c Cancel
+
+	ok, err := s.readJSON(cancelFile, &c)
+	if err != nil || !ok {
+		return Cancel{}, ok, err
+	}
+
+	return c, true, nil
 }
 
 // readJSON decodes name strictly into v. It reports false when name does not

@@ -303,7 +303,7 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return err
 	}
 
-	st := Status{State: StateRunning, PID: os.Getpid(), StartedAt: o.Clock.Now().UTC()}
+	st := Status{State: StateRunning, PID: os.Getpid(), StartedAt: o.Clock.Now().UTC(), WireContract: progress.WireContract}
 
 	err = s.WriteStatus(st)
 	if err != nil {
