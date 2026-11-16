@@ -26,6 +26,12 @@ import (
 // fakeClock reads testNow until After moves it on. After records how long it
 // was asked to wait, moves the clock that far at once, and runs onWait when
 // it is set, so a test can change the spool between two polls.
+//
+// After also gives up fakePace of real time before it returns. A run polls
+// for a cancel marker for as long as its verb runs, and a clock whose waits
+// cost nothing would turn each poll loop into a spin that takes a whole CPU
+// from the tests running beside it. The pace stands for nothing on the
+// clock: every time a test checks is the clock's own.
 type fakeClock struct {
 	mu     sync.Mutex
 	now    time.Time
@@ -62,11 +68,16 @@ func (c *fakeClock) After(d time.Duration) <-chan time.Time {
 		hook(n)
 	}
 
+	time.Sleep(fakePace)
+
 	ch := make(chan time.Time, 1)
 	ch <- now
 
 	return ch
 }
+
+// fakePace is the real time each wait on a fakeClock gives up.
+const fakePace = time.Millisecond
 
 func (c *fakeClock) waited() []time.Duration {
 	c.mu.Lock()
@@ -419,8 +430,32 @@ func TestRunHoldsOutUntilExitIsWritten(t *testing.T) {
 		t.Fatalf("the lock was checked %d times, want one for every clock read once out exists", checks)
 	}
 
-	if lockedByAnother(t, dir) {
+	if !freeSoon(func() (bool, error) { return lockedByAnother(t, dir), nil }) {
 		t.Fatal("out is still locked after Run returned")
+	}
+}
+
+// forkGrace bounds how long a lock can outlive its last close in this test
+// process. Tests beside this one start processes, and a process forked
+// while a file was open holds a copy of it, and so its lock, until it has
+// run its exec, which closes every file opened close-on-exec.
+const forkGrace = 2 * time.Second
+
+// freeSoon reports whether held reports the lock free within forkGrace.
+func freeSoon(held func() (bool, error)) bool {
+	deadline := time.Now().Add(forkGrace)
+
+	for {
+		h, err := held()
+		if err == nil && !h {
+			return true
+		}
+
+		if time.Now().After(deadline) {
+			return false
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -1019,7 +1054,7 @@ func TestAttachIgnoresARecycledPID(t *testing.T) {
 		s := partialSpool(t, root, runningStatus(pid))
 		out := readFile(t, filepath.Join(s.Dir, "out"))
 
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 
 		rc := newRun(t, storeWith(t, liveRecord()), root, signedRequest(t, goodRequest()))
 		rc.opts.held = nil // nothing holds out

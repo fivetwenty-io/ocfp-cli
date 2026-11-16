@@ -414,8 +414,8 @@ func TestOutLock(t *testing.T) {
 
 	must(t, run.Close())
 
-	held, err := outHeld(reader)
-	if err != nil || held {
+	if !freeSoon(func() (bool, error) { return outHeld(reader) }) {
+		held, err := outHeld(reader)
 		t.Fatalf("check after the run closed out = %v, %v; want free", held, err)
 	}
 
