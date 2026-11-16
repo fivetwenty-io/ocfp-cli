@@ -160,9 +160,23 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 		t.Fatalf("the verb's child, process %d, still holds its lock", childPID)
 	}
 
-	// Signal 0 delivers nothing. It only asks whether the group the run
-	// made still has a member.
-	waitFor(t, func() bool { return errors.Is(unix.Kill(-group, 0), unix.ESRCH) })
+	// Every process in the group the run made has exited. A member that
+	// has exited but is not yet reaped does not count, since its reaper
+	// is the host's and not the run's.
+	var (
+		live    []string
+		liveErr error
+	)
+
+	waitFor(t, func() bool {
+		live, liveErr = liveGroupMembers(group)
+
+		return liveErr == nil && len(live) == 0
+	})
+
+	if liveErr != nil || len(live) > 0 {
+		t.Fatalf("group %d still has live members %v (%v)", group, live, liveErr)
+	}
 
 	spared.echo(t, "still here")
 
