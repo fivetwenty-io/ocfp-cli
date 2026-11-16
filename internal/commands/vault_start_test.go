@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // startTestPaths returns a bloc's paths moved into a temp directory, with key
@@ -257,4 +258,23 @@ func TestSafeLocalLauncher_RunsThroughTheShell(t *testing.T) {
 	out, err := exec.Command("sh", "-c", line).CombinedOutput() // #nosec G204 -- test runs the line it just built against a stub
 	require.NoError(t, err, string(out))
 	assert.Contains(t, string(out), "--raft\n"+paths["vaultDir"]+"\n")
+}
+
+// The waits around the tmux start go through the vault ops sleep, so a test
+// that starts a vault with a fake tmux does not spend seconds asleep.
+func TestStartVaultInTmux_WaitsThroughTheSleepSeam(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := startTestPaths(t, filepath.Join(t.TempDir(), "vault", "data"))
+	paths["logDir"] = filepath.Dir(paths["logFile"])
+
+	bin := t.TempDir()
+	writeFakeExecutable(t, bin, "tmux", `case "$1" in
+  has-session) exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	require.NoError(t, startVaultInTmux(t.Context(), paths, testTools(), safeLocalFresh, zap.NewNop().Sugar()))
+	assert.Equal(t, 3, fake.sleeps, "the stale-session, new-session, and start waits")
 }

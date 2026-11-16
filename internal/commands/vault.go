@@ -1050,7 +1050,7 @@ func startVaultInTmux(
 	ensureTmuxEnv(killCmd)
 	_ = killCmd.Run()
 
-	time.Sleep(tmuxVerifyWait)
+	vaultOps.sleep(tmuxVerifyWait)
 
 	// Create new session
 	err = createTmuxSession(ctx, paths["tmuxSession"], log)
@@ -1058,7 +1058,7 @@ func startVaultInTmux(
 		return err
 	}
 
-	time.Sleep(1 * time.Second)
+	vaultOps.sleep(1 * time.Second)
 
 	// Send command to tmux session
 	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- the launcher path is shell-quoted by safeLocalLauncherLine
@@ -1070,7 +1070,7 @@ func startVaultInTmux(
 	}
 
 	log.Infow("Vault command sent to tmux", "session", paths["tmuxSession"])
-	time.Sleep(VaultInitWait)
+	vaultOps.sleep(VaultInitWait)
 
 	return nil
 }
