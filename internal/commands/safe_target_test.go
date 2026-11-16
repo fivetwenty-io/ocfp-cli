@@ -49,19 +49,18 @@ func TestSafeGetForBloc_FallsBackToInceptionTarget(t *testing.T) {
 	assert.Equal(t, "eu-central-1", strings.TrimSpace(string(out)))
 }
 
-// With no bloc there is nothing to pin to, so the call keeps its historic
-// shape rather than inventing a target name.
-func TestSafeGetForBloc_NoBlocUsesUnpinnedGet(t *testing.T) {
+// Every caller names a bloc, so a read without one has no target to pin
+// to. It refuses rather than reading through the operator's current target.
+func TestSafeGetForBloc_NoBlocRefuses(t *testing.T) {
 	fake := newFakeRunner()
-	fake.outputs["safe get secret/handoff:token"] = []byte("tok\n")
+	fake.outputs["safe get secret/handoff:token"] = []byte("operator-target-value\n")
 
 	restore := installFakeRunner(fake)
 	defer restore()
 
 	out, err := safeGetForBloc(context.Background(), "", "secret/handoff:token")
-	require.NoError(t, err)
-
-	assert.Equal(t, "tok", strings.TrimSpace(string(out)))
+	require.ErrorIs(t, err, ErrBlocFlagOrEnvVarRequired)
+	assert.Empty(t, out)
 }
 
 func TestRetrieveAWSRegionFromVault_UsesBlocTarget(t *testing.T) {

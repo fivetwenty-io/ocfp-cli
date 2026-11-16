@@ -21,11 +21,12 @@ import (
 // the bloc's secrets from `ocfp vault migrate` on, and the inception vault is
 // the pre-migration fallback (a frozen inception target may linger in
 // ~/.saferc after migration and must not win). With no bloc name there is
-// nothing to pin to and the call keeps its historic unpinned form.
+// nothing to pin to, so the read refuses rather than falling back to the
+// operator's current target; every caller resolves the bloc first.
 func safeGetForBloc(ctx context.Context, blocName, path string) ([]byte, error) {
 	targets := vault.BlocSafeTargetNames(blocName)
 	if len(targets) == 0 {
-		return runner.Output(ctx, "safe", "get", path)
+		return nil, ErrBlocFlagOrEnvVarRequired
 	}
 
 	var lastErr error
