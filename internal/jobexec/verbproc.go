@@ -853,7 +853,16 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		return verbEnd{code: exitVerbFailed}, nil
 	}
 
-	if code < 0 {
+	// Only 0 and exitVerbFailed belong to the protocol. A verb process that
+	// exits with any other code, as on a crash, or on a signal, fails the
+	// job, since 2 would read as a refusal and other codes mean nothing to
+	// the stream's reader.
+	if code != 0 && code != exitVerbFailed {
+		err := enc.Encode(progress.KindLog, progress.LogBody{Stream: stderrStream, Line: fmt.Sprintf("job %s: verb %s exited with code %d", jobID, v.name, code)})
+		if err != nil {
+			return verbEnd{}, fmt.Errorf("job %s: %w", jobID, err)
+		}
+
 		return verbEnd{code: exitVerbFailed}, nil
 	}
 

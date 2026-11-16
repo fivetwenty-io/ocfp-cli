@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -351,5 +352,46 @@ func TestTheChildWritesEnvelopes(t *testing.T) {
 
 	if buf.String() != want {
 		t.Fatalf("envelopes =\n%s\nwant\n%s", buf.String(), want)
+	}
+}
+
+// A verb process that exits with a code the protocol does not give, or on a
+// signal, fails the job with exit code 1, since 2 means a refusal and other
+// codes mean nothing to a reader. A stderr log line names the code.
+func TestAnExitCodeOutsideTheProtocolFailsTheJob(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []int{2, 3, 137, -1} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			t.Parallel()
+
+			start, _ := scriptedStart(code, func(p *scriptedProc) { p.exit() })
+
+			root := spoolRoot(t)
+			rc := newRun(t, storeWith(t, liveRecord()), root, signedRequest(t, goodRequest()))
+			rc.opts.start = start
+			rc.opts.ioGrace = 20 * time.Millisecond
+
+			if err := rc.run(t); err == nil {
+				t.Fatal("Run reported success for a verb that exited with an unknown code")
+			}
+
+			recs := records(t, rc.stdout.Bytes())
+
+			want := []progress.Kind{progress.KindHeader, progress.KindLog, progress.KindResult}
+			if got := streamKindsOf(t, recs); !slices.Equal(got, want) {
+				t.Fatalf("record kinds = %v, want %v:\n%s", got, want, rc.stdout)
+			}
+
+			if l := bodyOf[progress.LogBody](t, recs[1]); l.Stream != "stderr" || !strings.Contains(l.Line, "code "+strconv.Itoa(code)) {
+				t.Fatalf("log = %+v, want a stderr line that names code %d", l, code)
+			}
+
+			if r := bodyOf[progress.ResultBody](t, recs[2]); r.ExitCode != 1 {
+				t.Fatalf("result exit code = %d, want 1", r.ExitCode)
+			}
+
+			wantExitShape(t, readFile(t, filepath.Join(root, "job-0001", "exit.json")), 1)
+		})
 	}
 }
