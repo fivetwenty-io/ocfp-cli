@@ -28,6 +28,14 @@ const (
 	// helperModeEnv makes the process one of the plain helpers in
 	// helperModes in place of a verb process.
 	helperModeEnv = "OCFP_JOBEXEC_HELPER_MODE"
+
+	// helperLockFileEnv is the file that the lock helper holds a lock on
+	// for as long as it runs.
+	helperLockFileEnv = "OCFP_JOBEXEC_HELPER_LOCK_FILE"
+
+	// helperReadyFileEnv is the file that the lock helper writes its pid
+	// and its process group id to once it holds its lock.
+	helperReadyFileEnv = "OCFP_JOBEXEC_HELPER_READY_FILE"
 )
 
 // helperSelfTimeout ends a helper that a failed test left behind.
@@ -80,6 +88,7 @@ func helperVerbProcess() int {
 var helperVerbs = map[string]func(context.Context, Job, func() (string, error)) (int, error){
 	"wait": runWaitVerb,
 	"fds":  runFDsVerb,
+	"tree": runTreeVerb,
 }
 
 // runWaitVerb starts its step, registers an undo hook, and waits for a
@@ -118,6 +127,8 @@ func helperProcess(mode string) int {
 		return echoLines()
 	case "tree":
 		return echoTree()
+	case "lock":
+		return holdLock()
 	default:
 		_, _ = os.Stderr.WriteString("no helper mode " + mode + "\n")
 
