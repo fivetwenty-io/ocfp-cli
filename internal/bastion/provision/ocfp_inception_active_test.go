@@ -59,6 +59,8 @@ if [ "$1" = target ] && [ $# -eq 1 ]; then
   current=$(cat "$dir/current")
   if [ -n "$current" ]; then
     printf 'Currently targeting %s at https://vault.example:8200\n' "$current" >&2
+  else
+    printf 'No Vault currently targeted\n' >&2
   fi
   exit 0
 fi
@@ -207,7 +209,7 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 
 // The gate keys off the bloc's own targets rather than safe's current one.
 // A bloc that is still being bootstrapped keeps its inception target until
-// teardown, whichever target an operator or a put-back made current, and a
+// teardown, whichever target an operator or a sibling made current, and a
 // bloc whose own vault has a target is never pointed back at inception.
 func TestInceptionActiveSnippet_KeysOffTheBlocTargets(t *testing.T) {
 	const bloc = "ocfp-lab-example"
@@ -363,32 +365,31 @@ func TestInceptionActiveSnippet_ASafeTargetFailureEndsNothing(t *testing.T) {
 	})
 }
 
-// The restore compares the exact name of safe's current target, so a
-// sibling bloc's target that merely contains the bloc vault's name does not
-// stand in for it, and a target already in place is not set again.
-func TestRestoreBlocVaultTargetSnippet_MatchesTheCurrentTargetExactly(t *testing.T) {
+// Init selects the bloc vault's target only when safe has no current target
+// at all. A target the operator chose stays current, whether it is another
+// bloc's, one whose name merely contains the bloc vault's, or the bloc
+// vault's own.
+func TestRestoreBlocVaultTargetSnippet_SelectsOnlyWhenNothingIsCurrent(t *testing.T) {
 	for name, tc := range map[string]struct {
 		bloc, current string
 		targets       []string
 		wantCalls     []string
 	}{
-		"already current": {
-			bloc: "lab", current: "lab-mgmt", targets: []string{"lab-mgmt"},
-		},
-		"a sibling's target contains the name": {
-			bloc: "lab", current: "biglab-mgmt", targets: []string{"biglab-mgmt", "lab-mgmt"},
-			wantCalls: []string{"lab-mgmt"},
-		},
-		"another target is current": {
-			bloc: "lab", current: "ops", targets: []string{"ops", "lab-mgmt"},
-			wantCalls: []string{"lab-mgmt"},
-		},
-		"no target is current": {
+		"no target is current, so the bloc vault's is selected": {
 			bloc: "lab", targets: []string{"lab-mgmt"},
 			wantCalls: []string{"lab-mgmt"},
 		},
-		"the bloc vault is not up, so nothing is restored": {
-			bloc: "lab", current: "ops", targets: []string{"ops", "lab-inception"},
+		"another target the operator chose stays": {
+			bloc: "lab", current: "ops", targets: []string{"ops", "lab-mgmt"},
+		},
+		"a sibling's target that contains the name stays": {
+			bloc: "lab", current: "biglab-mgmt", targets: []string{"biglab-mgmt", "lab-mgmt"},
+		},
+		"the bloc vault's own target, already current, stays": {
+			bloc: "lab", current: "lab-mgmt", targets: []string{"lab-mgmt"},
+		},
+		"the bloc vault is not up, so nothing is selected": {
+			bloc: "lab", targets: []string{"lab-inception"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -400,14 +401,16 @@ func TestRestoreBlocVaultTargetSnippet_MatchesTheCurrentTargetExactly(t *testing
 
 // The restore snippet is emitted next to the gate today, but it must not
 // rely on anything the gate defined. Run on its own, with only the variables
-// the gate would have set, it still compares the exact current target.
+// the gate would have set, it still selects only when nothing is current.
+// When safe can't say what is current, it leaves the target alone rather
+// than guess, and the script carries on.
 func TestRestoreBlocVaultTargetSnippet_StandsAlone(t *testing.T) {
 	for name, tc := range map[string]struct {
 		current   string
 		wantCalls []string
 	}{
 		"already current":        {current: "lab-mgmt"},
-		"a sibling's is current": {current: "biglab-mgmt", wantCalls: []string{"lab-mgmt"}},
+		"a sibling's is current": {current: "biglab-mgmt"},
 		"none is current":        {wantCalls: []string{"lab-mgmt"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -418,8 +421,16 @@ func TestRestoreBlocVaultTargetSnippet_StandsAlone(t *testing.T) {
 		})
 	}
 
-	t.Run("a failing safe target does not end the script", func(t *testing.T) {
+	t.Run("a failing safe target selects nothing and ends nothing", func(t *testing.T) {
 		run := runGate(t, gateSetup{bloc: "lab", targets: []string{"lab-mgmt"}, targetFails: true, restoreOnly: true})
-		assert.Equal(t, []string{"lab-mgmt"}, run.calls)
+		assert.Empty(t, run.calls)
+	})
+
+	t.Run("SAFE_TARGET does not hide the operator's current target", func(t *testing.T) {
+		run := runGate(t, gateSetup{
+			bloc: "lab", targets: []string{"lab-mgmt", "ops"}, current: "ops", restoreOnly: true,
+			env: []string{"SAFE_TARGET=lab-mgmt"},
+		})
+		assert.Empty(t, run.calls)
 	})
 }

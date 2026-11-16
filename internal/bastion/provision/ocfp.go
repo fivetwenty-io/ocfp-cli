@@ -603,8 +603,8 @@ func (om *OCFPManager) secretsProviderEmbedSnippet() []string {
 // deployments at it breaks every manifest render and deploy after an init.
 //
 // The decision rests on the bloc's own targets, never on safe's current
-// target, which an operator, another bloc, or ocfp's put-back of the earlier
-// target can move at any time. The bloc vault's <bloc>-mgmt target appears
+// target, which belongs to the operator and which anyone can move at any
+// time. The bloc vault's <bloc>-mgmt target appears
 // when that vault is deployed, and it wins. Otherwise the bloc's
 // <bloc>-inception target, which exists from vault inception until
 // teardown, marks a bloc that is still being bootstrapped. Both names are
@@ -622,8 +622,8 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"    # existence is what separates a bloc still being bootstrapped from one",
 		"    # already running. Until then, the bloc's own inception target marks",
 		"    # a bloc in bootstrap. safe's *current* target decides nothing for a",
-		"    # named bloc, because anyone can move it, and ocfp puts back whichever",
-		"    # target was current before it restarted the inception vault.",
+		"    # named bloc, because it belongs to the operator and anyone can move",
+		"    # it; ocfp registers its own targets without selecting them.",
 		"    # safe prints its target reports on stderr, hence the 2>&1 below.",
 		"    # grep reads all of safe's output rather than quitting at the first",
 		"    # match with -q, so safe never dies of SIGPIPE and fails the pipeline",
@@ -672,10 +672,10 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 	}
 }
 
-// currentSafeTargetSnippet defines ocfp_current_safe_target, which both the
-// gate and the restore call. The script emits it once, ahead of the gate,
-// because a second definition makes shellcheck read the gate's call as a
-// call to a function that is only defined later.
+// currentSafeTargetSnippet defines ocfp_current_safe_target, which the gate
+// calls, and ocfp_safe_nothing_current, which the restore calls. The script
+// emits them once, ahead of the gate, because a second definition makes
+// shellcheck read a call as a call to a function that is only defined later.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) currentSafeTargetSnippet() []string {
@@ -691,28 +691,43 @@ func (om *OCFPManager) currentSafeTargetSnippet() []string {
 		"        report=\"$(env -u SAFE_TARGET safe target 2>&1)\" || return 0",
 		"        printf '%s\\n' \"$report\" | sed -n 's/^Currently targeting \\(.*\\) at .*$/\\1/p' | head -n 1 || true",
 		"    }",
+		"    # Succeeds only when safe says plainly that no target is current. Any",
+		"    # doubt, such as safe failing, a stale rc file, or a report it can't",
+		"    # read, counts as a target being current, so the operator's choice is",
+		"    # never overwritten. Callers test it in an if, so its failure never",
+		"    # trips set -e, and it matches with case rather than a pipe, so",
+		"    # pipefail has nothing to see. SAFE_TARGET is dropped, as above.",
+		"    ocfp_safe_nothing_current() {",
+		"        local report",
+		"        report=\"$(env -u SAFE_TARGET safe target 2>&1)\" || return 1",
+		"        case \"$report\" in",
+		"            *'Currently targeting '*) return 1 ;;",
+		"            *'No Vault currently targeted'*) return 0 ;;",
+		"        esac",
+		"        return 1",
+		"    }",
 	}
 }
 
-// restoreBlocVaultTargetSnippet points safe back at the bloc vault once the
-// inception work is done. Init targets safe at the inception vault while it
-// bootstraps, and nothing else moves it back, so an established bloc would be
-// left pointing at a torn-down, empty vault: every later genesis command then
-// reports its secrets as missing. It calls ocfp_current_safe_target, which the
-// script defines ahead of the gate, and it reads BLOC_VAULT_TARGET and
-// INCEPTION_ACTIVE, which the gate sets.
+// restoreBlocVaultTargetSnippet selects the bloc vault's target once the
+// inception work is done, but only when safe has no current target at all,
+// as on a fresh bastion or after the inception target was deleted. Then
+// every later genesis command reads the bloc's secrets from its own vault
+// rather than finding none. A target the operator chose, the bloc vault's
+// own included, is never switched or cleared. It calls
+// ocfp_safe_nothing_current, which the script defines ahead of the gate, and
+// it reads BLOC_VAULT_TARGET and INCEPTION_ACTIVE, which the gate sets.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
 	return []string{
 		"    if [ \"$INCEPTION_ACTIVE\" != yes ] && [ -n \"$BLOC_VAULT_TARGET\" ]; then",
-		"        RESTORE_CURRENT_TARGET=\"$(ocfp_current_safe_target)\"",
-		"        if [ \"$RESTORE_CURRENT_TARGET\" = \"$BLOC_VAULT_TARGET\" ]; then",
-		"            log_info \"safe already targets $BLOC_VAULT_TARGET\"",
+		"        if ! ocfp_safe_nothing_current; then",
+		"            log_info \"safe already has a current target; leaving it as it is\"",
 		"        elif safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
-		"            log_success \"Restored safe target to $BLOC_VAULT_TARGET\"",
+		"            log_success \"No safe target was current; selected $BLOC_VAULT_TARGET\"",
 		"        else",
-		"            log_warning \"Could not restore safe target to $BLOC_VAULT_TARGET\"",
+		"            log_warning \"Could not select safe target $BLOC_VAULT_TARGET\"",
 		"        fi",
 		"    fi",
 		"    ",

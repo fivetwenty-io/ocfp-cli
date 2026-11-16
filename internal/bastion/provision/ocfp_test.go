@@ -567,6 +567,7 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 		"printf 'secrets_provider: (( prune ))\\n'",
 		`genesis secrets-provider "$INCEPTION_TARGET"`,
 		`graft merge "$GENESIS_CONFIG" "$sp_fragment"`,
+		`if ! ocfp_safe_nothing_current; then`,
 		`elif safe target "$BLOC_VAULT_TARGET" >/dev/null 2>&1; then`,
 	} {
 		if !strings.Contains(script, want) {
@@ -593,7 +594,7 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 	}
 }
 
-// The gate and the restore both call ocfp_current_safe_target. Defining it
+// The gate and the restore call helpers the script defines. Defining one
 // twice made shellcheck report the gate's call as a call to a function that
 // is only defined later, so the script defines each helper once, ahead of
 // every call.
@@ -603,7 +604,7 @@ func TestGenerateGenesisSecretsProvidersScript_DefinesEachHelperOnce(t *testing.
 	script := NewOCFPManager("pve", &config.Config{Name: "ocfp-lab-example"}, nil).
 		GenerateGenesisSecretsProvidersScript(context.Background())
 
-	for _, helper := range []string{"ocfp_current_safe_target", "ocfp_safe_has_target"} {
+	for _, helper := range []string{"ocfp_current_safe_target", "ocfp_safe_has_target", "ocfp_safe_nothing_current"} {
 		definition := helper + "() {"
 		assert.Equal(t, 1, strings.Count(script, definition), "definitions of %s", helper)
 
@@ -612,6 +613,10 @@ func TestGenerateGenesisSecretsProvidersScript_DefinesEachHelperOnce(t *testing.
 
 		if firstCall < 0 {
 			firstCall = strings.Index(script, helper+` "$`)
+		}
+
+		if firstCall < 0 {
+			firstCall = strings.Index(script, "! "+helper+";")
 		}
 
 		assert.Greater(t, firstCall, defined, "%s is called before it is defined", helper)
