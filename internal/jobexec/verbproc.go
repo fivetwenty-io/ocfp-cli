@@ -825,7 +825,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		return verbEnd{
 			code:    exitVerbFailed,
 			cancel:  progress.CancelKilled,
-			seenAt:  sv.seenAt,
+			seenAt:  sv.seenUTC(),
 			message: fmt.Sprintf("job %s was cancelled and killed when its cancel budget of %s passed", jobID, v.cancelBudget),
 			undone:  rl.pendingUndo(),
 		}, nil
@@ -835,7 +835,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		return verbEnd{
 			code:    exitVerbFailed,
 			cancel:  progress.CancelStopped,
-			seenAt:  sv.seenAt,
+			seenAt:  sv.seenUTC(),
 			message: fmt.Sprintf("job %s was cancelled and stopped at a safe point", jobID),
 		}, nil
 	}
@@ -866,7 +866,10 @@ type supervisor struct {
 	budget time.Duration
 
 	// seenAt is the clock's reading at the look that first found the
-	// marker, and zero until one does.
+	// marker, and zero until one does. It is kept as the clock gave it,
+	// with any monotonic reading, so that the budget is measured on that
+	// reading and a step of the wall clock cannot move the kill. seenUTC
+	// gives it for the stream and exit.json.
 	seenAt time.Time
 
 	// outcome is how the cancel ended the verb, once the supervisor has
@@ -889,7 +892,7 @@ func (sv *supervisor) watch() {
 		if !sv.seenAt.IsZero() {
 			sv.enforce()
 		} else if sv.spool.cancelled() {
-			sv.seenAt = sv.clock.Now().UTC()
+			sv.seenAt = sv.clock.Now()
 
 			ms := sv.budget.Milliseconds()
 
@@ -923,6 +926,12 @@ func (sv *supervisor) enforce() {
 	// A kill that fails leaves the verb running, and the next look kills
 	// again.
 	_ = sv.proc.kill()
+}
+
+// seenUTC is when the supervisor first saw the marker, in UTC, as the job's
+// stream and exit.json report it.
+func (sv *supervisor) seenUTC() time.Time {
+	return sv.seenAt.UTC()
 }
 
 // pause waits pollInterval through c when it can wait, and on a timer when it

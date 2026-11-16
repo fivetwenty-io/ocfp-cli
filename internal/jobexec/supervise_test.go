@@ -378,3 +378,94 @@ func wantKeysOf(t *testing.T, raw []byte, fixture string) {
 		t.Fatalf("keys = %v, the fixture's %v", g, w)
 	}
 }
+
+// monoClock reads the system's clock once, with its monotonic reading, and
+// moves on from there only when After is called. It keeps every reading it
+// gives out.
+type monoClock struct {
+	mu       sync.Mutex
+	now      time.Time
+	readings []time.Time
+	onWait   func(n int)
+	waits    int
+}
+
+func newMonoClock() *monoClock { return &monoClock{now: time.Now()} }
+
+func (c *monoClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.readings = append(c.readings, c.now)
+
+	return c.now
+}
+
+func (c *monoClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.waits++
+	n, now, hook := c.waits, c.now, c.onWait
+	c.mu.Unlock()
+
+	if hook != nil {
+		hook(n)
+	}
+
+	time.Sleep(fakePace)
+
+	ch := make(chan time.Time, 1)
+	ch <- now
+
+	return ch
+}
+
+// The supervisor measures the budget on the clock's own reading, monotonic
+// part and all, so a step of the wall clock cannot move the kill. Only the
+// time it reports for exit.json is in UTC.
+func TestTheBudgetIsMeasuredOnTheClocksOwnReading(t *testing.T) {
+	t.Parallel()
+
+	s, _, err := CreateSpool(spoolRoot(t), "job-0001")
+	must(t, err)
+
+	_, err = s.WriteCancel(Cancel{RequestedAt: testNow})
+	must(t, err)
+
+	start, p := scriptedStart(0, func(p *scriptedProc) {
+		select {
+		case <-p.exited:
+		case <-time.After(verbWait):
+			p.exit()
+		}
+	})
+
+	proc, err := start(verbStart{})
+	must(t, err)
+
+	clock := newMonoClock()
+	clock.onWait = func(n int) {
+		if n == 2 {
+			p.exit()
+		}
+	}
+
+	if first := clock.now; first == first.Round(0) {
+		t.Fatal("the system clock gave no monotonic reading, so the test shows nothing")
+	}
+
+	sv := &supervisor{clock: clock, spool: s, proc: proc, relay: &relay{enc: progress.NewEncoder(&bytes.Buffer{}, clock)}, budget: time.Second}
+	sv.watch()
+
+	clock.mu.Lock()
+	first := clock.readings[0]
+	clock.mu.Unlock()
+
+	if sv.seenAt != first { //nolint:gocritic // the monotonic reading is what is checked
+		t.Fatalf("the supervisor saw the marker at %v, want the clock's reading %v as it is", sv.seenAt, first)
+	}
+
+	if got := sv.seenUTC(); got.Location() != time.UTC || !got.Equal(first) {
+		t.Fatalf("the reported time = %v, want %v in UTC", got, first)
+	}
+}
