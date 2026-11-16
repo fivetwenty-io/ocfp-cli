@@ -315,6 +315,32 @@ func checkRequest(req Request, unknown []string, format int, now time.Time) erro
 		return invalid(fmt.Sprintf("unsupported job request format %d, want %d", format, RequestFormatV1))
 	}
 
+	return checkAction(req)
+}
+
+// checkAction refuses a request whose action is missing or not one of the
+// two, and a cancel that names a verb, an env, or interactive, so that a
+// cancel's meaning never depends on a field it ignores.
+func checkAction(req Request) error {
+	switch req.Action {
+	case ActionRun:
+		return nil
+	case ActionCancel:
+	case "":
+		return invalid("job request names no action")
+	default:
+		return invalid(fmt.Sprintf("job request action %s is not %q or %q", quote(req.Action), ActionRun, ActionCancel))
+	}
+
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{{"verb", req.Verb != ""}, {"env", len(req.Env) > 0}, {"interactive", req.Interactive}} {
+		if f.set {
+			return invalid("job request to cancel names " + f.name + ", which a cancel does not take")
+		}
+	}
+
 	return nil
 }
 

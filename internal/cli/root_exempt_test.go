@@ -126,6 +126,7 @@ func TestJobCommandsWriteNothingOutsideScratch(t *testing.T) {
 
 	payload, err := json.Marshal(jobexec.Request{
 		WireContract:   progress.WireContract,
+		Action:         jobexec.ActionRun,
 		JobID:          "job-scratch",
 		Verb:           "noop",
 		InstallationID: r.InstallationID,

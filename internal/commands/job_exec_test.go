@@ -108,6 +108,7 @@ func jobRequestWith(t *testing.T, jobID string, key ed25519.PrivateKey, change f
 	r := testOwnerRecord()
 	req := jobexec.Request{
 		WireContract:   progress.WireContract,
+		Action:         jobexec.ActionRun,
 		JobID:          jobID,
 		Verb:           "noop",
 		InstallationID: r.InstallationID,

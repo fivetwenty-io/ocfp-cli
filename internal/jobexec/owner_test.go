@@ -72,6 +72,7 @@ func sealRecord(t testing.TB, r ownerrecord.Record) ownerrecord.Signed {
 func goodRequest() Request {
 	return Request{
 		WireContract:   progress.WireContract,
+		Action:         ActionRun,
 		JobID:          "job-0001",
 		Verb:           "noop",
 		InstallationID: "inst-fixture-01",
@@ -237,6 +238,7 @@ func faults() []fault {
 		}},
 		{"bad job id", progress.CodeJobRequestInvalid, "job id", func(s *scenario) { s.request.JobID = "../x" }},
 		{"unknown format", progress.CodeJobRequestInvalid, "format", func(s *scenario) { s.format = 2 }},
+		{"no action", progress.CodeJobRequestInvalid, "names no action", func(s *scenario) { s.request.Action = "" }},
 	}
 }
 
@@ -1403,5 +1405,126 @@ func TestCheckOwnerRefusesAContractTwoRequest(t *testing.T) {
 		t.Error("a refusal returned a release")
 	}
 
+	wantUnlocked(t, st)
+}
+
+// checkPayload signs payload with the owner's key and runs the owner check on
+// it against a live record.
+func checkPayload(t *testing.T, payload []byte) (Request, error) {
+	t.Helper()
+
+	st := storeWith(t, liveRecord())
+
+	req, release, err := checkOwner(t.Context(), signPayload(payload, ownerKey()), st, fixedClock{testNow})
+	if err == nil {
+		_ = release()
+	}
+
+	return req, err
+}
+
+func TestCheckOwnerRequiresAnAction(t *testing.T) {
+	t.Parallel()
+
+	req := goodRequest()
+	req.Action = ""
+
+	_, err := checkPayload(t, mustMarshal(t, req))
+
+	r := wantRefusal(t, err, progress.CodeJobRequestInvalid)
+	if !strings.Contains(r.Message, "names no action") {
+		t.Errorf("message %q does not say that the action is missing", r.Message)
+	}
+}
+
+func TestCheckOwnerRefusesAnUnknownAction(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"Run", "stop", "run ", "cancel\n"} {
+		req := goodRequest()
+		req.Action = action
+
+		_, err := checkPayload(t, mustMarshal(t, req))
+
+		r := wantRefusal(t, err, progress.CodeJobRequestInvalid)
+		if !strings.Contains(r.Message, "action") {
+			t.Errorf("action %q: message %q does not name the action", action, r.Message)
+		}
+	}
+}
+
+func TestCheckOwnerAcceptsRunAndCancel(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{ActionRun, ActionCancel} {
+		req := goodRequest()
+		req.Action = action
+
+		if action == ActionCancel {
+			req.Verb, req.Env, req.Interactive = "", nil, false
+		}
+
+		got, err := checkPayload(t, mustMarshal(t, req))
+		if err != nil {
+			t.Fatalf("action %q: %v", action, err)
+		}
+
+		if got.Action != action {
+			t.Errorf("action = %q, want %q", got.Action, action)
+		}
+	}
+}
+
+func TestCheckOwnerRefusesACancelThatNamesAVerb(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		apply func(*Request)
+	}{
+		{"verb", func(r *Request) { r.Verb = "noop" }},
+		{"env", func(r *Request) { r.Env = map[string]string{"LANG": "C"} }},
+		{"interactive", func(r *Request) { r.Interactive = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := goodRequest()
+			req.Action, req.Verb, req.Env = ActionCancel, "", nil
+			tc.apply(&req)
+
+			_, err := checkPayload(t, mustMarshal(t, req))
+
+			r := wantRefusal(t, err, progress.CodeJobRequestInvalid)
+			if !strings.Contains(r.Message, "cancel") || !strings.Contains(r.Message, tc.name) {
+				t.Errorf("message %q does not say that a cancel names %s", r.Message, tc.name)
+			}
+		})
+	}
+}
+
+// TestTheActionIsSigned checks that a request signed to run cannot be
+// replayed as a cancel, nor a cancel as a run, because the action sits inside
+// the signed payload.
+func TestTheActionIsSigned(t *testing.T) {
+	t.Parallel()
+
+	run := mustMarshal(t, goodRequest())
+	cancel := replaceOnce(t, run, `"action":"run"`, `"action":"cancel"`)
+
+	sr := signPayload(run, ownerKey())
+	sr.Payload = cancel
+
+	st := storeWith(t, liveRecord())
+
+	_, _, err := checkOwner(t.Context(), sr, st, fixedClock{testNow})
+	wantRefusal(t, err, progress.CodeRequestUnsigned)
+	wantUnlocked(t, st)
+
+	sr = signPayload(cancel, ownerKey())
+	sr.Payload = run
+
+	_, _, err = checkOwner(t.Context(), sr, st, fixedClock{testNow})
+	wantRefusal(t, err, progress.CodeRequestUnsigned)
 	wantUnlocked(t, st)
 }

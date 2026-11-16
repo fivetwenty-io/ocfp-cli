@@ -22,15 +22,29 @@ const RequestFormatV1 = 1
 // owner record can never pass as a signed job request, nor the other way round.
 const RequestSigningContext = "ocfp-job-request-v1\n"
 
+// The actions a job request can ask for.
+const (
+	// ActionRun runs the job named by the request's verb.
+	ActionRun = "run"
+
+	// ActionCancel asks a running job to stop.
+	ActionCancel = "cancel"
+)
+
 // Request is the payload of a job request.
 type Request struct {
 	// WireContract is the version of the progress stream the requester reads.
 	WireContract int `json:"wireContract"`
 
+	// Action is ActionRun or ActionCancel. It sits inside the signed payload,
+	// so a signed run can never be replayed as a cancel, nor a cancel as a
+	// run. A cancel names no verb, env, or interactive.
+	Action string `json:"action"`
+
 	// JobID names the job and its spool directory.
 	JobID string `json:"jobId"`
 
-	// Verb names what the job does.
+	// Verb names what the job does. A cancel leaves it empty.
 	Verb string `json:"verb"`
 
 	// InstallationID, InstanceID, and Epoch name the requester. They must
