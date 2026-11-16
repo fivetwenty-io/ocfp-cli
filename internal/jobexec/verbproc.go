@@ -49,6 +49,11 @@ const (
 // maxControlLine bounds one control line.
 const maxControlLine = 64 << 10
 
+// recordOverhead bounds what the wrapper adds around a record's body when it
+// stamps it: the kind, a sequence number of up to 20 digits, a UTC time of
+// up to 30 characters, and the JSON around them come to under 100 bytes.
+const recordOverhead = 128
+
 // The types of envelope a verb writes.
 const (
 	envelopeRecord  = "record"
@@ -579,7 +584,20 @@ func (rl *relay) record(kind progress.Kind, body json.RawMessage) error {
 		return refusedEnvelope("a %s record that does not decode: %s", kind, quote(err.Error()))
 	}
 
-	return rl.forward(kind, v)
+	// The body is measured as the wrapper writes it, which can be longer
+	// than the verb wrote it, since it escapes what the verb need not. A
+	// record longer than a follower takes would leave the whole stream
+	// unreadable, so it is refused here.
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return refusedEnvelope("a %s record that does not encode: %s", kind, quote(err.Error()))
+	}
+
+	if len(raw)+recordOverhead > maxRecordLine {
+		return refusedEnvelope("a %s record longer than %d bytes once stamped", kind, maxRecordLine)
+	}
+
+	return rl.forward(kind, json.RawMessage(raw))
 }
 
 // undoState records the state an undo envelope reports. A hook reported done

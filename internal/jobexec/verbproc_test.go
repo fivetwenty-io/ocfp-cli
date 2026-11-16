@@ -1,6 +1,7 @@
 package jobexec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -438,5 +439,53 @@ func TestTheChildReportsAFailedHook(t *testing.T) {
 	want := []string{"remote-task task-1 registered", "lease lease-7 registered", "lease lease-7 failed", "remote-task task-1 done"}
 	if !slices.Equal(states, want) {
 		t.Fatalf("undo envelopes = %q, want %q", states, want)
+	}
+}
+
+// A record envelope that fits in a line, but whose record would not once
+// the wrapper stamps it, is refused, since a follower refuses a line longer
+// than that and would take the whole stream as damaged. The body's JSON is
+// measured as the wrapper writes it, which escapes what the verb need not.
+func TestARecordTooLongOnceStampedIsRefused(t *testing.T) {
+	t.Parallel()
+
+	envelopeOf := func(line string) []byte {
+		return []byte(`{"type":"record","kind":"log","body":{"stream":"stdout","line":"` + line + `"}}`)
+	}
+
+	for name, line := range map[string]string{
+		"just within the envelope's bound": strings.Repeat("x", maxRecordLine-80),
+		"escaped once stamped":             strings.Repeat("<", maxRecordLine/4),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			env := envelopeOf(line)
+			if len(env) > maxRecordLine {
+				t.Fatalf("the envelope is %d bytes, past the bound, so the test shows nothing", len(env))
+			}
+
+			rl := &relay{enc: progress.NewEncoder(io.Discard, newFakeClock())}
+
+			var ref *refusedEnvelopeError
+			if err := rl.envelope(env); !errors.As(err, &ref) {
+				t.Fatalf("envelope = %v, want a refusal", err)
+			}
+		})
+	}
+
+	// One that fits once stamped is written, and its line is within the
+	// bound.
+	var buf bytes.Buffer
+
+	enc := progress.NewEncoder(&buf, newFakeClock())
+	must(t, enc.Header(progress.Header{Producer: producer}))
+	buf.Reset()
+
+	rl := &relay{enc: enc}
+	must(t, rl.envelope(envelopeOf(strings.Repeat("x", maxRecordLine-recordOverhead-64))))
+
+	if n := len(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))); n > maxRecordLine || n == 0 {
+		t.Fatalf("the record is %d bytes, want at most %d", n, maxRecordLine)
 	}
 }
