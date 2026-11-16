@@ -8,16 +8,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 	"github.com/fivetwenty-io/ocfp-cli/internal/strictjson"
+	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
 // A verb runs apart from the wrapper that owns its job's stream. The wrapper
-// starts it, and reads envelope lines from its stdout. Each envelope carries
+// starts it, writes control lines to its stdin, and reads envelope lines from
+// its stdout. The first control line is the start line, which names the
+// protocol, the wrapper's version, the job, the verb, and its cancel budget.
+// The verb reads it before it does anything else and refuses a start line of
+// another protocol or version. A later cancel line carries what is left of
+// the cancel budget. The end of stdin means that the wrapper has gone, and
+// the verb takes it as a cancel with the whole budget left. Each envelope carries
 // one record for the stream, a change to an undo hook, or the mark that the
 // verb stopped after a cancel. The wrapper checks every envelope, and numbers
 // and stamps the records it takes with its own encoder, so the verb never
@@ -25,6 +35,18 @@ import (
 // the wrapper alone. The verb's stderr reaches the stream as log records on
 // the stderr stream, one per line. This protocol is internal to one binary
 // and is not part of the wire contract.
+
+// verbProtocol is the version of the protocol between a wrapper and its verb.
+const verbProtocol = 1
+
+// The types of control line the wrapper writes.
+const (
+	controlStart  = "start"
+	controlCancel = "cancel"
+)
+
+// maxControlLine bounds one control line.
+const maxControlLine = 64 << 10
 
 // The types of envelope a verb writes.
 const (
@@ -51,6 +73,17 @@ const defaultIOGrace = 5 * time.Second
 
 // stderrStream is the stream a log record of the verb's stderr names.
 const stderrStream = "stderr"
+
+// control is one line that the wrapper writes on a verb's stdin.
+type control struct {
+	Type           string `json:"type"`
+	Protocol       int    `json:"protocol,omitempty"`
+	Version        string `json:"version,omitempty"`
+	JobID          string `json:"jobId,omitempty"`
+	Verb           string `json:"verb,omitempty"`
+	CancelBudgetMs int64  `json:"cancelBudgetMs,omitempty"`
+	RemainingMs    *int64 `json:"remainingMs,omitempty"`
+}
 
 // envelope is one line that a verb writes on its stdout.
 type envelope struct {
@@ -106,10 +139,12 @@ func startInProcess(s verbStart) (*verbProc, error) {
 
 	var code int
 
+	cfg := verbConfig{version: version.Get().Version, verbs: map[string]verb{s.verb.name: s.verb}, hostname: s.hostname}
+
 	go func() {
 		defer close(exited)
 
-		code = runVerbChild(context.Background(), s.verb, s.hostname, newJobRuntime(&envelopeWriter{w: outW}), errW)
+		code = serveVerb(context.Background(), cfg, inR, outW, errW)
 
 		_ = outW.Close()
 		_ = errW.Close()
@@ -138,6 +173,169 @@ func startInProcess(s verbStart) (*verbProc, error) {
 	}, nil
 }
 
+// ServeVerb is the whole of the process that runs one verb for the wrapper of
+// its job, `ocfp job verb`. It reads the start line from stdin, runs the verb
+// that the start line names, writes its envelopes to stdout, and returns the
+// exit code the process exits with: the verb's own, or 1 when the start line
+// is refused, the verb fails with an error, or it stops after a cancel.
+func ServeVerb(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) int {
+	return serveVerbProcess(ctx, verbProcessConfig(), stdin, stdout, stderr)
+}
+
+// verbConfig is what the side of the protocol that runs a verb needs.
+type verbConfig struct {
+	// version is the version a start line must name.
+	version string
+
+	// verbs is the table that a start line's verb is looked up in.
+	verbs map[string]verb
+
+	// hostname is the host name function the verb gets.
+	hostname func() (string, error)
+}
+
+// verbProcessConfig is the configuration of a verb process.
+func verbProcessConfig() verbConfig {
+	return verbConfig{version: version.Get().Version, verbs: verbs, hostname: os.Hostname}
+}
+
+// serveVerbProcess is serveVerb for a process of its own. A wrapper that goes
+// away closes the pipe the verb writes to, and the verb must then get an
+// error from its next write and go on to its next safe point, rather than be
+// killed by SIGPIPE. A lost terminal must not kill it either. The runtime
+// does not keep a SIGPIPE that the wrapper ignored, so the process ignores
+// both signals itself.
+func serveVerbProcess(ctx context.Context, cfg verbConfig, stdin io.Reader, stdout, stderr io.Writer) int {
+	signal.Ignore(syscall.SIGPIPE, syscall.SIGHUP)
+
+	return serveVerb(ctx, cfg, stdin, stdout, stderr)
+}
+
+// serveVerb reads the start line from stdin, runs its verb from cfg with
+// envelopes written to stdout, and returns the exit code. While the verb
+// runs, a cancel line, a control line that cannot be read, or the end of
+// stdin tells the verb to stop at its next safe point.
+func serveVerb(ctx context.Context, cfg verbConfig, stdin io.Reader, stdout, stderr io.Writer) int {
+	br := bufio.NewReaderSize(stdin, readChunk)
+
+	v, budget, err := readStart(br, cfg)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "job verb: %v\n", err)
+
+		return exitVerbFailed
+	}
+
+	rt := newJobRuntime(&envelopeWriter{w: stdout})
+
+	go watchControl(br, rt, budget)
+
+	return runVerbChild(ctx, v, cfg.hostname, rt, stderr)
+}
+
+// readStart reads and checks the start line, and returns the verb it names
+// and its cancel budget.
+func readStart(br *bufio.Reader, cfg verbConfig) (verb, time.Duration, error) {
+	line, err := readControl(br)
+	if err != nil {
+		return verb{}, 0, fmt.Errorf("read the start line: %w", err)
+	}
+
+	var c control
+
+	err = strictjson.Decode(line, &c)
+
+	switch {
+	case err != nil:
+		return verb{}, 0, fmt.Errorf("the start line does not decode: %s", quote(err.Error()))
+	case c.Type != controlStart:
+		return verb{}, 0, fmt.Errorf("the first control line is of type %s, not a start line", quote(c.Type))
+	case c.Protocol != verbProtocol:
+		return verb{}, 0, fmt.Errorf("the wrapper speaks protocol %d and this binary protocol %d", c.Protocol, verbProtocol)
+	case c.Version != cfg.version:
+		return verb{}, 0, fmt.Errorf("the wrapper is version %s and this binary is version %s", quote(c.Version), quote(cfg.version))
+	case c.CancelBudgetMs <= 0:
+		return verb{}, 0, errors.New("the start line names no cancel budget")
+	case c.RemainingMs != nil:
+		return verb{}, 0, errors.New("the start line names a remaining budget")
+	}
+
+	v, ok := cfg.verbs[c.Verb]
+	if !ok {
+		return verb{}, 0, fmt.Errorf("this binary has no verb %s", quote(c.Verb))
+	}
+
+	return v, time.Duration(c.CancelBudgetMs) * time.Millisecond, nil
+}
+
+// watchControl reads control lines after the start line and passes a cancel
+// on to rt. A cancel line carries what is left of the budget. A line that
+// cannot be read, and the end of br, which means the wrapper has gone, are a
+// cancel with the whole budget left, because a verb that cannot hear its
+// wrapper is safest stopped.
+func watchControl(br *bufio.Reader, rt *jobRuntime, budget time.Duration) {
+	for {
+		line, err := readControl(br)
+		if err != nil {
+			rt.cancelWithin(budget)
+
+			return
+		}
+
+		var c control
+
+		err = strictjson.Decode(line, &c)
+		if err != nil || c.Type != controlCancel || c.RemainingMs == nil {
+			rt.cancelWithin(budget)
+
+			continue
+		}
+
+		rt.cancelWithin(max(time.Duration(*c.RemainingMs)*time.Millisecond, 0))
+	}
+}
+
+// readControl reads one control line, without its newline.
+func readControl(br *bufio.Reader) ([]byte, error) {
+	var line []byte
+
+	for {
+		chunk, err := br.ReadSlice('\n')
+		line = append(line, chunk...)
+
+		if len(line) > maxControlLine+1 {
+			return nil, fmt.Errorf("a control line is longer than %d bytes", maxControlLine)
+		}
+
+		switch {
+		case err == nil:
+			return line[:len(line)-1], nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF) && len(line) == 0:
+			return nil, errors.New("stdin ended")
+		case errors.Is(err, io.EOF):
+			return nil, errors.New("stdin ended part way through a control line")
+		default:
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+	}
+}
+
+// writeControl writes one control line.
+func writeControl(w io.Writer, c control) error {
+	line, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("encode %s line: %w", c.Type, err)
+	}
+
+	_, err = w.Write(append(line, '\n'))
+	if err != nil {
+		return fmt.Errorf("write %s line: %w", c.Type, err)
+	}
+
+	return nil
+}
+
 // runVerbChild runs v against rt, on the side of the protocol that runs the
 // verb, and returns the exit code that side exits with. A verb that stops at
 // a safe point after a cancel has its undo hooks run, and the stopped mark
@@ -148,7 +346,7 @@ func runVerbChild(ctx context.Context, v verb, hostname func() (string, error), 
 
 	switch {
 	case errors.Is(err, ErrCancelled):
-		uerr := rt.runUndo(ctx, v.cancelBudget)
+		uerr := rt.runUndo(ctx, rt.budgetLeft(v.cancelBudget))
 		if uerr != nil {
 			_, _ = fmt.Fprintf(stderr, "job verb %s: %v\n", v.name, uerr)
 		}
@@ -521,6 +719,17 @@ func runVerb(o Options, enc *progress.Encoder, jobID string, v verb) (int, error
 
 	wg.Go(func() { rl.envelopes(proc.stdout) })
 	wg.Go(func() { rl.stderrLines(proc.stderr) })
+
+	// A verb that cannot take the start line has already exited, and says
+	// why on its stderr, so a failed write needs nothing more.
+	_ = writeControl(proc.stdin, control{
+		Type:           controlStart,
+		Protocol:       verbProtocol,
+		Version:        version.Get().Version,
+		JobID:          jobID,
+		Verb:           v.name,
+		CancelBudgetMs: v.cancelBudget.Milliseconds(),
+	})
 
 	<-proc.exited
 

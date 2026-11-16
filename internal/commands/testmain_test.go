@@ -9,6 +9,13 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Job exec runs each verb in a process of its own, from this binary,
+	// as job verb. That run inherits the environment of the job exec that
+	// started it, so it is checked for first.
+	if isJobVerb(os.Args[1:]) {
+		os.Exit(runJobVerbHelper())
+	}
+
 	// A test that needs job exec in a process of its own runs this binary
 	// again with jobExecHelperEnv set, and that run is job exec alone.
 	if os.Getenv(jobExecHelperEnv) == "1" {

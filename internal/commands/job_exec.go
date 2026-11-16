@@ -34,8 +34,37 @@ runs anything.`,
 	}
 
 	cmd.AddCommand(newJobExecCmd(newStore, ownerDefault))
+	cmd.AddCommand(newJobVerbCmd())
 
 	return cmd
+}
+
+// newJobVerbCmd creates the command that job exec starts, from the binary it
+// is, to run each verb in a process of its own. It is hidden because only job
+// exec runs it.
+func newJobVerbCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "verb",
+		Short: "Run one verb for the job exec that started it",
+		Long: `Run one verb for the job exec that started this process.
+
+Job exec writes a start line on stdin that names the verb, and then reads
+the verb's records from stdout. A start line from a job exec of another
+version is refused before the verb runs. The end of stdin tells the verb to
+stop at its next safe point and undo what it has done.`,
+		Args:          cobra.NoArgs,
+		Hidden:        true,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			code := jobexec.ServeVerb(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if code == 0 {
+				return nil
+			}
+
+			return &ExitError{Code: code}
+		},
+	}
 }
 
 func newJobExecCmd(newStore ownerStoreFunc, ownerDefault string) *cobra.Command {

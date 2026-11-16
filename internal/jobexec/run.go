@@ -61,7 +61,9 @@ type Options struct {
 	// through it between two looks at the spool. Nil means the wall clock.
 	Clock progress.Clock
 
-	// Hostname returns the host's name. Nil means os.Hostname.
+	// Hostname returns the host's name to a verb that runs in this process.
+	// A verb in a process of its own uses os.Hostname. Nil means
+	// os.Hostname.
 	Hostname func() (string, error)
 
 	// held reports whether the run that made a spool still holds its lock
@@ -69,7 +71,7 @@ type Options struct {
 	held func(out *os.File) (bool, error)
 
 	// start starts the verb of a job that this run made. Nil means
-	// startInProcess.
+	// reexec, which starts it in a process of its own.
 	start func(verbStart) (*verbProc, error)
 
 	// ioGrace bounds how long the run waits for a verb's output to end once
@@ -157,7 +159,7 @@ func (o Options) withDefaults() (Options, error) {
 	}
 
 	if o.start == nil {
-		o.start = startInProcess
+		o.start = reexec{}.start
 	}
 
 	if o.ioGrace == 0 {

@@ -105,6 +105,7 @@ func newRun(t *testing.T, store ownerrecord.Store, root string, sr SignedRequest
 		Stdout:    rc.stdout,
 		Clock:     rc.clock,
 		Hostname:  rc.host.hostname,
+		start:     startInProcess,
 		held: func(*os.File) (bool, error) {
 			t.Error("the lock on out was checked by the run that made its spool")
 			return false, nil

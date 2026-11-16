@@ -76,6 +76,11 @@ type jobRuntime struct {
 	hooks   []undoHook
 	nextID  int
 	undoRan bool
+
+	// cancelAt is when the cancel arrived, and remaining how much of the
+	// cancel budget was left then.
+	cancelAt  time.Time
+	remaining time.Duration
 }
 
 // newJobRuntime returns a jobRuntime that writes records with enc.
@@ -83,10 +88,38 @@ func newJobRuntime(enc recordEncoder) *jobRuntime {
 	return &jobRuntime{enc: enc, done: make(chan struct{})}
 }
 
-// cancel tells the verb to stop at its next safe point. It is safe to call
-// more than once and from any goroutine.
+// cancel tells the verb to stop at its next safe point, with nothing of the
+// cancel budget left. It is safe to call more than once and from any
+// goroutine.
 func (r *jobRuntime) cancel() {
-	r.cancelOnce.Do(func() { close(r.done) })
+	r.cancelWithin(0)
+}
+
+// cancelWithin tells the verb to stop at its next safe point, with remaining
+// left of the cancel budget from now. Only the first call counts, and it is
+// safe to call from any goroutine.
+func (r *jobRuntime) cancelWithin(remaining time.Duration) {
+	r.cancelOnce.Do(func() {
+		r.mu.Lock()
+		r.cancelAt = time.Now()
+		r.remaining = remaining
+		r.mu.Unlock()
+
+		close(r.done)
+	})
+}
+
+// budgetLeft is how much of the cancel budget is left now. A verb that stops
+// although no cancel arrived has the whole of budget.
+func (r *jobRuntime) budgetLeft(budget time.Duration) time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.cancelAt.IsZero() {
+		return budget
+	}
+
+	return max(r.remaining-time.Since(r.cancelAt), 0)
 }
 
 // Checkpoint implements Job.
