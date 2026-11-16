@@ -22,7 +22,8 @@
 # Variables:
 #
 #   SAFE_REPO   the safe repository to build safe from (default ../safe)
-#   SAFE_BIN    a prebuilt safe v1.25.0 or later, used instead of building
+#   SAFE_BIN    a prebuilt safe v1.25.0 or later with --keep-current, used
+#               instead of building
 #   OLD_REF     the ocfp release that creates file vaults (default v0.3.7)
 #   BAO26       the OpenBao 2.6.4 binary, used read-only
 #               (default ~/.local/share/ocfp/bin/openbao-2.6.4/bao)
@@ -595,7 +596,7 @@ current_target() {
 }
 
 # F2 makes a scratch target current, restarts the bloc's stopped vault, and
-# checks that the scratch target is current again afterwards.
+# checks that the scratch target is still current afterwards.
 case_f2() {
   local port
   port=$(api_port smoke-j)
@@ -633,7 +634,7 @@ run_case "D2 refuse a wrong token, then replace by hand" case_d2
 run_case "D3 refuse a taken cluster port" case_d3
 run_case "D4 refuse an old safe" case_d4
 run_case "F1 migrate-storage dry run changes nothing" case_f1
-run_case "F2 restart puts back the current target" case_f2
+run_case "F2 restart leaves the current target alone" case_f2
 run_case "E teardown and read-only proof" case_e
 
 printf '\n=== Results ===%s\n' "$RESULTS"

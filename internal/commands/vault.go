@@ -390,8 +390,8 @@ the legacy layout.
 Each run leaves the bloc with a running raft vault, and it changes as little
 as it can on the way:
 
-  - A healthy vault is left running, and its safe target is restored if it
-    went missing.
+  - A healthy vault is left running, and its safe target is registered
+    again if it went missing.
   - A stopped vault is restarted in place with its saved keys, so its secrets
     survive a reboot or a killed tmux session.
   - A file-backed vault from an older ocfp is stopped and migrated to raft
@@ -408,11 +408,10 @@ as it can on the way:
     refuses, so the key can be restored and the command run again.
   - To replace either kind of vault with a new, empty one, run
     'ocfp vault teardown' and then 'ocfp vault inception'.
-  - Bringing back the bloc's existing vault makes the bloc's safe target
-    current, so the command then puts back whichever target was current
-    before, unless none was. A new vault that the run creates stays the
-    current target. When the earlier target cannot be put back, the
-    command only warns.
+  - The command never selects, clears, or deletes safe's current target.
+    It registers the bloc's target with --keep-current and names that
+    target with -T on every call that reaches the vault. It refuses before
+    it changes anything when safe has no --keep-current.
   - Only key files left with no data are renamed aside, to
     vault.superseded-{timestamp}, before a new vault starts. No new vault
     starts while a store a migration kept or moved aside still sits beside
@@ -622,6 +621,11 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 	}
 
 	err = checkSafeCompatibility(ctx, safePath)
+	if err != nil {
+		return inceptionTools{}, err
+	}
+
+	err = checkSafeKeepCurrent(ctx, safePath)
 	if err != nil {
 		return inceptionTools{}, err
 	}
@@ -936,6 +940,7 @@ func buildSafeLocalCommand(paths map[string]string, tools inceptionTools, mode s
 		"--port", paths["port"],
 		"--cluster-port", paths["clusterPort"],
 		"--engine", tools.engine.name,
+		safeKeepCurrentOption,
 	}
 
 	stdin := "/dev/null"
@@ -1077,7 +1082,7 @@ func startVaultInTmux(
 
 // safeNonFatalWarnings match the "!! " lines safe prints when it cannot save
 // the root token in ~/.saferc. The vault keeps running after them and safe
-// still goes on to print "Now targeting", so they must not end the wait.
+// still goes on to print its ready line, so they must not end the wait.
 //
 //nolint:gochecknoglobals // fixed list, read-only
 var safeNonFatalWarnings = []*regexp.Regexp{
@@ -1172,8 +1177,17 @@ func redactVaultOutput(s string) string {
 	return strings.Join(lines, "\n")
 }
 
+// safeLocalRegisteredMarker starts the line `safe local --keep-current`
+// prints once the vault is ready and its target is registered, and
+// safeLocalReadyMarker starts the line a safe local that selects its target
+// prints at the same point. Either one means the vault is ready.
+const (
+	safeLocalRegisteredMarker = "Registered the temporary target"
+	safeLocalReadyMarker      = "Now targeting"
+)
+
 // classifyVaultStartup reads safe's output so far. It reports ready once safe
-// prints "Now targeting", ErrVaultKeysRejected when the saved keys were
+// prints its ready line, ErrVaultKeysRejected when the saved keys were
 // refused, and ErrVaultStartupError for any other failure.
 //
 // The difference matters to the caller. A key failure means the keys on disk
@@ -1181,7 +1195,7 @@ func redactVaultOutput(s string) string {
 // request that timed out, says nothing about the keys or the data and must
 // never lead to archiving.
 func classifyVaultStartup(output string) (bool, error) {
-	if strings.Contains(output, "Now targeting") {
+	if strings.Contains(output, safeLocalReadyMarker) || strings.Contains(output, safeLocalRegisteredMarker) {
 		return true, nil
 	}
 
@@ -1236,7 +1250,7 @@ func vaultStartupOutput(ctx context.Context, paths map[string]string) string {
 // waitForVaultReady waits for safe to report the vault ready, and stops early
 // when safe reports a failure.
 //
-// Only "Now targeting" counts as ready. An engine can answer on its port, and
+// Only safe's ready line counts as ready. An engine can answer on its port, and
 // even be unsealed, before safe has finished setting it up, so a status check
 // that something answers is not enough.
 func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
@@ -1294,7 +1308,7 @@ func targetInceptionVault(ctx context.Context, safePath string, paths map[string
 
 	vaultURL := "http://127.0.0.1:" + paths["port"]
 
-	cmd := exec.CommandContext(ctx, safePath, "target", paths["vaultName"], vaultURL) // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
+	cmd := exec.CommandContext(ctx, safePath, "target", paths["vaultName"], vaultURL, safeKeepCurrentOption) // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
 
 	err := cmd.Run()
 	if err != nil {
@@ -1579,9 +1593,8 @@ vault, never starts a new one, and never migrates one.
     refuses, and leaves the data and keys where they were.
   - Right before each stop, the command probes the API port again, and it
     stops nothing when the vault there is not this bloc's own.
-  - A restart makes the bloc's safe target current, so the command then
-    puts back whichever target was current before, unless none was. When
-    it cannot, it only warns, because the vault is up.
+  - A restart registers the bloc's safe target with --keep-current, so
+    safe's current target stays as it was.
 
 Every refusal names what is wrong. 'ocfp vault inception' is the command
 that decides what to do with a vault that cannot simply be reopened, and an

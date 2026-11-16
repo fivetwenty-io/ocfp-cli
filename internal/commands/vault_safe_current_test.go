@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -307,15 +306,4 @@ func TestVaultStart_NoEarlierTargetSaysTheBlocTargetIsCurrent(t *testing.T) {
 	require.Len(t, notes, 1)
 	assert.Equal(t, zapcore.InfoLevel, notes[0].Level)
 	assert.Contains(t, notes[0].Message, paths["vaultName"])
-}
-
-// Both commands that put the earlier target back say so in their help.
-func TestVaultHelp_DescribesPuttingBackTheCurrentTarget(t *testing.T) {
-	for name, cmd := range map[string]string{
-		"inception": newVaultInceptionCmd().Long,
-		"start":     newVaultStartCmd().Long,
-	} {
-		long := strings.Join(strings.Fields(cmd), " ")
-		assert.Contains(t, long, "puts back whichever target was current before", name)
-	}
 }

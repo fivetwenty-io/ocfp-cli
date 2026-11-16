@@ -30,6 +30,21 @@ var safeLocalRequiredOptions = []string{"--cluster-port", "--root-token-file"}
 // ErrSafeTooOld reports a safe that cannot run a raft-backed inception vault.
 var ErrSafeTooOld = errors.New("safe is too old for raft-backed inception vaults")
 
+// ErrSafeLacksKeepCurrent reports a safe that cannot register a target
+// without making it the current one.
+var ErrSafeLacksKeepCurrent = errors.New("safe cannot register a target without selecting it")
+
+// safeKeepCurrentOption is the option that registers a target, with
+// `safe target <name> <url>` or `safe local`, and leaves the operator's
+// current target as it was.
+const safeKeepCurrentOption = "--keep-current"
+
+// safeKeepCurrentCommands are the safe commands ocfp registers a target
+// with, each of which must offer safeKeepCurrentOption.
+//
+//nolint:gochecknoglobals // fixed list, read-only
+var safeKeepCurrentCommands = []string{"target", "local"}
+
 // safeVersionPattern matches the first line `safe --version` prints for a
 // release build, such as "safe v1.24.0" or "safe v1.25.0-rc.1".
 var safeVersionPattern = regexp.MustCompile(`^safe v(\d+)\.(\d+)\.(\d+)(\S*)`)
@@ -135,6 +150,31 @@ func safeHelpOffersRequiredOptions(ctx context.Context, safePath string) bool {
 	}
 
 	return true
+}
+
+// checkSafeKeepCurrent refuses a safe whose `target` and `local` commands
+// do not both offer --keep-current.
+//
+// The current target in ~/.saferc belongs to the operator, and other tools
+// on the machine act on it. ocfp names its own target on every call that
+// reaches a vault, so it never needs the current one, and it registers the
+// bloc's target with --keep-current so the operator's choice stays as it
+// was. A safe without the option would select the bloc's target instead, so
+// the check runs before anything that could change a target. Support is read
+// from safe's help, not from its version, so a development build passes when
+// it has the option.
+func checkSafeKeepCurrent(ctx context.Context, safePath string) error {
+	for _, command := range safeKeepCurrentCommands {
+		out, _ := exec.CommandContext(ctx, safePath, "help", command).CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
+		if !strings.Contains(string(out), safeKeepCurrentOption) {
+			return fmt.Errorf("%w: `safe help %s` does not offer %s, which ocfp needs so that it never changes "+
+				"the current safe target; upgrade safe to a release with %s with "+
+				"'brew upgrade cloudfoundry-community/cf/safe', or download one from %s",
+				ErrSafeLacksKeepCurrent, command, safeKeepCurrentOption, safeKeepCurrentOption, safeReleasesURL)
+		}
+	}
+
+	return nil
 }
 
 // safeTooOldError builds the upgrade message for an installed safe.

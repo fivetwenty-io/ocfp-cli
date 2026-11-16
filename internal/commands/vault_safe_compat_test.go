@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +38,12 @@ esac
 `)
 }
 
-const fakeSafeLocalHelp = "safe local (--memory|--file dir|--raft dir) [--cluster-port port] [--root-token-file path]"
+// fakeSafeLocalHelpBase is what `safe help local` says about the options a
+// raft inception vault needs, and fakeSafeLocalHelp adds --keep-current.
+const (
+	fakeSafeLocalHelpBase = "safe local (--memory|--file dir|--raft dir) [--cluster-port port] [--root-token-file path]"
+	fakeSafeLocalHelp     = fakeSafeLocalHelpBase + " [--keep-current]"
+)
 
 func TestCheckSafeCompatibility_RefusesOldRelease(t *testing.T) {
 	t.Parallel()
@@ -139,4 +146,72 @@ func TestCheckVaultInceptionPrerequisites_RefusesOldSafe(t *testing.T) {
 
 	_, err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
 	require.ErrorIs(t, err, ErrSafeTooOld)
+}
+
+// A safe without --keep-current would make the bloc's target current when
+// ocfp registers it, so the prerequisite check refuses it before anything
+// runs that could change a target, and names the upgrade.
+func TestCheckVaultInceptionPrerequisites_RefusesSafeWithoutKeepCurrent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(fakeSafeNoKeepCurrentEnv, "1")
+
+	bin := t.TempDir()
+	_, safeLog := installFakeSafe(t, bin)
+	writeFakeExecutable(t, bin, "bao", "exit 0\n")
+	writeFakeExecutable(t, bin, "tmux", "exit 0\n")
+	writeFakeExecutable(t, bin, "script", "exit 0\n")
+	isolateEngineLookup(t, bin)
+
+	require.NoError(t, writeFakeSafeRCFile(&fakeSafeRC{Version: 1, Current: "ops", Vaults: map[string]*fakeSafeVault{
+		"ops": {URL: "https://ops.example:8200"},
+	}}))
+
+	before, err := os.ReadFile(fakeSafeRCPath())
+	require.NoError(t, err)
+
+	_, err = checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrSafeLacksKeepCurrent)
+
+	for _, want := range []string{"--keep-current", "upgrade", safeReleasesURL} {
+		assert.Contains(t, err.Error(), want)
+	}
+
+	after, err := os.ReadFile(fakeSafeRCPath())
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after))
+
+	for _, call := range readFakeSafeCalls(t, safeLog) {
+		assert.Contains(t, []string{"--version", "help"}, call.Args[0], "only the checks ran: %v", call.Args)
+	}
+}
+
+// Both commands ocfp registers a target with must offer --keep-current.
+func TestCheckSafeKeepCurrent_NeedsTargetAndLocal(t *testing.T) {
+	t.Parallel()
+
+	for name, body := range map[string]string{
+		"neither":     `printf 'safe %s\n' "$2"`,
+		"target only": `case "$2" in target) echo 'safe target name url [--keep-current]' ;; *) echo 'safe local' ;; esac`,
+		"local only":  `case "$2" in local) echo 'safe local [--keep-current]' ;; *) echo 'safe target name url' ;; esac`,
+	} {
+		safePath := writeFakeExecutable(t, t.TempDir(), "safe", body+"\n")
+		require.ErrorIs(t, checkSafeKeepCurrent(context.Background(), safePath), ErrSafeLacksKeepCurrent, name)
+	}
+
+	both := writeFakeExecutable(t, t.TempDir(), "safe", "echo \"safe $2 [--keep-current]\"\n")
+	require.NoError(t, checkSafeKeepCurrent(context.Background(), both))
+}
+
+// Both commands that register the bloc's target say in their help that the
+// current target stays as it was.
+func TestVaultHelp_SaysTheCurrentTargetStays(t *testing.T) {
+	for name, cmd := range map[string]string{
+		"inception": newVaultInceptionCmd().Long,
+		"start":     newVaultStartCmd().Long,
+	} {
+		long := strings.Join(strings.Fields(cmd), " ")
+		assert.Contains(t, long, "--keep-current", name)
+		assert.NotContains(t, long, "puts back", name)
+	}
 }

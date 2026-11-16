@@ -9,9 +9,15 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// A test that needs safe puts a wrapper on PATH that runs this binary
+	// again as a fake safe, which reads and writes ~/.saferc in a temp home.
+	if os.Getenv(fakeSafeHelperEnv) == "1" {
+		os.Exit(runFakeSafeHelper())
+	}
+
 	// Job exec runs each verb in a process of its own, from this binary,
 	// as job verb. That run inherits the environment of the job exec that
-	// started it, so it is checked for first.
+	// started it, so it is checked for before job exec.
 	if isJobVerb(os.Args[1:]) {
 		os.Exit(runJobVerbHelper())
 	}

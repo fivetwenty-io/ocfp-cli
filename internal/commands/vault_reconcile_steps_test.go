@@ -257,7 +257,7 @@ esac
 
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
 	assert.Equal(t, []string{
-		"args:target " + paths["vaultName"] + " http://127.0.0.1:" + paths["port"],
+		"args:target " + paths["vaultName"] + " http://127.0.0.1:" + paths["port"] + " --keep-current",
 		"args:-T " + paths["vaultName"] + " auth token",
 		"stdin:test-root-token",
 	}, lines)

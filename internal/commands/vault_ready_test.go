@@ -183,3 +183,18 @@ func TestRedactVaultOutput(t *testing.T) {
 	assert.Contains(t, out, "Seal Key is [redacted]")
 	assert.Contains(t, out, "Now targeting x")
 }
+
+// safe local --keep-current says it registered its target instead of saying
+// it targets it, and that line is ready too.
+func TestWaitForVaultReady_RegisteredTargetIsReady(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	paths := readyTestPaths(t)
+	fake.outputs[paneCommand(paths)] = []string{
+		"starting\n",
+		"Registered the temporary target ocfp-lab-drgao-inception at http://127.0.0.1:18234; " +
+			"it is not selected, and your current target is unchanged\n",
+	}
+
+	require.NoError(t, waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar()))
+	assert.Equal(t, 1, fake.sleeps)
+}

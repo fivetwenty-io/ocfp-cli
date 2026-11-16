@@ -314,7 +314,7 @@ func inceptionTargetRegistered(ctx context.Context, safePath string, paths map[s
 func retargetInceptionVault(ctx context.Context, safePath string, paths map[string]string, log *zap.SugaredLogger) error {
 	url := "http://127.0.0.1:" + paths["port"]
 
-	err := exec.CommandContext(ctx, safePath, "target", paths["vaultName"], url).Run() // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
+	err := exec.CommandContext(ctx, safePath, "target", paths["vaultName"], url, safeKeepCurrentOption).Run() // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
 	if err != nil {
 		return fmt.Errorf("safe could not register target %s at %s: %w", paths["vaultName"], url, err)
 	}
@@ -414,8 +414,8 @@ func reportInceptionVaultReady(paths map[string]string, log *zap.SugaredLogger) 
 const previousVaultLogSuffix = ".previous"
 
 // setAsidePreviousVaultLog moves the last run's log to <log>.previous before
-// a start. The wait reads the log, and the last run's "Now targeting" would
-// pass for ready, while its rejected-token line would refuse a vault whose
+// a start. The wait reads the log, and the last run's ready line would pass
+// for ready, while its rejected-token line would refuse a vault whose
 // keys are fine.
 //
 // A log can hold the only copy of a new vault's unseal key, and the log sits
