@@ -56,8 +56,10 @@ func TestVerbChildInheritsNoLock(t *testing.T) {
 		"the lock file":    filepath.Join(ownerDir, ownerrecord.LockFile),
 		"the owner record": filepath.Join(ownerDir, ownerrecord.RecordFile),
 	} {
+		// A file that is not there would pass the check below without
+		// showing anything, so each must be there.
 		if _, err := os.Stat(path); err != nil {
-			continue
+			t.Fatalf("%s: %v", name, err)
 		}
 
 		if slices.Contains(open, statID(t, path)) {
