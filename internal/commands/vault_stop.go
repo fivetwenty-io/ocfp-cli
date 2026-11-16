@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,35 +74,12 @@ func runVaultCommand(ctx context.Context, spec cleanupCommand) ([]byte, error) {
 		ensureTmuxEnv(cmd)
 	}
 
-	if len(spec.withoutEnv) > 0 {
-		cmd.Env = envWithout(cmd.Env, spec.withoutEnv)
-	}
-
 	out, err := cmd.Output()
 	if err != nil {
 		return out, fmt.Errorf("%s failed: %w", spec.name, err)
 	}
 
 	return out, nil
-}
-
-// envWithout returns env, or the process environment when env is nil, with
-// every variable named in names removed.
-func envWithout(env, names []string) []string {
-	if env == nil {
-		env = os.Environ()
-	}
-
-	kept := make([]string, 0, len(env))
-
-	for _, entry := range env {
-		key, _, _ := strings.Cut(entry, "=")
-		if !slices.Contains(names, key) {
-			kept = append(kept, entry)
-		}
-	}
-
-	return kept
 }
 
 // localPortAcceptsConnections reports whether anything is listening on the

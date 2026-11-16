@@ -89,8 +89,9 @@ exit 0
 	}
 }
 
-// startFreshVault runs the inception vault reconcile for a bloc that has no
-// vault yet, with the real start, target, and stop steps. When interrupt is
+// startFreshVault runs the inception vault reconcile for the bloc, with the
+// real start, target, and stop steps; with no vault on disk it starts a new
+// one. When interrupt is
 // set, the run's context is cancelled once safe local has registered its
 // target, as when the operator stops ocfp part way.
 func (h *safeTargetHarness) startFreshVault(t *testing.T, interrupt bool) error {
@@ -125,8 +126,8 @@ func (h *safeTargetHarness) startFreshVault(t *testing.T, interrupt bool) error 
 	})
 }
 
-// safeSelectsOrUnpinned lists every call that could move safe's current
-// target, or that reaches a vault without naming one.
+// safeSelectsOrUnpinned lists every call that reads or could move safe's
+// current target, or that reaches a vault without naming one.
 func safeSelectsOrUnpinned(calls []fakeSafeCall, ownTarget string) []string {
 	var bad []string
 
@@ -159,6 +160,8 @@ func safeSelectsOrUnpinned(calls []fakeSafeCall, ownTarget string) []string {
 				if !slices.Equal(positional[1:], []string{ownTarget}) {
 					bad = append(bad, "deletes another target: "+line)
 				}
+			case len(positional) == 0:
+				bad = append(bad, "reads the current target: "+line)
 			case len(positional) == 1 || (len(positional) == 2 && !keep):
 				bad = append(bad, "selects: "+line)
 			}
@@ -216,6 +219,27 @@ func TestSafeCurrentTargetSurvivesInceptionStartAndTeardown(t *testing.T) {
 			calls := readFakeSafeCalls(t, h.safeLog)
 			require.NotEmpty(t, calls)
 			assert.Empty(t, safeSelectsOrUnpinned(calls, h.paths["vaultName"]))
+		})
+	}
+}
+
+// Restarting the bloc's existing vault, as `ocfp vault inception` and
+// `ocfp vault start` do after a reboot, leaves the current target alone
+// too, and never even reads it.
+func TestSafeCurrentTargetSurvivesInceptionRestart(t *testing.T) {
+	for name, current := range map[string]string{"an operator target": "ops", "no current target": ""} {
+		t.Run(name, func(t *testing.T) {
+			h := newSafeTargetHarness(t, current)
+			require.NoError(t, os.MkdirAll(filepath.Dir(h.paths["rootKeyFile"]), 0o700))
+			writeRaftData(t, h.paths["vaultDir"])
+			writeKeys(t, h.paths, true, true)
+
+			before := safeCurrentEntry(t)
+
+			require.NoError(t, h.startFreshVault(t, false))
+			require.FileExists(t, h.started, "safe local must have run")
+			assert.Equal(t, string(before), string(safeCurrentEntry(t)))
+			assert.Empty(t, safeSelectsOrUnpinned(readFakeSafeCalls(t, h.safeLog), h.paths["vaultName"]))
 		})
 	}
 }

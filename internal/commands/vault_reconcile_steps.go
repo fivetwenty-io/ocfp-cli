@@ -51,8 +51,7 @@ func newInceptionSteps(tools inceptionTools) inceptionSteps {
 		canMigrate: func(ctx context.Context) error {
 			return checkEngineCanMigrateFileStorage(ctx, tools.engine)
 		},
-		safeTarget: newSafeCurrentTargetSteps(tools.safe),
-		now:        time.Now,
+		now: time.Now,
 	}
 }
 

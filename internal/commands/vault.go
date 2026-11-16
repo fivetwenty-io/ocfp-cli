@@ -646,8 +646,6 @@ type cleanupCommand struct {
 	name string
 	args []string
 	tmux bool
-	// withoutEnv names environment variables the command runs without.
-	withoutEnv []string
 }
 
 // vaultCleanupCommands builds the cleanup plan for one bloc's inception vault.

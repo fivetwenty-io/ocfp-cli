@@ -38,7 +38,6 @@ func (f *fakeInception) startSteps() vaultStartSteps {
 	steps.stop = scripted.stop
 	steps.clusterPortFree = scripted.clusterPortFree
 	steps.targetToken = scripted.targetToken
-	steps.safeTarget = scripted.safeTarget
 	steps.now = scripted.now
 
 	return steps
