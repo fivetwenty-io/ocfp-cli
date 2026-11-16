@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 
 	"golang.org/x/sys/windows"
 )
@@ -94,4 +95,80 @@ func withHandle(f *os.File, fn func(windows.Handle) error) error {
 	}
 
 	return ferr
+}
+
+// startGroup starts cmd in a Job Object of its own. Every process the verb
+// starts after it joins the job joins it too, and the kill terminates the
+// job, which acts on a handle the wrapper owns and so cannot reach another
+// process. The job may neither be broken away from nor end when its last
+// handle closes: a wrapper that dies leaves its verb to see the end of
+// stdin and stop at its next safe point, as on Unix.
+//
+// The verb reads its start line before it does anything, and the wrapper
+// writes that line only once startGroup has returned, so the verb starts no
+// process before it is in the job, and it cannot exit and give up its pid
+// between the start and the open of its handle.
+func startGroup(cmd *exec.Cmd) (*groupProc, error) {
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("start the verb process: create a job object: %w", err)
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		_ = windows.CloseHandle(job)
+
+		return nil, fmt.Errorf("start the verb process: %w", err)
+	}
+
+	proc, err := windows.OpenProcess(
+		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
+		false,
+		uint32(cmd.Process.Pid), //nolint:gosec // a pid fits in a DWORD
+	)
+	if err == nil {
+		err = windows.AssignProcessToJobObject(job, proc)
+		if err != nil {
+			_ = windows.CloseHandle(proc)
+		}
+	}
+
+	if err != nil {
+		// The verb is still waiting for its start line and has started
+		// nothing, so ending it alone ends the verb.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = windows.CloseHandle(job)
+
+		return nil, fmt.Errorf("start the verb process: put it in its job object: %w", err)
+	}
+
+	killGroup := func() error {
+		err := windows.TerminateJobObject(job, 1)
+		if err != nil {
+			return fmt.Errorf("terminate the verb's job object: %w", err)
+		}
+
+		return nil
+	}
+
+	waitExit := func() error {
+		event, err := windows.WaitForSingleObject(proc, windows.INFINITE)
+		if err != nil {
+			return fmt.Errorf("wait for the verb process: %w", err)
+		}
+
+		if event != windows.WAIT_OBJECT_0 {
+			return fmt.Errorf("wait for the verb process: wait returned %#x", event)
+		}
+
+		return nil
+	}
+
+	release := func() {
+		_ = windows.CloseHandle(proc)
+		_ = windows.CloseHandle(job)
+	}
+
+	return newGroupProc(cmd, waitExit, killGroup, release), nil
 }

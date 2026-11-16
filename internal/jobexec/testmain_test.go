@@ -1,8 +1,10 @@
 package jobexec
 
 import (
+	"bufio"
 	"context"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -22,6 +24,10 @@ const (
 
 	// helperUndoFileEnv is the file the wait verb's undo hook writes.
 	helperUndoFileEnv = "OCFP_JOBEXEC_HELPER_UNDO_FILE"
+
+	// helperModeEnv makes the process one of the plain helpers in
+	// helperModes in place of a verb process.
+	helperModeEnv = "OCFP_JOBEXEC_HELPER_MODE"
 )
 
 // helperSelfTimeout ends a helper that a failed test left behind.
@@ -30,6 +36,10 @@ const helperSelfTimeout = 30 * time.Second
 // TestMain runs the tests, unless this binary was started as `job verb`, the
 // way a wrapper starts the binary it is. Then it serves one verb and exits.
 func TestMain(m *testing.M) {
+	if mode := os.Getenv(helperModeEnv); mode != "" {
+		os.Exit(helperProcess(mode))
+	}
+
 	if isJobVerb(os.Args[1:]) {
 		os.Exit(helperVerbProcess())
 	}
@@ -95,4 +105,49 @@ func runWaitVerb(_ context.Context, j Job, _ func() (string, error)) (int, error
 	}
 
 	return 0, j.Checkpoint()
+}
+
+// helperProcess runs the plain helper that mode names and returns its exit
+// code.
+func helperProcess(mode string) int {
+	// A helper that a failed test left behind ends itself.
+	time.AfterFunc(helperSelfTimeout, func() { os.Exit(4) })
+
+	switch mode {
+	case "echo":
+		return echoLines()
+	case "tree":
+		return echoTree()
+	default:
+		_, _ = os.Stderr.WriteString("no helper mode " + mode + "\n")
+
+		return 3
+	}
+}
+
+// echoLines writes each line of stdin back on stdout until stdin ends.
+func echoLines() int {
+	sc := bufio.NewScanner(os.Stdin)
+
+	for sc.Scan() {
+		if _, err := os.Stdout.WriteString(sc.Text() + "\n"); err != nil {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+// echoTree starts an echo helper that shares its stdin and stdout, and waits
+// for it, so that a process and its child both hold the pipes.
+func echoTree() int {
+	cmd := exec.Command(os.Args[0]) //nolint:gosec,noctx // this test binary
+	cmd.Env = append(os.Environ(), helperModeEnv+"=echo")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return 1
+	}
+
+	return 0
 }

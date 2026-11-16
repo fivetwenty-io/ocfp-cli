@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -109,4 +110,54 @@ func flock(f *os.File, how int) error {
 	}
 
 	return ferr
+}
+
+// startGroup starts cmd as the leader of a process group of its own, whose
+// id is its pid. The kill is SIGKILL to the whole group: the cancel budget is
+// the verb's grace, so there is no gentler signal first.
+func startGroup(cmd *exec.Cmd) (*groupProc, error) {
+	if !canWaitWithoutReaping {
+		return nil, errors.New("start the verb process: verbs run only on Linux, Darwin, and Windows")
+	}
+
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+
+	cmd.SysProcAttr.Setpgid = true
+
+	err := cmd.Start()
+	if err != nil {
+		return nil, fmt.Errorf("start the verb process: %w", err)
+	}
+
+	pid := cmd.Process.Pid
+	g := newGroupProc(cmd, func() error { return waitWithoutReaping(pid) }, nil, nil)
+
+	g.killGroup = func() error {
+		err := unix.Kill(-pid, unix.SIGKILL)
+
+		switch {
+		case err == nil, errors.Is(err, unix.ESRCH):
+			return nil
+		case errors.Is(err, unix.EPERM) && g.hasExited():
+			// Darwin refuses to signal a group whose only member left is
+			// its exited leader, so there is nothing left to kill.
+			return nil
+		default:
+			return fmt.Errorf("kill the verb's process group %d: %w", pid, err)
+		}
+	}
+
+	return g, nil
+}
+
+// hasExited reports whether the leader has been seen to exit.
+func (g *groupProc) hasExited() bool {
+	select {
+	case <-g.exited:
+		return true
+	default:
+		return false
+	}
 }

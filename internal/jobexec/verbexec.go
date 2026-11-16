@@ -3,10 +3,10 @@ package jobexec
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 )
 
 // reexec starts each verb in a process of its own, from the binary that is
@@ -32,9 +32,10 @@ func selfExecutable() (string, error) {
 	return path, nil
 }
 
-// start starts the verb process. The process gets only its three pipes:
-// every file the wrapper holds, out and the owner record's lock file among
-// them, is opened close-on-exec and so stays with the wrapper.
+// start starts the verb process, in a group of its own. The process gets
+// only its three pipes: every file the wrapper holds, out and the owner
+// record's lock file among them, is opened close-on-exec and so stays with
+// the wrapper.
 func (r reexec) start(verbStart) (*verbProc, error) {
 	path, err := selfExecutable()
 	if err != nil {
@@ -70,64 +71,120 @@ func (r reexec) start(verbStart) (*verbProc, error) {
 	cmd.Env = append(os.Environ(), r.env...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = child[0], child[1], child[2]
 
-	err = cmd.Start()
+	g, err := startGroup(cmd)
 
 	closeAll(child)
 
 	if err != nil {
 		closeAll(parent)
 
-		return nil, fmt.Errorf("start the verb process: %w", err)
+		return nil, err
 	}
-
-	return verbProcOf(cmd, parent[0], parent[1], parent[2]), nil
-}
-
-// waitedProc is a started verb process that a goroutine waits for.
-type waitedProc struct {
-	cmd     *exec.Cmd
-	exited  chan struct{}
-	waitErr error
-}
-
-// verbProcOf waits for cmd on a goroutine of its own and returns the verb
-// process that the wrapper's end of each pipe and cmd make.
-func verbProcOf(cmd *exec.Cmd, stdin io.WriteCloser, stdout, stderr io.ReadCloser) *verbProc {
-	w := &waitedProc{cmd: cmd, exited: make(chan struct{})}
-
-	go func() {
-		defer close(w.exited)
-
-		w.waitErr = cmd.Wait()
-	}()
 
 	return &verbProc{
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-		exited: w.exited,
-		kill:   w.kill,
-		reap:   w.reap,
-	}
+		stdin:  parent[0],
+		stdout: parent[1],
+		stderr: parent[2],
+		exited: g.exited,
+		kill:   g.kill,
+		reap:   g.reap,
+	}, nil
 }
 
-func (w *waitedProc) kill() error {
-	err := w.cmd.Process.Kill()
-	if err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill the verb process: %w", err)
-	}
+// groupProc is a verb process that leads a group of its own: a process group
+// on Unix and a Job Object on Windows. Every process the verb starts joins
+// the group, so one kill ends them all.
+//
+// A Unix process group id can belong to another group once the leader has
+// been reaped. So the group is signalled only while the wrapper holds the
+// leader unreaped, and the mutex makes that so: a kill signals only before
+// the reap, and the reap sweeps the group one last time before it reaps.
+type groupProc struct {
+	cmd *exec.Cmd
 
-	return nil
+	// exited is closed once the leader has exited, before it is reaped.
+	exited chan struct{}
+
+	// exitErr is set, before exited is closed, when the wait for the
+	// leader's exit failed.
+	exitErr error
+
+	// killGroup kills every process in the group. It is called only with
+	// mu held and the leader unreaped.
+	killGroup func() error
+
+	// release frees what the group holds once the leader is reaped.
+	release func()
+
+	mu      sync.Mutex
+	reaped  bool
+	code    int
+	reapErr error
 }
 
-func (w *waitedProc) reap() (int, error) {
-	<-w.exited
+// newGroupProc returns the group that cmd, which has started, leads. It
+// waits for the leader's exit with waitExit, which must not reap it.
+func newGroupProc(cmd *exec.Cmd, waitExit func() error, killGroup func() error, release func()) *groupProc {
+	g := &groupProc{cmd: cmd, exited: make(chan struct{}), killGroup: killGroup, release: release}
+
+	go func() {
+		defer close(g.exited)
+
+		g.exitErr = waitExit()
+	}()
+
+	return g
+}
+
+// kill kills every process in the group, unless the leader has been reaped.
+func (g *groupProc) kill() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.reaped {
+		return nil
+	}
+
+	return g.killGroup()
+}
+
+// reap waits for the leader to exit, kills what is left of its group, and
+// reaps it. It returns the leader's exit code, which is negative when a
+// signal ended it. A second call returns what the first did.
+func (g *groupProc) reap() (int, error) {
+	<-g.exited
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.reaped {
+		return g.code, g.reapErr
+	}
+
+	// A wait that failed did not see the leader exit, so the sweep is what
+	// ends it. Either way the leader is unreaped, so the group is still the
+	// verb's own.
+	sweepErr := g.killGroup()
+	waitErr := g.cmd.Wait()
+
+	g.reaped = true
+
+	if g.release != nil {
+		g.release()
+	}
 
 	var exitErr *exec.ExitError
 
-	if w.waitErr != nil && !errors.As(w.waitErr, &exitErr) {
-		return 0, fmt.Errorf("wait for the verb process: %w", w.waitErr)
+	switch {
+	case g.exitErr != nil:
+		g.reapErr = fmt.Errorf("wait for the verb process: %w", g.exitErr)
+	case waitErr != nil && !errors.As(waitErr, &exitErr):
+		g.reapErr = fmt.Errorf("reap the verb process: %w", waitErr)
+	case sweepErr != nil:
+		g.reapErr = sweepErr
 	}
 
-	return w.cmd.ProcessState.ExitCode(), nil
+	g.code = g.cmd.ProcessState.ExitCode()
+
+	return g.code, g.reapErr
 }
