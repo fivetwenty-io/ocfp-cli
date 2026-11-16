@@ -27,7 +27,7 @@ type eventBody struct {
 func header(t *testing.T, enc *progress.Encoder) {
 	t.Helper()
 
-	h := progress.Header{Producer: "ocfp", Version: "0.0.0-fixture", JobID: "job-fixture-01"}
+	h := progress.Header{Producer: "ocfp", Version: "0.0.0-fixture", JobID: "job-fixture-01", CancelBudgetMs: 5000}
 	if err := enc.Header(h); err != nil {
 		t.Fatal(err)
 	}

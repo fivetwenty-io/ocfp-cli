@@ -163,9 +163,10 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		}
 	}()
 
-	if req.Verb != verbNoop {
+	v, ok := verbs[req.Verb]
+	if !ok {
 		return refusalStream(o, req.JobID, refuse(progress.CodeVerbNotAllowed,
-			fmt.Sprintf("job request verb %s is not allowed, this host runs only %q", quote(req.Verb), verbNoop)))
+			fmt.Sprintf("job request verb %s is not allowed, this host runs only %s", quote(req.Verb), verbList())))
 	}
 
 	s, created, err := CreateSpool(o.SpoolRoot, req.JobID)
@@ -174,7 +175,7 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 	}
 
 	if created {
-		return runNew(o, s, req.JobID)
+		return runNew(o, s, req.JobID, v)
 	}
 
 	// An attach acts on nothing the owner record guards.
@@ -185,7 +186,7 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		return fmt.Errorf("release owner record lock: %w", err)
 	}
 
-	return attach(ctx, o, s, req.JobID)
+	return attach(ctx, o, s, req.JobID, v)
 }
 
 // readRequest reads one line from r, one byte at a time so that nothing
@@ -269,8 +270,17 @@ func streamHeader(jobID string) progress.Header {
 	return progress.Header{WireContract: progress.WireContract, Producer: producer, Version: version.Get().Version, JobID: jobID}
 }
 
+// verbHeader is the header of a job that runs v, which also reports v's cancel
+// budget in whole milliseconds.
+func verbHeader(jobID string, v verb) progress.Header {
+	h := streamHeader(jobID)
+	h.CancelBudgetMs = v.cancelBudget.Milliseconds()
+
+	return h
+}
+
 // runNew runs the job in the spool this run made.
-func runNew(o Options, s Spool, jobID string) (err error) {
+func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 	out, err := s.createOut()
 	if err != nil {
 		return err
@@ -303,12 +313,12 @@ func runNew(o Options, s Spool, jobID string) (err error) {
 	tee := &teeWriter{spool: out, client: o.Stdout}
 	enc := progress.NewEncoder(tee, o.Clock)
 
-	err = enc.Header(streamHeader(jobID))
+	err = enc.Header(verbHeader(jobID, v))
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	code, err := runNoop(enc, o.Hostname)
+	code, err := v.run(enc, o.Hostname)
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
@@ -379,8 +389,8 @@ func (t *teeWriter) Write(p []byte) (int, error) {
 }
 
 // attach follows the spool of a job that another run made.
-func attach(ctx context.Context, o Options, s Spool, jobID string) error {
-	fl := &follower{spool: s, jobID: jobID, w: o.Stdout, clock: o.Clock}
+func attach(ctx context.Context, o Options, s Spool, jobID string, v verb) error {
+	fl := &follower{spool: s, jobID: jobID, w: o.Stdout, clock: o.Clock, header: verbHeader(jobID, v)}
 	defer fl.close()
 
 	start := o.Clock.Now()
@@ -459,6 +469,9 @@ type follower struct {
 	jobID string
 	w     io.Writer
 	clock progress.Clock
+
+	// header is the header the follower writes for a spool that holds none.
+	header progress.Header
 
 	out     *os.File
 	partial []byte // the start of a record whose newline is not yet in out
@@ -650,7 +663,7 @@ func (fl *follower) orphan(why string) error {
 	var err error
 
 	if fl.next == 0 {
-		err = fl.emit(progress.KindHeader, streamHeader(fl.jobID))
+		err = fl.emit(progress.KindHeader, fl.header)
 	}
 
 	if err == nil {
