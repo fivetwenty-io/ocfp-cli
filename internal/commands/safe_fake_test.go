@@ -3,15 +3,18 @@ package commands
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,6 +34,11 @@ const (
 	// once it has registered its target.
 	fakeSafeLocalStartedEnv = "OCFP_TEST_FAKE_SAFE_LOCAL_STARTED"
 )
+
+// fakeSafeLocalExit is the fake's own command, never one of safe's, that ends
+// every `safe local` the fake has running. A fake tmux or pkill runs it, as
+// the hangup or the signal they send makes the real safe local shut down.
+const fakeSafeLocalExit = "__local-exit"
 
 // fakeSafeRootToken is the root token the fake's `safe local` stores.
 const fakeSafeRootToken = "s.FAKE-SAFE-LOCAL-ROOT-TOKEN"
@@ -92,24 +100,66 @@ func writeFakeSafeRCFile(rc *fakeSafeRC) error {
 	return os.WriteFile(fakeSafeRCPath(), data, 0o600)
 }
 
+// fakeSafeLocalRun is one `safe local` the fake has running: the target it
+// registered, the URL it registered it at, and the target that was current
+// when it started, which real safe puts back on shutdown.
+type fakeSafeLocalRun struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Previous string `json:"previous"`
+}
+
+func fakeSafeLocalRunsPath() string {
+	home, _ := os.UserHomeDir()
+
+	return filepath.Join(home, ".fake-safe-local-runs.json")
+}
+
+func readFakeSafeLocalRuns() []fakeSafeLocalRun {
+	var runs []fakeSafeLocalRun
+
+	data, err := os.ReadFile(fakeSafeLocalRunsPath())
+	if err == nil {
+		_ = json.Unmarshal(data, &runs)
+	}
+
+	return runs
+}
+
+func writeFakeSafeLocalRuns(runs []fakeSafeLocalRun) error {
+	data, err := json.Marshal(runs)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(fakeSafeLocalRunsPath(), data, 0o600)
+}
+
 // fakeSafeState is one run of the fake safe.
 type fakeSafeState struct {
 	rc       *fakeSafeRC
 	pinned   string
 	keepFlag bool
-	stdin    io.Reader
-	stdout   io.Writer
-	stderr   io.Writer
+	// dirty is set by every command that changes ~/.saferc. Only those
+	// write it back, so a read-only call leaves the file untouched.
+	dirty  bool
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
 }
 
 // runFakeSafeHelper emulates the parts of safe that ocfp's inception vault
 // code uses, with safe's own rules for which commands select a target:
 // `target <name>`, `target <name> <url>` without --keep-current, and `local`
 // without --keep-current make the target current, and deleting the current
-// target leaves none current.
+// target leaves none current. Deleting a target safe does not know fails, and
+// a `safe local` that shuts down removes its own target and puts back the
+// target that was current when it started, as safe's restoreTarget does.
 func runFakeSafeHelper() int {
 	args := os.Args[1:]
-	logFakeSafeCall(args)
+	if len(args) == 0 || args[0] != fakeSafeLocalExit {
+		logFakeSafeCall(args)
+	}
 
 	rc, err := readFakeSafeRC()
 	if err != nil {
@@ -136,7 +186,7 @@ func runFakeSafeHelper() int {
 	}
 
 	code := state.dispatch(args[0], args[1:])
-	if code == 0 {
+	if code == 0 && state.dirty {
 		err = writeFakeSafeRCFile(state.rc)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "!! %s\n", err)
@@ -177,11 +227,17 @@ func (s *fakeSafeState) dispatch(command string, rest []string) int {
 	case "target":
 		return s.target(rest)
 	case "targets":
+		if !s.safeTargetKnown() {
+			return 1
+		}
+
 		return s.targets()
 	case "local":
 		return s.local(rest)
 	case "auth":
 		return s.auth()
+	case fakeSafeLocalExit:
+		return s.localExit()
 	default:
 		return 0
 	}
@@ -228,15 +284,11 @@ func (s *fakeSafeState) target(rest []string) int {
 	}
 
 	if len(positional) > 0 && positional[0] == "delete" {
-		for _, name := range positional[1:] {
-			delete(s.rc.Vaults, name)
-
-			if s.rc.Current == name {
-				s.rc.Current = ""
-			}
+		if !s.safeTargetKnown() {
+			return 1
 		}
 
-		return 0
+		return s.deleteTarget(positional[1:])
 	}
 
 	switch len(positional) {
@@ -256,6 +308,7 @@ func (s *fakeSafeState) target(rest []string) int {
 		}
 
 		s.rc.Current = positional[0]
+		s.dirty = true
 
 		return 0
 	default:
@@ -267,6 +320,7 @@ func (s *fakeSafeState) target(rest []string) int {
 		}
 
 		s.rc.Vaults[name] = vault
+		s.dirty = true
 
 		if keep {
 			fmt.Fprintf(s.stderr, "Added target %s at %s\n", name, url)
@@ -279,6 +333,72 @@ func (s *fakeSafeState) target(rest []string) int {
 
 		return 0
 	}
+}
+
+// safeTargetKnown reports whether SAFE_TARGET is unset or names a target
+// safe knows. `safe targets` and `safe target delete` look it up before
+// they do anything, as real safe does, and fail when it names none.
+func (s *fakeSafeState) safeTargetKnown() bool {
+	name := os.Getenv("SAFE_TARGET")
+	if name == "" {
+		return true
+	}
+
+	if _, ok := s.alias(name); ok {
+		return true
+	}
+
+	fmt.Fprintf(s.stderr, "!! Target '%s' (from $SAFE_TARGET) not found in ~/.saferc\n", name)
+
+	return false
+}
+
+// deleteTarget removes one target, found by its name or by its URL, as safe's
+// `target delete` does. A name safe does not know is an error. The current
+// target is cleared only when it no longer names a target that exists.
+func (s *fakeSafeState) deleteTarget(names []string) int {
+	if len(names) != 1 {
+		fmt.Fprintln(s.stderr, "!! usage: safe target delete <name>")
+
+		return 1
+	}
+
+	name, ok := s.alias(names[0])
+	if !ok {
+		fmt.Fprintf(s.stderr, "!! Unknown target '%s'\n", names[0])
+
+		return 1
+	}
+
+	delete(s.rc.Vaults, name)
+
+	if _, ok := s.alias(s.rc.Current); !ok {
+		s.rc.Current = ""
+	}
+
+	s.dirty = true
+
+	return 0
+}
+
+// alias resolves a target by its name, or by its URL when exactly one target
+// has that URL, as safe does.
+func (s *fakeSafeState) alias(name string) (string, bool) {
+	if _, ok := s.rc.Vaults[name]; ok {
+		return name, true
+	}
+
+	found := ""
+	n := 0
+
+	for alias, vault := range s.rc.Vaults {
+		if strings.TrimSuffix(vault.URL, "/") == strings.TrimSuffix(name, "/") {
+			found = alias
+			n++
+		}
+	}
+
+	return found, n == 1
 }
 
 func (s *fakeSafeState) showCurrent(asJSON bool) int {
@@ -357,6 +477,7 @@ func (s *fakeSafeState) local(rest []string) int {
 	}
 
 	url := "http://127.0.0.1:" + port
+	previous := s.rc.Current
 	s.rc.Vaults[name] = &fakeSafeVault{URL: url, Token: fakeSafeRootToken}
 
 	if !keep {
@@ -364,6 +485,13 @@ func (s *fakeSafeState) local(rest []string) int {
 	}
 
 	err := writeFakeSafeRCFile(s.rc)
+	if err != nil {
+		fmt.Fprintf(s.stderr, "!! %s\n", err)
+
+		return 1
+	}
+
+	err = writeFakeSafeLocalRuns(append(readFakeSafeLocalRuns(), fakeSafeLocalRun{Name: name, URL: url, Previous: previous}))
 	if err != nil {
 		fmt.Fprintf(s.stderr, "!! %s\n", err)
 
@@ -381,6 +509,39 @@ func (s *fakeSafeState) local(rest []string) int {
 			name, url)
 	} else {
 		fmt.Fprintf(s.stdout, "Now targeting (temporary) %s at %s\n", name, url)
+	}
+
+	return 0
+}
+
+// localExit shuts down every `safe local` the fake has running, the way
+// safe's restoreTarget does: a target whose URL has changed since it was
+// registered is left alone, and otherwise it is removed, and when it was
+// current the target that was current before it is put back if it still
+// exists.
+func (s *fakeSafeState) localExit() int {
+	for _, run := range readFakeSafeLocalRuns() {
+		if existing, ok := s.rc.Vaults[run.Name]; ok && existing.URL != run.URL {
+			continue
+		}
+
+		if s.rc.Current == run.Name {
+			s.rc.Current = ""
+			if _, ok := s.alias(run.Previous); ok {
+				s.rc.Current = run.Previous
+			}
+		}
+
+		delete(s.rc.Vaults, run.Name)
+
+		s.dirty = true
+	}
+
+	err := writeFakeSafeLocalRuns(nil)
+	if err != nil {
+		fmt.Fprintf(s.stderr, "!! %s\n", err)
+
+		return 1
 	}
 
 	return 0
@@ -405,6 +566,7 @@ func (s *fakeSafeState) auth() int {
 
 	token, _ := bufio.NewReader(s.stdin).ReadString('\n')
 	vault.Token = strings.TrimSpace(token)
+	s.dirty = true
 
 	return 0
 }
@@ -450,4 +612,107 @@ func readFakeSafeCalls(t *testing.T, logFile string) []fakeSafeCall {
 	}
 
 	return calls
+}
+
+// fakeSafeHome is a temp home with the fake safe on PATH and an rc holding
+// the given targets, with current selected.
+func fakeSafeHome(t *testing.T, current string, targets map[string]string) string {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SAFE_TARGET", "")
+	require.NoError(t, os.Unsetenv("SAFE_TARGET"))
+
+	safe, _ := installFakeSafe(t, home)
+
+	rc := &fakeSafeRC{Version: 1, Current: current, Vaults: map[string]*fakeSafeVault{}}
+	for name, url := range targets {
+		rc.Vaults[name] = &fakeSafeVault{URL: url, Token: "s." + name}
+	}
+
+	require.NoError(t, writeFakeSafeRCFile(rc))
+
+	return safe
+}
+
+// runFakeSafe runs the fake safe with args and reports its exit status.
+func runFakeSafe(t *testing.T, safe string, env []string, args ...string) int {
+	t.Helper()
+
+	cmd := exec.CommandContext(t.Context(), safe, args...) // #nosec G204 -- the test's own fake
+	cmd.Env = append(os.Environ(), env...)
+
+	err := cmd.Run()
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+
+	require.NoError(t, err)
+
+	return 0
+}
+
+// The fake behaves as safe does where the regression tests lean on it. A
+// read-only call leaves ~/.saferc untouched, deleting a target safe does not
+// know fails, an unknown SAFE_TARGET fails the calls that look it up, and a
+// `safe local` that shuts down removes its own target and puts back the
+// target that was current when it started.
+func TestFakeSafe_BehavesAsSafeDoes(t *testing.T) {
+	t.Run("read-only calls leave the rc untouched", func(t *testing.T) {
+		safe := fakeSafeHome(t, "ops", map[string]string{"ops": "https://ops.example:8200"})
+		require.NoError(t, os.WriteFile(fakeSafeRCPath(), []byte("current: ops\nversion: 1\nvaults:\n  ops: {url: \"https://ops.example:8200\"}\n"), 0o600))
+
+		before, err := os.ReadFile(fakeSafeRCPath())
+		require.NoError(t, err)
+
+		for _, args := range [][]string{{"--version"}, {"help", "local"}, {"targets", "--json"}, {"target"}} {
+			require.Equal(t, 0, runFakeSafe(t, safe, nil, args...), args)
+		}
+
+		after, err := os.ReadFile(fakeSafeRCPath())
+		require.NoError(t, err)
+		assert.Equal(t, string(before), string(after))
+	})
+
+	t.Run("deleting an unknown target fails", func(t *testing.T) {
+		safe := fakeSafeHome(t, "ops", map[string]string{"ops": "https://ops.example:8200"})
+		assert.Equal(t, 1, runFakeSafe(t, safe, nil, "target", "delete", "ghost"))
+	})
+
+	t.Run("an unknown SAFE_TARGET fails the lookups", func(t *testing.T) {
+		safe := fakeSafeHome(t, "ops", map[string]string{"ops": "https://ops.example:8200"})
+		assert.Equal(t, 1, runFakeSafe(t, safe, []string{"SAFE_TARGET=ghost"}, "targets", "--json"))
+		assert.Equal(t, 1, runFakeSafe(t, safe, []string{"SAFE_TARGET=ghost"}, "target", "delete", "ops"))
+		assert.Equal(t, 0, runFakeSafe(t, safe, []string{"SAFE_TARGET=ops"}, "targets", "--json"))
+	})
+
+	t.Run("safe local cleans up after itself on shutdown", func(t *testing.T) {
+		safe := fakeSafeHome(t, "ops", map[string]string{"ops": "https://ops.example:8200"})
+		require.Equal(t, 0, runFakeSafe(t, safe, nil, "local", "--as", "tmp", "--port", "8201"))
+
+		rc, err := readFakeSafeRC()
+		require.NoError(t, err)
+		require.Equal(t, "tmp", rc.Current)
+
+		require.Equal(t, 0, runFakeSafe(t, safe, nil, fakeSafeLocalExit))
+
+		rc, err = readFakeSafeRC()
+		require.NoError(t, err)
+		assert.Equal(t, "ops", rc.Current)
+		assert.NotContains(t, rc.Vaults, "tmp")
+	})
+
+	t.Run("safe local leaves a target whose URL changed", func(t *testing.T) {
+		safe := fakeSafeHome(t, "", map[string]string{})
+		require.Equal(t, 0, runFakeSafe(t, safe, nil, "local", "--as", "tmp", "--port", "8201", "--keep-current"))
+		require.Equal(t, 0, runFakeSafe(t, safe, nil, "target", "tmp", "http://127.0.0.1:9999", "--keep-current"))
+		require.Equal(t, 0, runFakeSafe(t, safe, nil, fakeSafeLocalExit))
+
+		rc, err := readFakeSafeRC()
+		require.NoError(t, err)
+		assert.Contains(t, rc.Vaults, "tmp")
+	})
 }

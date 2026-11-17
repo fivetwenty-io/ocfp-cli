@@ -57,10 +57,12 @@ func newSafeTargetHarness(t *testing.T, current string) *safeTargetHarness {
 	safePath, safeLog := installFakeSafe(t, bin)
 
 	// send-keys runs the typed line at once, as the pane would, and the
-	// session never exists beforehand.
+	// session never exists beforehand. kill-session shuts down the safe
+	// local the pane runs, which cleans up after itself as safe does.
 	writeFakeExecutable(t, bin, "tmux", `case "$1" in
   has-session) exit 1 ;;
   send-keys) sh -c "$4" ;;
+  kill-session) safe `+fakeSafeLocalExit+` ;;
 esac
 exit 0
 `)
