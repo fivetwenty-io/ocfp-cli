@@ -627,12 +627,16 @@ func checkVaultInceptionPrerequisites(ctx context.Context, log *zap.SugaredLogge
 		return inceptionTools{}, fmt.Errorf("cannot resolve the path of safe: %w", err)
 	}
 
-	err = checkSafeCompatibility(ctx, safePath)
+	// Both checks may judge safe by its help, so they share one reading of
+	// each page.
+	help := newSafeHelp(safePath)
+
+	err = checkSafeCompatibilityWith(ctx, help)
 	if err != nil {
 		return inceptionTools{}, err
 	}
 
-	err = checkSafeKeepCurrent(ctx, safePath)
+	err = checkSafeKeepCurrentWith(ctx, help)
 	if err != nil {
 		return inceptionTools{}, err
 	}

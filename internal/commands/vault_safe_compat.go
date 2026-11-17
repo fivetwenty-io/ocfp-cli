@@ -64,6 +64,14 @@ var safeVersionPattern = regexp.MustCompile(`^safe v(\d+)\.(\d+)\.(\d+)(\S*)`)
 // pre-release of the minimum version, is judged by whether `safe help local`
 // mentions the options ocfp needs.
 func checkSafeCompatibility(ctx context.Context, safePath string) error {
+	return checkSafeCompatibilityWith(ctx, newSafeHelp(safePath))
+}
+
+// checkSafeCompatibilityWith is checkSafeCompatibility reading safe's help
+// through help, which the prerequisite check shares between its checks.
+func checkSafeCompatibilityWith(ctx context.Context, help *safeHelp) error {
+	safePath := help.safePath
+
 	out, err := exec.CommandContext(ctx, safePath, "--version").CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
 	if err != nil && len(out) == 0 {
 		return fmt.Errorf("failed to run %s --version: %w", safePath, err)
@@ -83,7 +91,7 @@ func checkSafeCompatibility(ctx context.Context, safePath string) error {
 		}
 	}
 
-	if safeHelpOffersRequiredOptions(ctx, safePath) {
+	if safeHelpOffersRequiredOptions(ctx, help) {
 		return nil
 	}
 
@@ -141,13 +149,39 @@ func compareVersions(a, b [3]int) int {
 	return 0
 }
 
+// safeHelp reads `safe help <command>` for one safe binary, running safe at
+// most once for each command, so the checks that judge safe by its help
+// share what it printed.
+type safeHelp struct {
+	safePath string
+	pages    map[string]string
+}
+
+// newSafeHelp returns a safeHelp for the safe at safePath.
+func newSafeHelp(safePath string) *safeHelp {
+	return &safeHelp{safePath: safePath, pages: map[string]string{}}
+}
+
+// page returns what `safe help <command>` printed. The exit status is
+// ignored; only the text counts.
+func (h *safeHelp) page(ctx context.Context, command string) string {
+	if text, ok := h.pages[command]; ok {
+		return text
+	}
+
+	out, _ := exec.CommandContext(ctx, h.safePath, "help", command).CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
+	h.pages[command] = string(out)
+
+	return h.pages[command]
+}
+
 // safeHelpOffersRequiredOptions reports whether `safe help local` mentions
-// every option ocfp passes. The exit status is ignored; only the text counts.
-func safeHelpOffersRequiredOptions(ctx context.Context, safePath string) bool {
-	out, _ := exec.CommandContext(ctx, safePath, "help", "local").CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
+// every option ocfp passes.
+func safeHelpOffersRequiredOptions(ctx context.Context, help *safeHelp) bool {
+	text := help.page(ctx, "local")
 
 	for _, option := range safeLocalRequiredOptions {
-		if !strings.Contains(string(out), option) {
+		if !strings.Contains(text, option) {
 			return false
 		}
 	}
@@ -167,9 +201,14 @@ func safeHelpOffersRequiredOptions(ctx context.Context, safePath string) bool {
 // from safe's help, not from its version, so a development build passes when
 // it has the option.
 func checkSafeKeepCurrent(ctx context.Context, safePath string) error {
+	return checkSafeKeepCurrentWith(ctx, newSafeHelp(safePath))
+}
+
+// checkSafeKeepCurrentWith is checkSafeKeepCurrent reading safe's help
+// through help, which the prerequisite check shares between its checks.
+func checkSafeKeepCurrentWith(ctx context.Context, help *safeHelp) error {
 	for _, command := range safeKeepCurrentCommands {
-		out, _ := exec.CommandContext(ctx, safePath, "help", command).CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
-		if !strings.Contains(string(out), safeKeepCurrentOption) {
+		if !strings.Contains(help.page(ctx, command), safeKeepCurrentOption) {
 			return fmt.Errorf("%w: `safe help %s` does not offer %s, which ocfp needs so that it never changes "+
 				"the current safe target; upgrade safe to a release with %s with "+
 				"'brew upgrade cloudfoundry-community/cf/safe', or download one from %s",

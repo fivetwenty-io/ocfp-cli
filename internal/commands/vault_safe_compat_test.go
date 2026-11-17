@@ -229,3 +229,27 @@ func TestVaultHelp_SaysTheCurrentTargetStays(t *testing.T) {
 	assert.Contains(t, teardown, "unless that target is current")
 	assert.Contains(t, teardown, "'safe target delete <bloc>-inception'")
 }
+
+// The prerequisite check reads each `safe help` page once, even for a
+// development build, which both checks judge by its help.
+func TestCheckVaultInceptionPrerequisites_ReadsEachSafeHelpOnce(t *testing.T) {
+	bin := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	writeFakeExecutable(t, bin, "safe", `printf '%s\n' "$*" >> '`+calls+`'
+case "$1" in
+  --version) printf 'safe (development build)\n' ;;
+  help) printf '%s\n' '`+fakeSafeLocalHelp+`' ;;
+esac
+`)
+	writeFakeExecutable(t, bin, "bao", "exit 0\n")
+	writeFakeExecutable(t, bin, "tmux", "exit 0\n")
+	writeFakeExecutable(t, bin, "script", "exit 0\n")
+	isolateEngineLookup(t, bin)
+
+	_, err := checkVaultInceptionPrerequisites(context.Background(), zap.NewNop().Sugar())
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "--version\nhelp local\nhelp target\n", string(raw))
+}
