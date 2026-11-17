@@ -568,7 +568,7 @@ func TestGenerateGenesisSecretsProvidersScript_GatesOnInceptionTarget(t *testing
 		`genesis secrets-provider "$INCEPTION_TARGET"`,
 		`graft merge "$GENESIS_CONFIG" "$sp_fragment"`,
 		`if ! ocfp_safe_nothing_current; then`,
-		`elif safe target "$BLOC_VAULT_TARGET" >/dev/null 2>&1; then`,
+		`elif env -u SAFE_TARGET safe target "$BLOC_VAULT_TARGET" >/dev/null 2>&1; then`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("expected secrets-provider script to contain %q\ngot:\n%s", want, script)

@@ -635,15 +635,6 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 		"        BLOC_INCEPTION_TARGET=\"${OCFP_BLOC}-inception\"",
 		"    fi",
 		"    ",
-		"    # Matches a target by its whole name, as a fixed string, so a bloc name's",
-		"    # dots and stars match only themselves and never another bloc's target.",
-		"    # grep -o pulls out each \"name\" pair wherever it sits, so the match holds",
-		"    # whether safe prints its JSON indented or all on one line. SAFE_TARGET",
-		"    # is dropped, because safe refuses to list targets when it names one",
-		"    # that safe does not know.",
-		"    ocfp_safe_has_target() {",
-		"        env -u SAFE_TARGET safe targets --json 2>&1 | grep -o '\"name\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' | sed 's/^\"name\"[[:space:]]*:[[:space:]]*\"\\(.*\\)\"$/\\1/' | grep -Fx -- \"$1\" >/dev/null",
-		"    }",
 		"    INCEPTION_ACTIVE=no",
 		"    INCEPTION_TARGET=\"\"",
 		`    if [ -n "$BLOC_VAULT_TARGET" ] && ocfp_safe_has_target "$BLOC_VAULT_TARGET"; then`,
@@ -674,14 +665,24 @@ func (om *OCFPManager) inceptionActiveSnippet() []string {
 	}
 }
 
-// currentSafeTargetSnippet defines ocfp_current_safe_target, which the gate
-// calls, and ocfp_safe_nothing_current, which the restore calls. The script
-// emits them once, ahead of the gate, because a second definition makes
+// currentSafeTargetSnippet defines ocfp_safe_has_target, which the gate and
+// the restore call, ocfp_current_safe_target, which both call, and
+// ocfp_safe_nothing_current, which the restore calls. The script emits them
+// once, ahead of the gate, because a second definition makes
 // shellcheck read a call as a call to a function that is only defined later.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) currentSafeTargetSnippet() []string {
 	return []string{
+		"    # Matches a target by its whole name, as a fixed string, so a bloc name's",
+		"    # dots and stars match only themselves and never another bloc's target.",
+		"    # grep -o pulls out each \"name\" pair wherever it sits, so the match holds",
+		"    # whether safe prints its JSON indented or all on one line. SAFE_TARGET",
+		"    # is dropped, because safe refuses to list targets when it names one",
+		"    # that safe does not know.",
+		"    ocfp_safe_has_target() {",
+		"        env -u SAFE_TARGET safe targets --json 2>&1 | grep -o '\"name\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' | sed 's/^\"name\"[[:space:]]*:[[:space:]]*\"\\(.*\\)\"$/\\1/' | grep -Fx -- \"$1\" >/dev/null",
+		"    }",
 		"    # Prints the name of safe's current target, or nothing. It never fails:",
 		"    # 'safe target' exits non-zero when the rc file names a target that is",
 		"    # gone, when the rc file can't be parsed, when SAFE_TARGET names an",
@@ -712,21 +713,32 @@ func (om *OCFPManager) currentSafeTargetSnippet() []string {
 }
 
 // restoreBlocVaultTargetSnippet selects the bloc vault's target once the
-// inception work is done, but only when safe has no current target at all,
-// as on a fresh bastion or after the inception target was deleted. Then
-// every later genesis command reads the bloc's secrets from its own vault
-// rather than finding none. A target the operator chose, the bloc vault's
-// own included, is never switched or cleared. It calls
-// ocfp_safe_nothing_current, which the script defines ahead of the gate, and
-// it reads BLOC_VAULT_TARGET and INCEPTION_ACTIVE, which the gate sets.
+// inception work is done and that target is registered. It selects it when
+// safe has no current target at all, as on a fresh bastion or after the
+// inception target was deleted, and when the current target is exactly the
+// bloc's own inception target, which an older ocfp always selected and which
+// stops holding the truth once the bloc vault is up. Then every later genesis
+// command reads the bloc's secrets from its own vault. Any other target the
+// operator chose, the bloc vault's own and a sibling's inception target
+// included, is never switched or cleared. It calls the helpers the script
+// defines ahead of the gate, and it reads BLOC_VAULT_TARGET,
+// BLOC_INCEPTION_TARGET, and INCEPTION_ACTIVE, which the gate sets.
 //
 //nolint:funcorder // helper placed after the exported method that uses it
 func (om *OCFPManager) restoreBlocVaultTargetSnippet() []string {
 	return []string{
 		"    if [ \"$INCEPTION_ACTIVE\" != yes ] && [ -n \"$BLOC_VAULT_TARGET\" ]; then",
-		"        if ! ocfp_safe_nothing_current; then",
+		"        if ! ocfp_safe_has_target \"$BLOC_VAULT_TARGET\"; then",
+		"            log_info \"safe has no target $BLOC_VAULT_TARGET for the bloc vault yet; selecting nothing\"",
+		"        elif [ -n \"${BLOC_INCEPTION_TARGET:-}\" ] && [ \"$(ocfp_current_safe_target)\" = \"$BLOC_INCEPTION_TARGET\" ]; then",
+		"            if env -u SAFE_TARGET safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
+		"                log_success \"Moved safe's current target from $BLOC_INCEPTION_TARGET to $BLOC_VAULT_TARGET, now that the bloc vault holds the bloc's secrets\"",
+		"            else",
+		"                log_warning \"Could not select safe target $BLOC_VAULT_TARGET; $BLOC_INCEPTION_TARGET is still current\"",
+		"            fi",
+		"        elif ! ocfp_safe_nothing_current; then",
 		"            log_info \"safe already has a current target; leaving it as it is\"",
-		"        elif safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
+		"        elif env -u SAFE_TARGET safe target \"$BLOC_VAULT_TARGET\" >/dev/null 2>&1; then",
 		"            log_success \"No safe target was current; selected $BLOC_VAULT_TARGET\"",
 		"        else",
 		"            log_warning \"Could not select safe target $BLOC_VAULT_TARGET\"",

@@ -166,6 +166,7 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 			`log_warning() { :; }`,
 			strings.Join(om.currentSafeTargetSnippet(), "\n"),
 			"BLOC_VAULT_TARGET=" + shellSingleQuote(bloc+"-mgmt"),
+			"BLOC_INCEPTION_TARGET=" + shellSingleQuote(bloc+"-inception"),
 			"INCEPTION_ACTIVE=no",
 			`INCEPTION_TARGET=""`,
 		}, "\n")
@@ -415,6 +416,56 @@ func TestRestoreBlocVaultTargetSnippet_SelectsOnlyWhenNothingIsCurrent(t *testin
 			assert.Equal(t, tc.wantCalls, run.calls)
 		})
 	}
+}
+
+// An older ocfp always made the bloc's inception target current. Once the
+// bloc vault is authoritative, a current target that is exactly the bloc's
+// inception target would keep genesis and bare safe reads on a vault that no
+// longer holds the truth, so it moves to the bloc vault's target. Every other
+// current target stays, a sibling's inception target included, and nothing
+// moves while the bloc vault has no target.
+func TestRestoreBlocVaultTargetSnippet_MovesOffTheBlocsOwnInceptionTarget(t *testing.T) {
+	for name, tc := range map[string]struct {
+		current   string
+		targets   []string
+		wantCalls []string
+	}{
+		"the bloc's inception target moves to the bloc vault's": {
+			current: "lab-inception", targets: []string{"ops", "lab-inception", "lab-mgmt"}, wantCalls: []string{"lab-mgmt"},
+		},
+		"a sibling's inception target stays": {
+			current: "biglab-inception", targets: []string{"biglab-inception", "lab-inception", "lab-mgmt"},
+		},
+		"a target whose name only starts with it stays": {
+			current: "lab-inception-local", targets: []string{"lab-inception-local", "lab-mgmt"},
+		},
+		"the operator's own target stays": {
+			current: "ops", targets: []string{"ops", "lab-inception", "lab-mgmt"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := runGate(t, gateSetup{bloc: "lab", targets: tc.targets, current: tc.current, restore: true})
+			assert.Equal(t, tc.wantCalls, run.calls)
+
+			alone := runGate(t, gateSetup{bloc: "lab", targets: tc.targets, current: tc.current, restoreOnly: true})
+			assert.Equal(t, tc.wantCalls, alone.calls, "run without the gate")
+		})
+	}
+
+	t.Run("nothing moves while the bloc vault has no target", func(t *testing.T) {
+		run := runGate(t, gateSetup{bloc: "lab", targets: []string{"lab-inception"}, current: "lab-inception", restoreOnly: true})
+		assert.Empty(t, run.calls)
+	})
+}
+
+// With neither of the bloc's targets registered, nothing is selected, even
+// when no target is current, since there is no bloc vault to select.
+func TestRestoreBlocVaultTargetSnippet_SelectsNothingWithoutTheBlocVaultsTarget(t *testing.T) {
+	run := runGate(t, gateSetup{bloc: "lab", targets: []string{"ops"}, restoreOnly: true})
+	assert.Empty(t, run.calls)
+
+	run = runGate(t, gateSetup{bloc: "lab", targets: []string{"ops"}, restore: true})
+	assert.Empty(t, run.calls)
 }
 
 // The restore snippet is emitted next to the gate today, but it must not
