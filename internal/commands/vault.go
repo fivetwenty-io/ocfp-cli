@@ -411,10 +411,13 @@ as it can on the way:
     refuses, so the key can be restored and the command run again.
   - To replace either kind of vault with a new, empty one, run
     'ocfp vault teardown' and then 'ocfp vault inception'.
-  - The command never selects, clears, or deletes safe's current target.
-    It registers the bloc's target with --keep-current and names that
-    target with -T on every call that reaches the vault. It refuses before
-    it changes anything when safe has no --keep-current.
+  - The command never selects safe's current target, and it never clears
+    or deletes a target that is current. 'safe local' runs the vault under
+    a target of its own, {bloc}-inception-local, and the command then
+    updates the bloc's target, {bloc}-inception, in place with
+    --keep-current, so a restart never deletes it. Every call that reaches
+    the vault names that target with -T. The command refuses before it
+    changes anything when safe has no --keep-current.
   - Only key files left with no data are renamed aside, to
     vault.superseded-{timestamp}, before a new vault starts. No new vault
     starts while a store a migration kept or moved aside still sits beside
@@ -1650,8 +1653,9 @@ vault, never starts a new one, and never migrates one.
     refuses, and leaves the data and keys where they were.
   - Right before each stop, the command probes the API port again, and it
     stops nothing when the vault there is not this bloc's own.
-  - A restart registers the bloc's safe target with --keep-current, so
-    safe's current target stays as it was.
+  - A restart updates the bloc's safe target in place with --keep-current,
+    so safe's current target stays as it was, even when it is the bloc's
+    own.
 
 Every refusal names what is wrong. 'ocfp vault inception' is the command
 that decides what to do with a vault that cannot simply be reopened, and an
@@ -1724,7 +1728,14 @@ func newVaultTeardownCmd() *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct // Using zero values for optional fields
 		Use:   "teardown",
 		Short: "Stop and clean up inception vault",
-		Long: `Stop this bloc's inception vault and delete its safe target.
+		Long: `Stop this bloc's inception vault and delete its safe target, unless that
+target is current.
+
+Older releases of ocfp made the bloc's target current. When it still is,
+teardown leaves both the target and the selection in place and warns, so
+safe is never left with no current target. We then run
+'safe target <other>' to switch to another target and
+'safe target delete <bloc>-inception' to remove the old one.
 
 Teardown deletes nothing on disk. The vault's data and both key files are
 moved together to vault.superseded-{timestamp}, beside the bloc's vault

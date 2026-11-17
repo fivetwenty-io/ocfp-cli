@@ -207,7 +207,9 @@ func TestCheckSafeKeepCurrent_NeedsTargetAndLocal(t *testing.T) {
 }
 
 // Both commands that register the bloc's target say in their help that the
-// current target stays as it was.
+// current target stays as it was, even when it is the bloc's own, and
+// teardown says that it leaves a current target in place. None claims more
+// than the commands do.
 func TestVaultHelp_SaysTheCurrentTargetStays(t *testing.T) {
 	for name, cmd := range map[string]string{
 		"inception": newVaultInceptionCmd().Long,
@@ -215,6 +217,15 @@ func TestVaultHelp_SaysTheCurrentTargetStays(t *testing.T) {
 	} {
 		long := strings.Join(strings.Fields(cmd), " ")
 		assert.Contains(t, long, "--keep-current", name)
+		assert.Contains(t, long, "in place", name)
 		assert.NotContains(t, long, "puts back", name)
+		assert.NotContains(t, long, "never selects, clears, or deletes safe's current target", name)
 	}
+
+	inception := strings.Join(strings.Fields(newVaultInceptionCmd().Long), " ")
+	assert.Contains(t, inception, "never clears or deletes a target that is current")
+
+	teardown := strings.Join(strings.Fields(newVaultTeardownCmd().Long), " ")
+	assert.Contains(t, teardown, "unless that target is current")
+	assert.Contains(t, teardown, "'safe target delete <bloc>-inception'")
 }
