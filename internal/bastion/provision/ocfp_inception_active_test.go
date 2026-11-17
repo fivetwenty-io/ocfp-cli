@@ -113,6 +113,8 @@ type gateRun struct {
 	active, target string
 	// calls lists every 'safe target <name>' the script made, one name each.
 	calls []string
+	// log holds what the script logged, one line per message.
+	log string
 }
 
 func runInceptionGateWith(t *testing.T, gs gateSetup) (string, string) {
@@ -151,19 +153,19 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 	om := NewOCFPManager("pve", nil, nil)
 	script := strings.Join([]string{
 		"set -euo pipefail",
-		`log_info() { :; }`,
+		`log_info() { printf 'INFO %s\n' "$*" >&2; }`,
+		`log_success() { printf 'OK %s\n' "$*" >&2; }`,
+		`log_warning() { printf 'WARN %s\n' "$*" >&2; }`,
 		"OCFP_BLOC=" + shellSingleQuote(bloc),
 		strings.Join(om.currentSafeTargetSnippet(), "\n"),
 		strings.Join(om.inceptionActiveSnippet(), "\n"),
-		`log_success() { :; }`,
-		`log_warning() { :; }`,
 	}, "\n")
 	if gs.restoreOnly {
 		script = strings.Join([]string{
 			"set -euo pipefail",
-			`log_info() { :; }`,
-			`log_success() { :; }`,
-			`log_warning() { :; }`,
+			`log_info() { printf 'INFO %s\n' "$*" >&2; }`,
+			`log_success() { printf 'OK %s\n' "$*" >&2; }`,
+			`log_warning() { printf 'WARN %s\n' "$*" >&2; }`,
 			strings.Join(om.currentSafeTargetSnippet(), "\n"),
 			"BLOC_VAULT_TARGET=" + shellSingleQuote(bloc+"-mgmt"),
 			"BLOC_INCEPTION_TARGET=" + shellSingleQuote(bloc+"-inception"),
@@ -199,8 +201,12 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 	cmd.Env = []string{"PATH=" + path, "HOME=" + bin}
 	cmd.Env = append(cmd.Env, gs.env...)
 
+	var logged strings.Builder
+
+	cmd.Stderr = &logged
+
 	out, err := cmd.Output()
-	require.NoError(t, err, string(out))
+	require.NoError(t, err, string(out)+logged.String())
 
 	active, target, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 
@@ -210,7 +216,7 @@ func runGate(t *testing.T, gs gateSetup) gateRun {
 		calls = strings.Fields(string(raw))
 	}
 
-	return gateRun{active: active, target: target, calls: calls}
+	return gateRun{active: active, target: target, calls: calls, log: logged.String()}
 }
 
 // The gate keys off the bloc's own targets rather than safe's current one.
@@ -466,6 +472,24 @@ func TestRestoreBlocVaultTargetSnippet_SelectsNothingWithoutTheBlocVaultsTarget(
 
 	run = runGate(t, gateSetup{bloc: "lab", targets: []string{"ops"}, restore: true})
 	assert.Empty(t, run.calls)
+}
+
+// When the restore leaves the current target alone, its log says why: it
+// names the target that is current, or says that safe could not tell, and
+// how safe failed, rather than claim a target is current.
+func TestRestoreBlocVaultTargetSnippet_SaysWhyItSelectsNothing(t *testing.T) {
+	run := runGate(t, gateSetup{bloc: "lab", targets: []string{"ops", "lab-mgmt"}, current: "ops", restoreOnly: true})
+	assert.Empty(t, run.calls)
+	assert.Contains(t, run.log, "INFO safe's current target is ops; leaving it as it is")
+
+	run = runGate(t, gateSetup{bloc: "lab", targets: []string{"lab-mgmt"}, targetFails: true, restoreOnly: true})
+	assert.Empty(t, run.calls)
+	assert.Contains(t, run.log, "WARN Could not tell which safe target is current (Current target not found in ~/.saferc)")
+	assert.NotContains(t, run.log, "already has a current target")
+
+	run = runGate(t, gateSetup{bloc: "lab", targets: []string{"ops"}, restoreOnly: true})
+	assert.Contains(t, run.log, "INFO safe has no target lab-mgmt for the bloc vault yet; selecting nothing")
+	assert.NotContains(t, run.log, "WARN")
 }
 
 // The restore snippet is emitted next to the gate today, but it must not
