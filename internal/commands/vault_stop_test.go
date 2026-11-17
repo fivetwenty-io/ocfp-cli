@@ -78,11 +78,13 @@ func (f *fakeVaultOps) isPortOpen(_ context.Context, _ string) bool {
 	return open
 }
 
-func (f *fakeVaultOps) sleep(time.Duration) {
+func (f *fakeVaultOps) sleep(ctx context.Context, _ time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.sleeps++
+
+	return ctx.Err()
 }
 
 func (f *fakeVaultOps) commandText() string {

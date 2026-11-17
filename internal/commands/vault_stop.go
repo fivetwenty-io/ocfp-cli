@@ -58,15 +58,22 @@ const lsofNoMatchExit = 1
 type inceptionVaultOps struct {
 	run      func(ctx context.Context, spec cleanupCommand) ([]byte, error)
 	portOpen func(ctx context.Context, port string) bool
-	sleep    func(d time.Duration)
+	// sleep waits for d, and returns the context's error at once when the
+	// context ends first, so an interrupt never waits out a pause.
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// productionVaultOps is the seam as ocfp runs it.
+//
+//nolint:gochecknoglobals // fixed value, read-only
+var productionVaultOps = inceptionVaultOps{
+	run:      runVaultCommand,
+	portOpen: localPortAcceptsConnections,
+	sleep:    sleepContext,
 }
 
 //nolint:gochecknoglobals // test seam, replaced only by installFakeVaultOps
-var vaultOps = inceptionVaultOps{
-	run:      runVaultCommand,
-	portOpen: localPortAcceptsConnections,
-	sleep:    time.Sleep,
-}
+var vaultOps = productionVaultOps
 
 // runVaultCommand runs one planned command and returns its standard output.
 func runVaultCommand(ctx context.Context, spec cleanupCommand) ([]byte, error) {
@@ -162,7 +169,10 @@ func stopInceptionVault(ctx context.Context, paths map[string]string, log *zap.S
 			_, _ = vaultOps.run(ctx, cleanupCommand{name: "kill", args: append([]string{"-9"}, holders...)})
 		}
 
-		vaultOps.sleep(vaultStopPollInterval)
+		err = vaultOps.sleep(ctx, vaultStopPollInterval)
+		if err != nil {
+			return fmt.Errorf("stopping inception vault: %w", err)
+		}
 	}
 
 	return vaultStillHeldError(paths["port"], portOpen, dbPath, holders)

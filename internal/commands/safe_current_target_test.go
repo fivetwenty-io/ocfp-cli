@@ -102,10 +102,12 @@ func (h *safeTargetHarness) useVaultOps(t *testing.T, cancel context.CancelFunc)
 	vaultOps = inceptionVaultOps{
 		run:      runVaultCommand,
 		portOpen: func(context.Context, string) bool { return false },
-		sleep: func(time.Duration) {
+		sleep: func(ctx context.Context, _ time.Duration) error {
 			if _, err := os.Stat(h.started); cancel != nil && err == nil {
 				cancel()
 			}
+
+			return ctx.Err()
 		},
 	}
 

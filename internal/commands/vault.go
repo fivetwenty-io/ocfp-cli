@@ -1099,7 +1099,10 @@ func startVaultInTmux(
 	ensureTmuxEnv(killCmd)
 	_ = killCmd.Run()
 
-	vaultOps.sleep(tmuxVerifyWait)
+	err = vaultOps.sleep(ctx, tmuxVerifyWait)
+	if err != nil {
+		return fmt.Errorf("starting vault in tmux: %w", err)
+	}
 
 	// Create new session
 	err = createTmuxSession(ctx, paths["tmuxSession"], log)
@@ -1107,7 +1110,10 @@ func startVaultInTmux(
 		return err
 	}
 
-	vaultOps.sleep(1 * time.Second)
+	err = vaultOps.sleep(ctx, 1*time.Second)
+	if err != nil {
+		return fmt.Errorf("starting vault in tmux: %w", err)
+	}
 
 	// Send command to tmux session
 	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paths["tmuxSession"], safeCmd, "C-m") // #nosec G204 -- the launcher path is shell-quoted by safeLocalLauncherLine
@@ -1119,7 +1125,11 @@ func startVaultInTmux(
 	}
 
 	log.Infow("Vault command sent to tmux", "session", paths["tmuxSession"])
-	vaultOps.sleep(VaultInitWait)
+
+	err = vaultOps.sleep(ctx, VaultInitWait)
+	if err != nil {
+		return fmt.Errorf("starting vault in tmux: %w", err)
+	}
 
 	return nil
 }
@@ -1318,7 +1328,10 @@ func waitForVaultReady(ctx context.Context, paths map[string]string, log *zap.Su
 			return nil
 		}
 
-		vaultOps.sleep(time.Second)
+		err = vaultOps.sleep(ctx, time.Second)
+		if err != nil {
+			return fmt.Errorf("waiting for vault to initialize: %w", err)
+		}
 	}
 
 	dumpVaultDiagnostics(ctx, paths, log)

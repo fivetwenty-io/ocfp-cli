@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,6 +172,32 @@ func TestWaitForVaultReady_WaitsAMinuteBeforeGivingUp(t *testing.T) {
 	err := waitForVaultReady(context.Background(), paths, zap.NewNop().Sugar())
 	require.ErrorIs(t, err, ErrVaultNotReady)
 	assert.GreaterOrEqual(t, fake.sleeps, 60, "each sleep is one second of waiting")
+}
+
+// An interrupt while the vault is starting stops the wait at once, with the
+// real sleep between checks, rather than polling a vault that will never be
+// ready for the rest of the minute.
+func TestWaitForVaultReady_StopsWhenInterrupted(t *testing.T) {
+	fake := installFakeVaultOps(t)
+	vaultOps.sleep = productionVaultOps.sleep
+	paths := readyTestPaths(t)
+	fake.outputs[paneCommand(paths)] = []string{"starting raft\n"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	done := make(chan error, 1)
+	started := time.Now()
+
+	go func() { done <- waitForVaultReady(ctx, paths, zap.NewNop().Sugar()) }()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Less(t, time.Since(started), 2*time.Second)
+	case <-time.After(5 * time.Second):
+		t.Fatal("waitForVaultReady kept polling after its context was cancelled")
+	}
 }
 
 func TestRedactVaultOutput(t *testing.T) {
