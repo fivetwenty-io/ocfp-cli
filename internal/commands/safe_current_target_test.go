@@ -305,22 +305,30 @@ func TestSafeCurrentTargetSurvivesInceptionStartAndTeardown(t *testing.T) {
 
 // Restarting the bloc's existing vault, as `ocfp vault inception` and
 // `ocfp vault start` do after a reboot, leaves the current target alone
-// too, and never even reads it.
+// too, and never even reads it. Each command restarts the vault on its own
+// path, so both are driven.
 func TestSafeCurrentTargetSurvivesInceptionRestart(t *testing.T) {
-	for name, current := range map[string]string{"an operator target": "ops", "no current target": ""} {
-		t.Run(name, func(t *testing.T) {
-			h := newSafeTargetHarness(t, current)
-			require.NoError(t, os.MkdirAll(filepath.Dir(h.paths["rootKeyFile"]), 0o700))
-			writeRaftData(t, h.paths["vaultDir"])
-			writeKeys(t, h.paths, true, true)
+	restarts := map[string]func(*safeTargetHarness, *testing.T) error{
+		"vault inception": func(h *safeTargetHarness, t *testing.T) error { return h.startFreshVault(t, false) },
+		"vault start":     (*safeTargetHarness).startVaultInPlace,
+	}
 
-			before := safeCurrentEntry(t)
+	for command, restart := range restarts {
+		for name, current := range map[string]string{"an operator target": "ops", "no current target": ""} {
+			t.Run(command+"/"+name, func(t *testing.T) {
+				h := newSafeTargetHarness(t, current)
+				require.NoError(t, os.MkdirAll(filepath.Dir(h.paths["rootKeyFile"]), 0o700))
+				writeRaftData(t, h.paths["vaultDir"])
+				writeKeys(t, h.paths, true, true)
 
-			require.NoError(t, h.startFreshVault(t, false))
-			require.FileExists(t, h.started, "safe local must have run")
-			assert.Equal(t, string(before), string(safeCurrentEntry(t)))
-			assert.Empty(t, safeSelectsOrUnpinned(readFakeSafeCalls(t, h.safeLog), h.paths["vaultName"]))
-		})
+				before := safeCurrentEntry(t)
+
+				require.NoError(t, restart(h, t))
+				require.FileExists(t, h.started, "safe local must have run")
+				assert.Equal(t, string(before), string(safeCurrentEntry(t)))
+				assert.Empty(t, safeSelectsOrUnpinned(readFakeSafeCalls(t, h.safeLog), h.paths["vaultName"]))
+			})
+		}
 	}
 }
 
