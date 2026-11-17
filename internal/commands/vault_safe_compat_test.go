@@ -48,15 +48,18 @@ const (
 func TestCheckSafeCompatibility_RefusesOldRelease(t *testing.T) {
 	t.Parallel()
 
-	safePath := fakeSafe(t, t.TempDir(), "safe v1.24.0", fakeSafeLocalHelp)
+	// v1.26.2 is the newest release without --keep-current, so it is
+	// refused on its version even though its help mentions the options.
+	safePath := fakeSafe(t, t.TempDir(), "safe v1.26.2", fakeSafeLocalHelp)
 
 	err := checkSafeCompatibility(context.Background(), safePath)
 	require.ErrorIs(t, err, ErrSafeTooOld)
 
 	msg := err.Error()
 	for _, want := range []string{
-		"v1.24.0",
-		"v1.25.0",
+		"v1.26.2",
+		"v1.27.0",
+		"--keep-current",
 		"--raft",
 		"--cluster-port",
 		"--root-token-file",
@@ -70,7 +73,7 @@ func TestCheckSafeCompatibility_RefusesOldRelease(t *testing.T) {
 func TestCheckSafeCompatibility_AcceptsCurrentReleases(t *testing.T) {
 	t.Parallel()
 
-	for _, version := range []string{"safe v1.25.0", "safe v1.30.2", "safe v2.0.0"} {
+	for _, version := range []string{"safe v1.27.0", "safe v1.30.2", "safe v2.0.0"} {
 		// The help text is deliberately silent about the options: a release
 		// at or past the minimum is trusted on its version alone.
 		safePath := fakeSafe(t, t.TempDir(), version, "safe local")
@@ -99,10 +102,10 @@ func TestCheckSafeCompatibility_DevelopmentBuildNeedsTheOptions(t *testing.T) {
 func TestCheckSafeCompatibility_PrereleaseOfMinimumNeedsTheOptions(t *testing.T) {
 	t.Parallel()
 
-	early := fakeSafe(t, t.TempDir(), "safe v1.25.0-rc.1", "safe local (--memory|--file dir|--raft dir)")
+	early := fakeSafe(t, t.TempDir(), "safe v1.27.0-rc.1", fakeSafeLocalHelpBase)
 	require.ErrorIs(t, checkSafeCompatibility(context.Background(), early), ErrSafeTooOld)
 
-	late := fakeSafe(t, t.TempDir(), "safe v1.25.0-rc.2", fakeSafeLocalHelp)
+	late := fakeSafe(t, t.TempDir(), "safe v1.27.0-rc.2", fakeSafeLocalHelp)
 	require.NoError(t, checkSafeCompatibility(context.Background(), late))
 }
 

@@ -12,9 +12,11 @@ import (
 
 // MinSafeVersion is the oldest safe release that can run a raft-backed
 // inception vault the way ocfp starts one: `safe local --raft` with an
-// explicit --cluster-port, and --root-token-file to reopen a vault with its
-// saved root token instead of calling generate-root.
-const MinSafeVersion = "1.25.0"
+// explicit --cluster-port, --root-token-file to reopen a vault with its
+// saved root token instead of calling generate-root, and --keep-current on
+// `safe local` and `safe target` so that registering the bloc's target
+// never changes the operator's current target.
+const MinSafeVersion = "1.27.0"
 
 // safeReleasesURL is where safe binaries are published for hosts without
 // Homebrew, such as the bastion.
@@ -25,7 +27,7 @@ const safeReleasesURL = "https://github.com/cloudfoundry-community/safe/releases
 // help text mentions them.
 //
 //nolint:gochecknoglobals // fixed list, read-only
-var safeLocalRequiredOptions = []string{"--cluster-port", "--root-token-file"}
+var safeLocalRequiredOptions = []string{"--cluster-port", "--root-token-file", safeKeepCurrentOption}
 
 // ErrSafeTooOld reports a safe that cannot run a raft-backed inception vault.
 var ErrSafeTooOld = errors.New("safe is too old for raft-backed inception vaults")
@@ -51,9 +53,10 @@ var safeVersionPattern = regexp.MustCompile(`^safe v(\d+)\.(\d+)\.(\d+)(\S*)`)
 
 // checkSafeCompatibility refuses a safe older than MinSafeVersion.
 //
-// An older safe would reject --cluster-port and --root-token-file, and
-// without the token file it falls back to generate-root to reopen a vault,
-// which OpenBao no longer allows. Failing here, before any vault is stopped
+// An older safe would reject --cluster-port, --root-token-file, or
+// --keep-current. Without the token file it falls back to generate-root to
+// reopen a vault, which OpenBao no longer allows, and without --keep-current
+// it would select the bloc's target. Failing here, before any vault is stopped
 // or moved, turns that into an upgrade message instead of a half-done
 // restart.
 //
@@ -180,7 +183,7 @@ func checkSafeKeepCurrent(ctx context.Context, safePath string) error {
 // safeTooOldError builds the upgrade message for an installed safe.
 func safeTooOldError(installed string) error {
 	return fmt.Errorf("%w: %s is installed, but ocfp needs safe v%s or later to run the inception vault "+
-		"(safe local --raft, --cluster-port, and --root-token-file); upgrade with "+
+		"(safe local --raft, --cluster-port, --root-token-file, and --keep-current); upgrade with "+
 		"'brew upgrade cloudfoundry-community/cf/safe', or download a release from %s",
 		ErrSafeTooOld, installed, MinSafeVersion, safeReleasesURL)
 }

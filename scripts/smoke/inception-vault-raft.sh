@@ -22,7 +22,7 @@
 # Variables:
 #
 #   SAFE_REPO   the safe repository to build safe from (default ../safe)
-#   SAFE_BIN    a prebuilt safe v1.25.0 or later with --keep-current, used
+#   SAFE_BIN    a prebuilt safe v1.27.0 or later, used
 #               instead of building
 #   OLD_REF     the ocfp release that creates file vaults (default v0.3.7)
 #   BAO26       the OpenBao 2.6.4 binary, used read-only

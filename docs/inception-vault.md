@@ -6,11 +6,11 @@ This page explains where the vault keeps its files, what `ocfp vault inception` 
 
 ## Requirements
 
-ocfp v0.3.9 needs safe v1.25.0 or later, because that is the first safe release that can reopen a raft vault with a saved root token. An older safe fails the prerequisite check with an upgrade message before anything is stopped or moved. The engine is OpenBao or HashiCorp Vault, and ocfp finds it the same way safe does, honouring `SAFE_ENGINE` when it is set.
+ocfp needs safe v1.27.0 or later. Safe v1.25.0 was the first release that can reopen a raft vault with a saved root token, and v1.27.0 is the first whose `safe target` and `safe local` commands offer `--keep-current`, which ocfp needs so that it never changes the operator's current target. An older safe fails the prerequisite check with an upgrade message before anything is stopped or moved. The engine is OpenBao or HashiCorp Vault, and ocfp finds it the same way safe does, honouring `SAFE_ENGINE` when it is set.
 
-A development build of safe, or a pre-release of v1.25.0 such as `v1.25.0-rc.1`, has a version number that cannot show whether it can run a raft vault, so ocfp asks the build itself. It accepts such a build only when `safe help local` lists both `--cluster-port` and `--root-token-file`, and otherwise it fails the same prerequisite check.
+A development build of safe, or a pre-release of v1.27.0 such as `v1.27.0-rc.1`, has a version number that cannot show whether it can run a raft vault, so ocfp asks the build itself. It accepts such a build only when `safe help local` lists `--cluster-port`, `--root-token-file`, and `--keep-current`, and otherwise it fails the same prerequisite check.
 
-ocfp also needs a safe whose `safe target` and `safe local` commands both offer `--keep-current`. With that option, safe registers the bloc's target without making it the current one, so ocfp never changes the target an operator chose. ocfp looks for the option in `safe help target` and `safe help local` rather than going by the version number. When either command lacks it, the prerequisite check fails with an upgrade message before any vault is stopped, moved, or started and before any target is registered.
+Whatever the version says, ocfp also checks that the safe's `safe target` and `safe local` commands both offer `--keep-current`. With that option, safe registers the bloc's target without making it the current one, so ocfp never changes the target an operator chose. ocfp looks for the option in `safe help target` and `safe help local` rather than going by the version number. When either command lacks it, the prerequisite check fails with an upgrade message before any vault is stopped, moved, or started and before any target is registered.
 
 ocfp also needs `tmux`, `lsof`, and `ps`, because it finds the processes that hold the vault's port and data with them, and it refuses to stop or archive a vault when it cannot. `ocfp init bastion` installs `lsof` on the bastion with the other system packages. macOS ships it, and on a Linux workstation we install it from the distribution's `lsof` package.
 
@@ -287,7 +287,7 @@ A new vault is held to the same standard. When ocfp starts one, it takes the new
 
 | Error | What it means | What to do |
 |-------|---------------|------------|
-| `safe is too old for raft-backed inception vaults` | The safe on `PATH` cannot run a raft vault. | Install safe v1.25.0 or later and run the command again. Nothing on disk changed. |
+| `safe is too old for raft-backed inception vaults` | The safe on `PATH` cannot run a raft vault. | Install safe v1.27.0 or later and run the command again. Nothing on disk changed. |
 | `safe cannot register a target without selecting it` | The safe on `PATH` has no `--keep-current` option for `safe target` or `safe local`, so registering the bloc's target would make it the current one. | Upgrade safe to a release that has `--keep-current` and run the command again. No vault and no safe target changed. |
 | `the inception vault port is taken` | Something that is not this bloc's vault answers on the API port, such as another program or another bloc's vault on a colliding port. It can also be this bloc's own engine on file storage after its safe exited, because ocfp can no longer prove that engine is the bloc's. `ocfp vault migrate-storage` returns it, and stops nothing, for a vault that was started by hand outside the bloc's tmux session. | Stop whatever holds the port, or set `OCFP_VAULT_INCEPTION_PORT` to move this bloc's ports. |
 | `the inception vault cluster port is taken` | The cluster port, the API port plus 1000, is in use, so the engine could not bind it. | Free the cluster port, or set `OCFP_VAULT_INCEPTION_PORT` to move both ports. |
@@ -328,7 +328,7 @@ A new vault is held to the same standard. When ocfp starts one, it takes the new
 
 ## Testing on a workstation
 
-`scripts/smoke/inception-vault-raft.sh` exercises every path on this page against throwaway blocs on scratch ports, with a scratch `HOME`, scratch ocfp homes, and its own tmux server. It never touches a real bloc, the real `~/.saferc`, or a lab. CI does not run it, because it needs safe v1.25.0, an OpenBao engine, and an OpenBao 2.6.4 binary to create file-backed vaults with.
+`scripts/smoke/inception-vault-raft.sh` exercises every path on this page against throwaway blocs on scratch ports, with a scratch `HOME`, scratch ocfp homes, and its own tmux server. It never touches a real bloc, the real `~/.saferc`, or a lab. CI does not run it, because it needs safe v1.27.0, an OpenBao engine, and an OpenBao 2.6.4 binary to create file-backed vaults with.
 
 We run it from the ocfp repository with the safe repository checked out beside it.
 

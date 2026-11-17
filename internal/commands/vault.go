@@ -423,7 +423,7 @@ as it can on the way:
 One run at a time works on a bloc's vault. A second run for the same bloc
 waits up to five minutes for the first to finish.
 
-This needs safe v1.25.0 or later. The engine is OpenBao or HashiCorp Vault,
+This needs safe v1.27.0 or later. The engine is OpenBao or HashiCorp Vault,
 chosen the way safe chooses it. Migrating a file-backed vault also needs an
 engine that can still read file storage, such as OpenBao 2.7 or earlier, and
 the command refuses an engine that reports a later OpenBao before it stops

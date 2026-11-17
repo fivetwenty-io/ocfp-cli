@@ -219,7 +219,7 @@ func logFakeSafeCall(args []string) {
 func (s *fakeSafeState) dispatch(command string, rest []string) int {
 	switch command {
 	case "--version":
-		fmt.Fprintln(s.stdout, "safe v1.25.0\n  commit 0000000")
+		fmt.Fprintln(s.stdout, "safe v1.27.0\n  commit 0000000")
 
 		return 0
 	case "help":

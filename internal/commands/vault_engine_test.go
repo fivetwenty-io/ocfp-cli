@@ -107,7 +107,7 @@ func TestResolveInceptionEngine_SearchesFallbackDirs(t *testing.T) {
 // pinned to bao may have no vault binary at all.
 func TestCheckVaultInceptionPrerequisites_AcceptsBaoAlone(t *testing.T) {
 	bin := t.TempDir()
-	fakeSafe(t, bin, "safe v1.25.0", fakeSafeLocalHelp)
+	fakeSafe(t, bin, "safe v1.27.0", fakeSafeLocalHelp)
 	writeFakeExecutable(t, bin, "bao", "exit 0\n")
 	writeFakeExecutable(t, bin, "tmux", "exit 0\n")
 	writeFakeExecutable(t, bin, "script", "exit 0\n")

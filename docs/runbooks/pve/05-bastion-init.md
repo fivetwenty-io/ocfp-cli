@@ -16,7 +16,7 @@ Full initialization installs the OCFP CLI, Genesis (from our configured repo and
 
 **The inception vault** is a small Vault the CLI runs locally on the bastion, on a loopback port derived from the bloc name. The derivation puts it somewhere in 18234 to 19233, and `ocfp-lab-wayne` lands on 18298, so that is the number this chapter quotes. A different bloc gets a different port on purpose, because that is what lets two of them run side by side without colliding. Port 8234 is the legacy value and applies only when no bloc is named at all, so we will not see it here.
 
-The vault keeps its data in integrated raft storage, and raft needs a second port for its cluster traffic. That port is always the API port plus 1000, which puts it somewhere in 19234 to 20233, so `ocfp-lab-wayne` also uses 19298. Both ports have to be free when the vault starts. Raft storage is also what lets the CLI reopen a stopped vault with its saved keys instead of replacing it, and it needs safe v1.25.0 or later on whichever machine runs the vault.
+The vault keeps its data in integrated raft storage, and raft needs a second port for its cluster traffic. That port is always the API port plus 1000, which puts it somewhere in 19234 to 20233, so `ocfp-lab-wayne` also uses 19298. Both ports have to be free when the vault starts. Raft storage is also what lets the CLI reopen a stopped vault with its saved keys instead of replacing it, and it needs safe v1.27.0 or later on whichever machine runs the vault.
 
 We never need to compute the port ourselves. `safe targets` prints it, and `ocfp vault inception --bloc <bloc>` uses it. To pin one anyway, set `OCFP_VAULT_INCEPTION_PORT`, and the cluster port moves with it.
 
