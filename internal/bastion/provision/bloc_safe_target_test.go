@@ -275,8 +275,9 @@ func TestBastionScripts_NeverReadThroughTheCurrentTarget(t *testing.T) {
 	}
 }
 
-// The scripts that resolve the bloc's target pass shellcheck, alone and
-// joined into one provisioning script, where the helper is defined twice.
+// The scripts that resolve or select the bloc's target pass shellcheck,
+// alone and joined into one provisioning script, where the helper is defined
+// twice.
 func TestBastionScripts_BlocSafeTargetPassesShellcheck(t *testing.T) {
 	t.Parallel()
 
@@ -292,15 +293,17 @@ func TestBastionScripts_BlocSafeTargetPassesShellcheck(t *testing.T) {
 	pmx := om.GeneratePMXContextScript(context.Background())
 	populate := om.GenerateVaultPopulateScript(context.Background())
 	health := vm.GenerateHealthCheckScript(context.Background())
+	inception := om.GenerateVaultInceptionScript(context.Background())
 
 	stubs := "#!/bin/bash\nset -euo pipefail\nlog_info() { :; }\nlog_success() { :; }\n" +
 		"log_warning() { :; }\nlog_error() { :; }\nexport OCFP_BLOC=lab OCFP_PROVIDER=pve\n"
 
 	for name, script := range map[string]string{
-		"pmx context":    pmx,
-		"vault populate": populate,
-		"health check":   health,
-		"all of them":    populate + "\n" + health + "\n" + pmx,
+		"pmx context":     pmx,
+		"vault populate":  populate,
+		"health check":    health,
+		"vault inception": inception,
+		"all of them":     inception + "\n" + populate + "\n" + health + "\n" + pmx,
 	} {
 		path := filepath.Join(t.TempDir(), "script.sh")
 		require.NoError(t, os.WriteFile(path, []byte(stubs+script+"\n"), 0o600))

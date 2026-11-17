@@ -969,8 +969,17 @@ func (om *OCFPManager) GenerateEnvironmentLoggingScript(_ctx context.Context) st
 	return strings.Join(lines, "\n")
 }
 
+// generateVaultInceptionExecution runs `ocfp vault inception` on the bastion
+// and, once it succeeds, selects the bloc's inception target when safe has
+// no current target at all. ocfp registers that target without selecting it,
+// so on a fresh bastion nothing would be current through bootstrap, and bare
+// safe commands would reach no vault. A target the operator chose stays
+// current, and when safe cannot say what is current nothing is selected.
 func (om *OCFPManager) generateVaultInceptionExecution() []string {
-	return []string{
+	lines := []string{"# Helpers that read safe's targets without changing them"}
+	lines = append(lines, om.currentSafeTargetSnippet()...)
+
+	return append(lines, []string{
 		"# Run vault inception using OCFP CLI binary on bastion",
 		"if [ -n \"$OCFP_CLI_PATH\" ]; then",
 		"    # Source Linuxbrew environment for vault, safe, and other brew-installed tools",
@@ -1003,6 +1012,20 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 		"    if PATH=\"/usr/local/bin:${PATH}\" \"${OCFP_CLI_PATH}\" \"${INCEPTION_ARGS[@]}\"; then",
 		"        log_success 'Vault inception completed successfully'",
 		"        export VAULT_ADDR",
+		"        # ocfp registers the bloc's target without selecting it, so a fresh",
+		"        # bastion has nothing current. Select the bloc's target only then;",
+		"        # any target the operator chose stays current.",
+		"        if [ -n \"${OCFP_BLOC:-}\" ]; then",
+		"            if ! ocfp_safe_has_target \"${OCFP_BLOC}-inception\"; then",
+		"                log_warning \"safe has no target ${OCFP_BLOC}-inception after vault inception; selecting nothing\"",
+		"            elif ocfp_safe_nothing_current; then",
+		"                if env -u SAFE_TARGET safe target \"${OCFP_BLOC}-inception\" >/dev/null 2>&1; then",
+		"                    log_success \"No safe target was current; selected ${OCFP_BLOC}-inception\"",
+		"                else",
+		"                    log_warning \"Could not select safe target ${OCFP_BLOC}-inception\"",
+		"                fi",
+		"            fi",
+		"        fi",
 		"    else",
 		"        VAULT_INCEPTION_EXIT=$?",
 		"        log_error \"Vault inception failed with exit code ${VAULT_INCEPTION_EXIT}\"",
@@ -1014,7 +1037,7 @@ func (om *OCFPManager) generateVaultInceptionExecution() []string {
 		"    exit 1",
 		"fi",
 		"",
-	}
+	}...)
 }
 
 func (om *OCFPManager) generateVaultPopulatePrerequisites() []string {

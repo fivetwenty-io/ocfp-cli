@@ -23,7 +23,50 @@ import (
 func runVaultInception(t *testing.T, exitCode int, errexit bool) (string, string, error) {
 	t.Helper()
 
+	run := runVaultInceptionWith(t, vaultInceptionSetup{
+		exitCode: exitCode, errexit: errexit,
+		gate: gateSetup{targets: []string{"ocfp-lab-inception"}, current: "ocfp-lab-inception"},
+	})
+
+	return run.out, run.args, run.err
+}
+
+// vaultInceptionSetup describes one run of the bastion's vault inception
+// step: how the fake ocfp exits, whether errexit is on, and the fake safe
+// binary's targets, current target, failure mode, and extra environment.
+type vaultInceptionSetup struct {
+	exitCode int
+	errexit  bool
+	gate     gateSetup
+}
+
+// vaultInceptionRun is what one run printed, the arguments ocfp got, the
+// targets the script selected, and how it exited.
+type vaultInceptionRun struct {
+	out, args string
+	calls     []string
+	err       error
+}
+
+// runVaultInceptionWith runs the vault inception step with a fake ocfp, the
+// shell functions runVaultInception describes, and fakeSafeScript as the safe
+// binary the script runs through env. HOME and PATH point at temp
+// directories, so no real safe or ~/.saferc is ever reached.
+func runVaultInceptionWith(t *testing.T, vs vaultInceptionSetup) vaultInceptionRun {
+	t.Helper()
+
+	exitCode, errexit := vs.exitCode, vs.errexit
+
 	dir := t.TempDir()
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "safe"), []byte(fakeSafeScript), 0o700)) // #nosec G306 -- the fake safe must be executable
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "targets"), []byte(strings.Join(vs.gate.targets, "\n")+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "current"), []byte(vs.gate.current), 0o600))
+
+	if vs.gate.targetFails {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "target_fails"), nil, 0o600))
+	}
+
 	argsFile := filepath.Join(dir, "ocfp-args.log")
 	ocfp := filepath.Join(dir, "ocfp")
 	fake := fmt.Sprintf("#!/bin/bash\necho \"$*\" >> %s\nexit %d\n", shellSingleQuote(argsFile), exitCode)
@@ -40,6 +83,7 @@ func runVaultInception(t *testing.T, exitCode int, errexit bool) (string, string
 		`log_info() { echo "INFO: $*"; }`,
 		`log_success() { echo "OK: $*"; }`,
 		`log_error() { echo "ERROR: $*"; }`,
+		`log_warning() { echo "WARN: $*"; }`,
 		`tmux() { return 0; }`,
 		`vault() { return 0; }`,
 		`safe() { echo "ocfp-lab-inception (http://127.0.0.1:18234)"; }`,
@@ -49,14 +93,77 @@ func runVaultInception(t *testing.T, exitCode int, errexit bool) (string, string
 		`echo "EXPORTED_VAULT_ADDR=$(printenv VAULT_ADDR)"`,
 	), "\n")
 
-	out, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+	cmd := exec.CommandContext(t.Context(), "bash", "-c", script)
+	cmd.Env = append([]string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + dir}, vs.gate.env...)
+
+	out, err := cmd.CombinedOutput()
 
 	args, readErr := os.ReadFile(argsFile)
 	if !errors.Is(readErr, os.ErrNotExist) {
 		require.NoError(t, readErr)
 	}
 
-	return string(out), string(args), err
+	var calls []string
+
+	if raw, readErr := os.ReadFile(filepath.Join(bin, "calls")); readErr == nil {
+		calls = strings.Fields(string(raw))
+	}
+
+	return vaultInceptionRun{out: string(out), args: string(args), calls: calls, err: err}
+}
+
+// A fresh bastion has no current safe target, and ocfp registers the bloc's
+// inception target without selecting it. So once vault inception succeeds,
+// the step selects that target when safe has no current target at all, and
+// bare safe commands reach the bloc's vault through bootstrap. A target the
+// operator chose stays current, and when safe cannot say what is current,
+// or the bloc's target is missing, nothing is selected.
+func TestVaultInceptionScript_SelectsTheInceptionTargetOnlyWhenNothingIsCurrent(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		gate      gateSetup
+		wantCalls []string
+		wantLog   string
+	}{
+		"a fresh bastion": {
+			gate: gateSetup{targets: []string{"ocfp-lab-inception"}}, wantCalls: []string{"ocfp-lab-inception"},
+			wantLog: "selected ocfp-lab-inception",
+		},
+		"SAFE_TARGET exported on a fresh bastion": {
+			gate:      gateSetup{targets: []string{"ocfp-lab-inception"}, env: []string{"SAFE_TARGET=ghost"}},
+			wantCalls: []string{"ocfp-lab-inception"},
+		},
+		"the operator's target": {
+			gate: gateSetup{targets: []string{"ops", "ocfp-lab-inception"}, current: "ops"},
+		},
+		"the bloc vault's target": {
+			gate: gateSetup{targets: []string{"ocfp-lab-inception", "ocfp-lab-mgmt"}, current: "ocfp-lab-mgmt"},
+		},
+		"safe cannot say what is current": {
+			gate: gateSetup{targets: []string{"ocfp-lab-inception"}, targetFails: true},
+		},
+		"the bloc's target is missing": {
+			gate: gateSetup{targets: []string{"ops"}}, wantLog: "WARN: safe has no target ocfp-lab-inception",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			run := runVaultInceptionWith(t, vaultInceptionSetup{errexit: true, gate: tc.gate})
+			require.NoError(t, run.err, run.out)
+			assert.Equal(t, tc.wantCalls, run.calls, run.out)
+			assert.Contains(t, run.out, tc.wantLog)
+		})
+	}
+
+	t.Run("a failed inception selects nothing", func(t *testing.T) {
+		t.Parallel()
+
+		run := runVaultInceptionWith(t, vaultInceptionSetup{exitCode: 3, errexit: true, gate: gateSetup{targets: []string{"ocfp-lab-inception"}}})
+		require.Error(t, run.err)
+		assert.Empty(t, run.calls)
+	})
 }
 
 // ocfp decides whether a running inception vault is healthy and its keys are
