@@ -47,7 +47,7 @@ func TestBuildSafeLocalCommand_FreshStartUsesRaft(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(cmd, `PATH='/opt/engines/bin':"$PATH" '/opt/safe/bin/safe' local `), cmd)
 	assert.Contains(t, cmd, "--raft '"+paths["vaultDir"]+"'")
-	assert.Contains(t, cmd, "--as '"+paths["vaultName"]+"'")
+	assert.Contains(t, cmd, "--as '"+paths["safeLocalName"]+"'", "safe local runs under a target of its own")
 	assert.Contains(t, cmd, " --keep-current ", "the bloc's target is registered without selecting it")
 	assert.Contains(t, cmd, "--port "+paths["port"]+" ")
 	assert.Contains(t, cmd, "--cluster-port "+paths["clusterPort"]+" ")
@@ -109,7 +109,7 @@ func TestBuildSafeLocalCommand_QuotingSurvivesTheShell(t *testing.T) {
 	assert.Equal(t, []string{
 		"local",
 		"--raft", paths["vaultDir"],
-		"--as", paths["vaultName"],
+		"--as", paths["safeLocalName"],
 		"--port", paths["port"],
 		"--cluster-port", paths["clusterPort"],
 		"--engine", "vault",

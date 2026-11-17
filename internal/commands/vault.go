@@ -73,6 +73,9 @@ var (
 	ErrVaultRootTokenRejected = fmt.Errorf("%w: the root token was refused", ErrVaultKeysRejected)
 	// ErrVaultTargetVerify indicates failure to verify the inception vault target.
 	ErrVaultTargetVerify = errors.New("failed to verify inception vault target")
+	// ErrNoRunningVaultToken reports a vault safe local started that left no
+	// root token anywhere ocfp can give the bloc's target.
+	ErrNoRunningVaultToken = errors.New("no root token for the running inception vault")
 )
 
 // NewVaultCmd creates the vault command.
@@ -519,6 +522,7 @@ func getVaultInceptionPaths(blocName string, testMode bool) (map[string]string, 
 		"unsealKeysFile": unsealKeysFile,
 		"tmuxSession":    tmuxSession,
 		"vaultName":      vaultName,
+		"safeLocalName":  keyfile.LocalTargetName(vaultName),
 		"port":           strconv.Itoa(port),
 		"clusterPort":    "",
 		"logDir":         logDir,
@@ -646,6 +650,9 @@ type cleanupCommand struct {
 	name string
 	args []string
 	tmux bool
+	// noSafeTarget runs the command without SAFE_TARGET, which safe looks
+	// up, and fails on, before it lists or deletes targets.
+	noSafeTarget bool
 }
 
 // vaultCleanupCommands builds the cleanup plan for one bloc's inception vault.
@@ -672,9 +679,39 @@ func vaultCleanupCommands(paths map[string]string) []cleanupCommand {
 }
 
 // vaultCleanupTargetCommands builds the plan run after processes have stopped.
+//
+// It removes the target safe local registered while it ran, which safe local
+// removes itself when it shuts down cleanly, and never a current target. The
+// bloc's own target stays: the next start updates it in place, and only a
+// teardown removes it.
 func vaultCleanupTargetCommands(paths map[string]string) []cleanupCommand {
+	if keyfile.TargetIsCurrent(paths["safeLocalName"]) {
+		return nil
+	}
+
 	return []cleanupCommand{
-		{name: "safe", args: []string{"target", "delete", paths["vaultName"]}, tmux: false},
+		{name: "safe", args: []string{"target", "delete", paths["safeLocalName"]}, noSafeTarget: true},
+	}
+}
+
+// forgetInceptionTarget removes the bloc's own target once its vault is torn
+// down, unless that target is current. A current target is the operator's
+// selection, so it stays, and the warning says how to switch away from it
+// and then remove it.
+func forgetInceptionTarget(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) {
+	name := paths["vaultName"]
+
+	if keyfile.TargetIsCurrent(name) {
+		log.Warnw("The inception vault was torn down, but safe's current target still names it, so the target "+
+			"was left in place; run 'safe target <other>' to switch to another target, then "+
+			"'safe target delete "+name+"' to remove it", "target", name)
+
+		return
+	}
+
+	_, err := vaultOps.run(ctx, cleanupCommand{name: "safe", args: []string{"target", "delete", name}, noSafeTarget: true})
+	if err != nil {
+		log.Debugw("The inception vault's safe target was not removed", "target", name, "error", err)
 	}
 }
 
@@ -693,7 +730,7 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 
 	now := time.Now()
 
-	// The stop deletes the bloc's safe target, which may hold the only copy
+	// Teardown deletes the bloc's safe target, which may hold the only copy
 	// of the root token, so the token is put beside the data first and goes
 	// into the archive with it.
 	_, err = keyfile.PreserveTargetToken(paths["rootKeyFile"], paths["vaultName"], blocTargetToken(paths), now, log)
@@ -705,6 +742,8 @@ func cleanupExistingVault(ctx context.Context, paths map[string]string, log *zap
 	if err != nil {
 		return err
 	}
+
+	forgetInceptionTarget(ctx, paths, log)
 
 	archived, err := archiveAndForgetVault(paths, now.Format(vaultArchiveTimeFormat), log)
 	if err != nil {
@@ -934,7 +973,7 @@ func buildSafeLocalCommand(paths map[string]string, tools inceptionTools, mode s
 		"PATH=" + shellQuote(filepath.Dir(tools.engine.path)) + `:"$PATH"`,
 		shellQuote(tools.safe), "local",
 		"--raft", shellQuote(paths["vaultDir"]),
-		"--as", shellQuote(paths["vaultName"]),
+		"--as", shellQuote(paths["safeLocalName"]),
 		"--port", paths["port"],
 		"--cluster-port", paths["clusterPort"],
 		"--engine", tools.engine.name,
@@ -1297,10 +1336,14 @@ func dumpVaultDiagnostics(ctx context.Context, paths map[string]string, log *zap
 	}
 }
 
-// targetInceptionVault points safe at the inception vault and checks that
-// safe now lists the bloc's target at the bloc's port. The check reads every
-// target rather than the current one, which a sibling bloc can move at any
-// moment.
+// targetInceptionVault registers the bloc's target for the vault safe local
+// just started, gives it that vault's root token, and checks that safe now
+// lists the target at the bloc's port. The check reads every target rather
+// than the current one, which a sibling bloc can move at any moment.
+//
+// safe local runs under a name of its own, so the bloc's target is updated
+// in place here and never deleted, and a current target that names it stays
+// current.
 func targetInceptionVault(ctx context.Context, safePath string, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Info("Targeting inception vault...")
 
@@ -1311,6 +1354,16 @@ func targetInceptionVault(ctx context.Context, safePath string, paths map[string
 	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("failed to target inception vault: %w", err)
+	}
+
+	token, err := runningVaultRootToken(paths)
+	if err != nil {
+		return err
+	}
+
+	err = authenticateInceptionTarget(ctx, safePath, paths["vaultName"], strings.NewReader(token+"\n"))
+	if err != nil {
+		return fmt.Errorf("failed to give target %s the inception vault's root token: %w", paths["vaultName"], err)
 	}
 
 	if !inceptionTargetRegistered(ctx, safePath, paths) {
@@ -1410,6 +1463,12 @@ func saveRootTokenFromSafeRC(paths map[string]string, log *zap.SugaredLogger) er
 	targetName := safeCfg.Current
 	if paths["vaultName"] != "" {
 		targetName = paths["vaultName"]
+
+		// safe local stores the new vault's root token on the target it
+		// registered, which holds it when the bloc's own target does not.
+		if v, ok := safeCfg.Vaults[targetName]; (!ok || v.Token == "") && paths["safeLocalName"] != "" {
+			targetName = paths["safeLocalName"]
+		}
 	}
 
 	if v, ok := safeCfg.Vaults[targetName]; ok && v.Token != "" {

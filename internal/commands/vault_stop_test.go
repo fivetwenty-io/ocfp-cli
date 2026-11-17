@@ -210,9 +210,38 @@ func TestStopInceptionVault_TouchesOnlyOwnBloc(t *testing.T) {
 	assert.Contains(t, text, "tmux kill-session -t ocfp-lab-drgao-inception-vault")
 	assert.Contains(t, text, "lsof -ti :"+ownPort+" -sTCP:LISTEN")
 	assert.Contains(t, text, "pkill -f safe local.*--port "+ownPort)
-	assert.Contains(t, text, "safe target delete ocfp-lab-drgao-inception")
+	assert.Contains(t, strings.Split(text, "\n"), "safe target delete ocfp-lab-drgao-inception-local")
+	assert.NotContains(t, strings.Split(text, "\n"), "safe target delete ocfp-lab-drgao-inception",
+		"a stop never deletes the bloc's own target; the next start updates it in place")
 	assert.NotContains(t, text, foreignPort)
 	assert.NotContains(t, text, "ocfp-lab-drhu")
+}
+
+// The target safe local registered is deleted after a stop only when it is
+// not current, whether current names it or its URL.
+func TestStopInceptionVault_NeverDeletesACurrentTarget(t *testing.T) {
+	for name, current := range map[string]string{
+		"current by name": "ocfp-lab-drgao-inception-local",
+		"current by URL":  "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakeVaultOps(t)
+			paths := stopTestPaths(t, "ocfp-lab-drgao")
+
+			url := "http://127.0.0.1:" + paths["port"]
+			if current == "" {
+				current = url
+			}
+
+			home, err := os.UserHomeDir()
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".saferc"), []byte("current: "+current+"\nvaults:\n  "+
+				paths["safeLocalName"]+":\n    url: "+url+"\n"), 0o600))
+
+			require.NoError(t, stopInceptionVault(context.Background(), paths, zap.NewNop().Sugar()))
+			assert.False(t, fake.ran("safe target delete"), fake.commandText())
+		})
+	}
 }
 
 func TestStopInceptionVault_PollsUntilThePortCloses(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fivetwenty-io/ocfp-cli/internal/keyfile"
 	"go.uber.org/zap"
 )
 
@@ -74,6 +75,10 @@ func runVaultCommand(ctx context.Context, spec cleanupCommand) ([]byte, error) {
 		ensureTmuxEnv(cmd)
 	}
 
+	if spec.noSafeTarget {
+		cmd.Env = keyfile.EnvWithoutSafeTarget()
+	}
+
 	out, err := cmd.Output()
 	if err != nil {
 		return out, fmt.Errorf("%s failed: %w", spec.name, err)
@@ -107,9 +112,10 @@ func localPortAcceptsConnections(ctx context.Context, port string) bool {
 // refuses connections and lsof finds nobody holding vault.db, and sends
 // SIGKILL to whatever still holds the data once the grace period ends.
 //
-// The safe target is deleted only after the vault is down, because safe
-// refuses to start a vault under a target name that already exists, and a
-// vault that is still running should keep its target.
+// The target safe local registered is deleted only after the vault is down,
+// because safe refuses to start a vault under a target name that already
+// exists, and a vault that is still running should keep its target. The
+// bloc's own target is never deleted here.
 func stopInceptionVault(ctx context.Context, paths map[string]string, log *zap.SugaredLogger) error {
 	log.Infow("Stopping inception vault", "session", paths["tmuxSession"], "port", paths["port"])
 

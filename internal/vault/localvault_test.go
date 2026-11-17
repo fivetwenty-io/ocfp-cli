@@ -73,7 +73,8 @@ func TestTeardownLocalInception_BlocScoped(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, *recorded, "tmux kill-session -t ocfp-lab-drgao-inception-vault")
-	assert.Contains(t, *recorded, "safe target delete ocfp-lab-drgao-inception")
+	assert.Contains(t, *recorded, "env -u SAFE_TARGET safe target delete ocfp-lab-drgao-inception")
+	assert.Contains(t, *recorded, "env -u SAFE_TARGET safe target delete ocfp-lab-drgao-inception-local")
 
 	joined := strings.Join(*recorded, "\n")
 	assert.Contains(t, joined, "pkill", "must stop local safe processes")
@@ -114,7 +115,7 @@ func TestTeardownLocalInception_BareNamesWithoutBloc(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, *recorded, "tmux kill-session -t inception-vault")
-	assert.Contains(t, *recorded, "safe target delete inception")
+	assert.Contains(t, *recorded, "env -u SAFE_TARGET safe target delete inception")
 }
 
 func TestTeardownLocalInception_RejectsInvalidBlocName(t *testing.T) {
@@ -316,7 +317,7 @@ func recordLocalCommands(t *testing.T, onDelete func()) *[]string {
 	record := runLocalCommand
 
 	runLocalCommand = func(ctx context.Context, name string, args ...string) error {
-		if name == "safe" && len(args) > 1 && args[0] == "target" && args[1] == "delete" && onDelete != nil {
+		if strings.Contains(name+" "+strings.Join(args, " "), "safe target delete") && onDelete != nil {
 			onDelete()
 		}
 
@@ -344,7 +345,7 @@ func TestTeardownLocalInception_SavesTheTargetTokenBeforeDeletingTheTarget(t *te
 	require.NoError(t, TeardownLocalInception(context.Background(), teardownTestBloc))
 
 	assert.Equal(t, teardownTestToken, heldAtDelete, "root.key must hold the token before the target is deleted")
-	assert.Contains(t, *recorded, "safe target delete "+teardownTestBloc+"-inception")
+	assert.Contains(t, *recorded, "env -u SAFE_TARGET safe target delete "+teardownTestBloc+"-inception")
 
 	info, err := os.Stat(rootKey)
 	require.NoError(t, err)
@@ -417,7 +418,7 @@ func TestTeardownLocalInception_IgnoresATargetOnAnotherPort(t *testing.T) {
 
 	require.NoError(t, TeardownLocalInception(context.Background(), teardownTestBloc))
 
-	assert.Contains(t, *recorded, "safe target delete "+teardownTestBloc+"-inception")
+	assert.Contains(t, *recorded, "env -u SAFE_TARGET safe target delete "+teardownTestBloc+"-inception")
 
 	_, err := os.Stat(filepath.Join(mustBlocDir(t, teardownTestBloc), "vault", "root.key"))
 	assert.ErrorIs(t, err, os.ErrNotExist, "a target that is not the bloc's own must not be saved")

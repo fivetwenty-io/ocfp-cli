@@ -718,7 +718,7 @@ func TestFinishInceptionVault_FailsWhenNewKeysAreNotSaved(t *testing.T) {
 			url := "http://127.0.0.1:" + paths["port"]
 			fake.outputs[safePath+" targets --json"] = []string{`[{"name":"` + paths["vaultName"] + `","url":"` + url + `"}]`}
 			require.NoError(t, os.WriteFile(paths["logFile"], []byte("Your OpenBao Seal Key is "+key+"\n"), 0o600))
-			writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
+			writeSafeRC(t, "vaults:\n  "+paths["safeLocalName"]+":\n    url: "+url+"\n    token: s.BLOC-TOKEN\n")
 
 			require.NoError(t, os.WriteFile(paths["logFile"]+".previous-20261006-110000", []byte("Now targeting x\n"), 0o600))
 
@@ -850,4 +850,20 @@ func TestCheckInceptionTargetTokenWith(t *testing.T) {
 		assert.NotErrorIs(t, err, ErrInceptionTargetTokenRefused)
 		assert.NotContains(t, err.Error(), "SENTINEL")
 	})
+}
+
+// The target safe local registered holds the running vault's root token, so
+// it wins over the bloc's own target, which may still hold the token of an
+// earlier vault on the same port. Either counts only at the bloc's port.
+func TestBlocTargetToken_PrefersTheRunningVaultsTarget(t *testing.T) {
+	paths := keyRecoveryPaths(t)
+	url := "http://127.0.0.1:" + paths["port"]
+
+	writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.EARLIER-VAULT\n  "+
+		paths["safeLocalName"]+":\n    url: "+url+"\n    token: s.RUNNING-VAULT\n")
+	assert.Equal(t, "s.RUNNING-VAULT", blocTargetToken(paths))
+
+	writeSafeRC(t, "vaults:\n  "+paths["vaultName"]+":\n    url: "+url+"\n    token: s.EARLIER-VAULT\n  "+
+		paths["safeLocalName"]+":\n    url: http://127.0.0.1:1\n    token: s.OTHER-PORT\n")
+	assert.Equal(t, "s.EARLIER-VAULT", blocTargetToken(paths))
 }

@@ -445,7 +445,7 @@ func (s *fakeSafeState) targets() int {
 }
 
 func (s *fakeSafeState) local(rest []string) int {
-	var name, port string
+	var name, port, rootTokenFile string
 
 	keep := false
 
@@ -459,9 +459,26 @@ func (s *fakeSafeState) local(rest []string) int {
 		case "--port":
 			i++
 			port = rest[i]
-		case "--raft", "--file", "--cluster-port", "--engine", "--root-token-file":
+		case "--root-token-file":
+			i++
+			rootTokenFile = rest[i]
+		case "--raft", "--file", "--cluster-port", "--engine":
 			i++
 		}
+	}
+
+	// A restart opens the vault with the saved root token, and safe stores
+	// that token on the target.
+	token := fakeSafeRootToken
+	if rootTokenFile != "" {
+		saved, err := os.ReadFile(rootTokenFile) // #nosec G304 -- the test's own key file
+		if err != nil {
+			fmt.Fprintf(s.stderr, "!! %s\n", err)
+
+			return 1
+		}
+
+		token = strings.TrimSpace(string(saved))
 	}
 
 	if keep && !s.keepFlag {
@@ -478,7 +495,7 @@ func (s *fakeSafeState) local(rest []string) int {
 
 	url := "http://127.0.0.1:" + port
 	previous := s.rc.Current
-	s.rc.Vaults[name] = &fakeSafeVault{URL: url, Token: fakeSafeRootToken}
+	s.rc.Vaults[name] = &fakeSafeVault{URL: url, Token: token}
 
 	if !keep {
 		s.rc.Current = name

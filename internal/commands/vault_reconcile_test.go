@@ -101,9 +101,9 @@ func (f *fakeInception) steps() inceptionSteps {
 
 			err := popErr(&f.stopErrs)
 			if err == nil {
-				// A real stop runs safe target delete, so safe no longer
-				// holds the token once the vault is down. A token read
-				// after the stop is therefore always gone.
+				// A real stop ends safe local, which deletes the target
+				// it registered and the root token that target holds. A
+				// token read after the stop is therefore taken as gone.
 				f.targetToken = ""
 			}
 

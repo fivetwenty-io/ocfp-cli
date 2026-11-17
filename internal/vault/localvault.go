@@ -123,6 +123,10 @@ func localInceptionRootKeyFile(blocName string) (string, error) {
 func keepLocalTargetToken(blocName, target, port string, log *zap.SugaredLogger) error {
 	token := keyfile.TargetToken(target, port)
 	if token == "" {
+		token = keyfile.TargetToken(keyfile.LocalTargetName(target), port)
+	}
+
+	if token == "" {
 		return nil
 	}
 
@@ -232,7 +236,8 @@ func killOrphanedInceptionEngine(ctx context.Context, port, vaultDB string, log 
 //
 // It stops the tmux session, kills local `safe local` proxy processes on
 // the inception port, stops an engine that outlived its safe while still
-// holding the bloc's raft data, and deletes the now-stale local safe target. It
+// holding the bloc's raft data, and deletes the now-stale local safe targets
+// unless one is current, which it leaves for the operator with a warning. It
 // deliberately does NOT remove the vault data directory: that data is the
 // last local copy of bootstrap-era secrets and is kept as a snapshot.
 //
@@ -280,12 +285,32 @@ func TeardownLocalInception(ctx context.Context, blocName string) error {
 
 	killOrphanedLocalEngine(ctx, blocName, port, log)
 
-	//nolint:noinlineerr // errors are passed to the logger for context
-	if err := runLocalCommand(ctx, "safe", "target", "delete", target); err != nil {
-		log.Debugw("Local safe target not present", "target", target, "error", err)
-	}
+	forgetLocalTargets(ctx, target, log)
 
 	log.Infow("Local inception vault decommissioned", "session", session)
 
 	return nil
+}
+
+// forgetLocalTargets removes the bloc's own inception target and the one
+// safe local registered while it ran, and never a target that is current. A
+// current target is the operator's selection, so it stays, and the warning
+// says how to switch away from it and then remove it.
+func forgetLocalTargets(ctx context.Context, target string, log *zap.SugaredLogger) {
+	for _, name := range []string{keyfile.LocalTargetName(target), target} {
+		if keyfile.TargetIsCurrent(name) {
+			log.Warnw("The local inception vault was torn down, but safe's current target still names it, so "+
+				"the target was left in place; run 'safe target <other>' to switch to another target, then "+
+				"'safe target delete "+name+"' to remove it", "target", name)
+
+			continue
+		}
+
+		// safe fails a delete when SAFE_TARGET names a target it does not
+		// know, so the delete runs without it.
+		//nolint:noinlineerr // errors are passed to the logger for context
+		if err := runLocalCommand(ctx, "env", "-u", "SAFE_TARGET", "safe", "target", "delete", name); err != nil {
+			log.Debugw("Local safe target not present", "target", name, "error", err)
+		}
+	}
 }

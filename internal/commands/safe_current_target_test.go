@@ -91,6 +91,27 @@ exit 0
 	}
 }
 
+// useVaultOps runs the vault commands for real against the harness's fakes,
+// with nothing listening on the port. When cancel is given, it is called at
+// the first pause after safe local has registered its target, as when the
+// operator stops ocfp part way.
+func (h *safeTargetHarness) useVaultOps(t *testing.T, cancel context.CancelFunc) {
+	t.Helper()
+
+	orig := vaultOps
+	vaultOps = inceptionVaultOps{
+		run:      runVaultCommand,
+		portOpen: func(context.Context, string) bool { return false },
+		sleep: func(time.Duration) {
+			if _, err := os.Stat(h.started); cancel != nil && err == nil {
+				cancel()
+			}
+		},
+	}
+
+	t.Cleanup(func() { vaultOps = orig })
+}
+
 // startFreshVault runs the inception vault reconcile for the bloc, with the
 // real start, target, and stop steps; with no vault on disk it starts a new
 // one. When interrupt is
@@ -102,18 +123,11 @@ func (h *safeTargetHarness) startFreshVault(t *testing.T, interrupt bool) error 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	orig := vaultOps
-	vaultOps = inceptionVaultOps{
-		run:      runVaultCommand,
-		portOpen: func(context.Context, string) bool { return false },
-		sleep: func(time.Duration) {
-			if _, err := os.Stat(h.started); interrupt && err == nil {
-				cancel()
-			}
-		},
+	if interrupt {
+		h.useVaultOps(t, cancel)
+	} else {
+		h.useVaultOps(t, nil)
 	}
-
-	t.Cleanup(func() { vaultOps = orig })
 
 	steps := newInceptionSteps(h.tools)
 	steps.probe = func(context.Context, string) vaultProbe { return vaultProbe{state: vaultProbeStopped} }
@@ -128,8 +142,70 @@ func (h *safeTargetHarness) startFreshVault(t *testing.T, interrupt bool) error 
 	})
 }
 
+// startVaultInPlace runs what `ocfp vault start` runs for the bloc, with the
+// real stop, reopen, and target steps.
+func (h *safeTargetHarness) startVaultInPlace(t *testing.T) error {
+	t.Helper()
+
+	h.useVaultOps(t, nil)
+
+	steps := newVaultStartSteps(h.tools)
+	steps.probe = func(context.Context, string) vaultProbe { return vaultProbe{state: vaultProbeStopped} }
+	steps.hasSession = func(context.Context, map[string]string) bool { return false }
+	steps.clusterPortFree = func(context.Context, string) error { return nil }
+
+	return restartInceptionVaultInPlace(t.Context(), &vaultStartRun{
+		paths: h.paths,
+		steps: steps,
+		log:   zap.NewNop().Sugar(),
+	})
+}
+
+// tearDownVault runs what `ocfp vault teardown` runs for the bloc, with the
+// real stop and archive.
+func (h *safeTargetHarness) tearDownVault(t *testing.T) error {
+	t.Helper()
+
+	h.useVaultOps(t, nil)
+
+	steps := newTeardownSteps(h.bloc)
+	steps.probe = func(context.Context, string) vaultProbe { return vaultProbe{state: vaultProbeStopped} }
+	steps.disableBootUnit = func(context.Context, *zap.SugaredLogger) error { return nil }
+
+	return tearDownInceptionVault(t.Context(), h.paths, steps, false, zap.NewNop().Sugar())
+}
+
+// writeSavedVault puts a raft vault and both of its keys on disk, so the
+// next start reopens it.
+func (h *safeTargetHarness) writeSavedVault(t *testing.T) {
+	t.Helper()
+
+	require.NoError(t, os.MkdirAll(filepath.Dir(h.paths["rootKeyFile"]), 0o700))
+	writeRaftData(t, h.paths["vaultDir"])
+	writeKeys(t, h.paths, true, true)
+}
+
+// selectOwnTarget registers the bloc's own inception target and makes it
+// current, as every older ocfp did, with a token from that older vault.
+func (h *safeTargetHarness) selectOwnTarget(t *testing.T) {
+	t.Helper()
+
+	rc, err := readFakeSafeRC()
+	require.NoError(t, err)
+
+	rc.Vaults[h.paths["vaultName"]] = &fakeSafeVault{URL: h.url(), Token: "s.OLDER-INCEPTION-TOKEN"}
+	rc.Current = h.paths["vaultName"]
+	require.NoError(t, writeFakeSafeRCFile(rc))
+}
+
+func (h *safeTargetHarness) url() string {
+	return "http://127.0.0.1:" + h.paths["port"]
+}
+
 // safeSelectsOrUnpinned lists every call that reads or could move safe's
-// current target, or that reaches a vault without naming one.
+// current target, that reaches a vault without naming one, or that deletes
+// a target other than the bloc's own two: its inception target and the one
+// safe local registers while it runs.
 func safeSelectsOrUnpinned(calls []fakeSafeCall, ownTarget string) []string {
 	var bad []string
 
@@ -159,7 +235,8 @@ func safeSelectsOrUnpinned(calls []fakeSafeCall, ownTarget string) []string {
 		case "target":
 			switch {
 			case len(positional) > 0 && positional[0] == "delete":
-				if !slices.Equal(positional[1:], []string{ownTarget}) {
+				if !slices.Equal(positional[1:], []string{ownTarget}) &&
+					!slices.Equal(positional[1:], []string{ownTarget + "-local"}) {
 					bad = append(bad, "deletes another target: "+line)
 				}
 			case len(positional) == 0:
@@ -216,6 +293,7 @@ func TestSafeCurrentTargetSurvivesInceptionStartAndTeardown(t *testing.T) {
 			rc, err := readFakeSafeRC()
 			require.NoError(t, err)
 			assert.NotContains(t, rc.Vaults, h.paths["vaultName"], "teardown removes the bloc's own target")
+			assert.NotContains(t, rc.Vaults, h.paths["vaultName"]+"-local", "and the one safe local registered")
 			assert.Contains(t, rc.Vaults, "ops", "the operator's own target stays")
 
 			calls := readFakeSafeCalls(t, h.safeLog)
@@ -242,6 +320,118 @@ func TestSafeCurrentTargetSurvivesInceptionRestart(t *testing.T) {
 			require.FileExists(t, h.started, "safe local must have run")
 			assert.Equal(t, string(before), string(safeCurrentEntry(t)))
 			assert.Empty(t, safeSelectsOrUnpinned(readFakeSafeCalls(t, h.safeLog), h.paths["vaultName"]))
+		})
+	}
+}
+
+// deletesTarget lists the calls that delete the named target.
+func deletesTarget(calls []fakeSafeCall, name string) []string {
+	var found []string
+
+	for _, call := range calls {
+		args := call.Args
+		for len(args) > 1 && (args[0] == "-T" || args[0] == "--target") {
+			args = args[2:]
+		}
+
+		if slices.Equal(args, []string{"target", "delete", name}) {
+			found = append(found, strings.Join(call.Args, " "))
+		}
+	}
+
+	return found
+}
+
+// Every older ocfp selected the bloc's own inception target, so on a host
+// it ran on, current names that target. Starting, restarting, and tearing
+// down the vault leave current exactly as it was then too. The target is
+// updated in place rather than deleted and made again, so its entry is
+// never gone while it is current, and a teardown leaves both the entry and
+// the selection for the operator to change.
+func TestSafeCurrentTargetSurvivesWhenItIsTheBlocsOwn(t *testing.T) {
+	localTeardown := func(h *safeTargetHarness, t *testing.T) error {
+		t.Helper()
+
+		return vault.TeardownLocalInception(context.Background(), h.bloc)
+	}
+	vaultTeardown := func(h *safeTargetHarness, t *testing.T) error {
+		t.Helper()
+
+		return h.tearDownVault(t)
+	}
+
+	tests := []struct {
+		name      string
+		saved     bool
+		interrupt bool
+		inPlace   bool
+		teardown  func(h *safeTargetHarness, t *testing.T) error
+	}{
+		{name: "a fresh vault, then init bastion's teardown", teardown: localTeardown},
+		{name: "a fresh vault, interrupted, then init bastion's teardown", interrupt: true, teardown: localTeardown},
+		{name: "a restart by vault inception, then vault teardown", saved: true, teardown: vaultTeardown},
+		{name: "a restart by vault inception, then init bastion's teardown", saved: true, teardown: localTeardown},
+		{name: "a restart by vault start, then vault teardown", saved: true, inPlace: true, teardown: vaultTeardown},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSafeTargetHarness(t, "")
+			h.selectOwnTarget(t)
+
+			if tc.saved {
+				h.writeSavedVault(t)
+			}
+
+			before := safeCurrentEntry(t)
+			require.Equal(t, "current: "+h.paths["vaultName"], string(before))
+
+			var err error
+
+			switch {
+			case tc.inPlace:
+				err = h.startVaultInPlace(t)
+			default:
+				err = h.startFreshVault(t, tc.interrupt)
+			}
+
+			if tc.interrupt {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.FileExists(t, h.started, "safe local must have run")
+			assert.Equal(t, string(before), string(safeCurrentEntry(t)), "after the inception vault started")
+
+			rc, err := readFakeSafeRC()
+			require.NoError(t, err)
+			require.Contains(t, rc.Vaults, h.paths["vaultName"], "the current target is never deleted")
+
+			if !tc.interrupt {
+				own := rc.Vaults[h.paths["vaultName"]]
+				assert.Equal(t, h.url(), own.URL)
+
+				want := fakeSafeRootToken
+				if tc.saved {
+					want = "s.ROOT-TOKEN-SENTINEL"
+				}
+
+				assert.Equal(t, want, own.Token, "the target holds the running vault's root token")
+			}
+
+			require.NoError(t, tc.teardown(h, t))
+			assert.Equal(t, string(before), string(safeCurrentEntry(t)), "after the inception vault was torn down")
+
+			rc, err = readFakeSafeRC()
+			require.NoError(t, err)
+			assert.Contains(t, rc.Vaults, h.paths["vaultName"], "teardown leaves the current target for the operator")
+			assert.NotContains(t, rc.Vaults, h.paths["vaultName"]+"-local", "teardown removes the one safe local registered")
+			assert.Contains(t, rc.Vaults, "ops", "the operator's own target stays")
+
+			calls := readFakeSafeCalls(t, h.safeLog)
+			assert.Empty(t, safeSelectsOrUnpinned(calls, h.paths["vaultName"]))
+			assert.Empty(t, deletesTarget(calls, h.paths["vaultName"]), "the current target is never deleted")
 		})
 	}
 }

@@ -325,10 +325,7 @@ func retargetInceptionVault(ctx context.Context, safePath string, paths map[stri
 
 	defer func() { _ = token.Close() }()
 
-	auth := exec.CommandContext(ctx, safePath, "-T", paths["vaultName"], "auth", "token") // #nosec G204 -- safePath is the validated safe binary and the args come from getVaultInceptionPaths()
-	auth.Stdin = token
-
-	err = auth.Run()
+	err = authenticateInceptionTarget(ctx, safePath, paths["vaultName"], token)
 	if err != nil {
 		return fmt.Errorf("safe could not authenticate target %s with the token in %s: %w",
 			paths["vaultName"], paths["rootKeyFile"], err)
@@ -337,6 +334,41 @@ func retargetInceptionVault(ctx context.Context, safePath string, paths map[stri
 	log.Infow("Registered the inception vault target again", "target", paths["vaultName"], "url", url)
 
 	return nil
+}
+
+// authenticateInceptionTarget stores the token read from token on the named
+// target. safe reads the token from stdin when stdin is not a terminal, so
+// the token never reaches a command line, and safe's output is never shown
+// because it can echo what it read.
+func authenticateInceptionTarget(ctx context.Context, safePath, target string, token io.Reader) error {
+	auth := exec.CommandContext(ctx, safePath, "-T", target, "auth", "token") // #nosec G204 -- safePath is the validated safe binary and target comes from getVaultInceptionPaths()
+	auth.Stdin = token
+
+	return auth.Run()
+}
+
+// runningVaultRootToken returns the root token of the vault safe local just
+// started. safe local stores it on the target it registered while it runs,
+// and a restarted vault was opened with the one in root.key, which stands in
+// when that target has none.
+func runningVaultRootToken(paths map[string]string) (string, error) {
+	token := keyfile.TargetToken(paths["safeLocalName"], paths["port"])
+	if token != "" {
+		return token, nil
+	}
+
+	saved, err := os.ReadFile(paths["rootKeyFile"])
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("failed to read %s: %w", paths["rootKeyFile"], err)
+	}
+
+	token = strings.TrimSpace(string(saved))
+	if token == "" {
+		return "", fmt.Errorf("%w: safe's target %s has none, and %s holds none",
+			ErrNoRunningVaultToken, paths["safeLocalName"], paths["rootKeyFile"])
+	}
+
+	return token, nil
 }
 
 // startInceptionVault launches safe local in mode and waits until it reports
@@ -824,9 +856,19 @@ func vaultPaneHistory(ctx context.Context, paths map[string]string) string {
 	return stripANSI(string(pane))
 }
 
-// blocTargetToken returns the token safe holds for the bloc's own target, or
-// "" unless that target exists and points at the bloc's port.
+// blocTargetToken returns the root token safe holds for the bloc's vault, or
+// "" unless a target that holds one points at the bloc's port.
+//
+// While safe local runs the vault, the target it registered holds the root
+// token of the vault that is running, so that token comes first. The bloc's
+// own target may still hold the token of an earlier vault on the same port
+// until targetInceptionVault gives it the new one.
 func blocTargetToken(paths map[string]string) string {
+	token := keyfile.TargetToken(paths["safeLocalName"], paths["port"])
+	if token != "" {
+		return token
+	}
+
 	return keyfile.TargetToken(paths["vaultName"], paths["port"])
 }
 
