@@ -687,6 +687,7 @@ func (c *Config) getSafeTool() BinaryTool {
 		InstallCommand: "",
 		Verify:         "safe --version",
 		Sudo:           true,
+		MinVersion:     safeMinVersion,
 	}
 }
 

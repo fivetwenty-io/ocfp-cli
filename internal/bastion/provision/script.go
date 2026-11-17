@@ -715,6 +715,27 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 
 	// Determine installation strategy based on tool characteristics
 	switch {
+	case tool.Dest != "" && tool.MinVersion != "":
+		lines = append(lines, sg.generateMinVersionCheck(tool)...)
+		lines = append(lines, `if [ "${TOOL_UP_TO_DATE}" = yes ]; then`)
+		lines = append(lines, fmt.Sprintf("    log_info 'Binary tool already installed: %s'", tool.Name))
+		lines = append(lines, "else")
+		lines = append(lines, fmt.Sprintf("    log_info 'Installing %s'", tool.Name))
+
+		for _, line := range sg.generateDownloadSteps(tool) {
+			lines = append(lines, "    "+line)
+		}
+
+		for _, line := range sg.generateVerificationStep(tool) {
+			lines = append(lines, "    "+line)
+		}
+
+		for _, line := range sg.generateMinVersionWarning(tool) {
+			lines = append(lines, "    "+line)
+		}
+
+		lines = append(lines, "fi")
+
 	case tool.Dest != "":
 		// Check if tool already exists at destination
 		lines = append(lines, fmt.Sprintf("if [ -f '%s' ]; then", tool.Dest))
@@ -745,6 +766,53 @@ func (sg *ScriptGenerator) generateToolInstallationScript(tool BinaryTool) []str
 	lines = append(lines, "")
 
 	return lines
+}
+
+// toolVersionCommand reads the first x.y.z version that tool's binary at
+// Dest prints for --version, or nothing when it prints none or fails.
+func toolVersionCommand(tool BinaryTool) string {
+	return fmt.Sprintf(`TOOL_VERSION="$('%s' --version 2>&1 | sed -n '1s/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' || true)"`, tool.Dest)
+}
+
+// toolOlderThanMinTest is a test that holds when TOOL_VERSION sorts before
+// tool's MinVersion.
+func toolOlderThanMinTest(tool BinaryTool) string {
+	return fmt.Sprintf(`[ "$(printf '%%s
+' '%[1]s' "${TOOL_VERSION}" | sort -V | head -n 1)" != '%[1]s' ]`, tool.MinVersion)
+}
+
+// generateMinVersionCheck sets TOOL_UP_TO_DATE to yes when a binary is at
+// Dest and does not report a version older than MinVersion. A binary whose
+// version cannot be read, such as a development build, is kept with a
+// warning rather than replaced with a release that may be older than it.
+func (sg *ScriptGenerator) generateMinVersionCheck(tool BinaryTool) []string {
+	return []string{
+		"TOOL_UP_TO_DATE=no",
+		fmt.Sprintf("if [ -f '%s' ]; then", tool.Dest),
+		"    TOOL_UP_TO_DATE=yes",
+		"    " + toolVersionCommand(tool),
+		`    if [ -z "${TOOL_VERSION}" ]; then`,
+		fmt.Sprintf("        log_warning 'The version of %[1]s at %[2]s could not be read, so it is kept; ocfp needs %[1]s %[3]s or later'",
+			tool.Name, tool.Dest, tool.MinVersion),
+		"    elif " + toolOlderThanMinTest(tool) + "; then",
+		fmt.Sprintf(`        log_info "%s ${TOOL_VERSION} is older than %s; upgrading it"`, tool.Name, tool.MinVersion),
+		"        TOOL_UP_TO_DATE=no",
+		"    fi",
+		"fi",
+	}
+}
+
+// generateMinVersionWarning warns when the binary just installed at Dest
+// still reports a version older than MinVersion, which happens when no
+// release that new has been published yet.
+func (sg *ScriptGenerator) generateMinVersionWarning(tool BinaryTool) []string {
+	return []string{
+		toolVersionCommand(tool),
+		`if [ -n "${TOOL_VERSION}" ] && ` + toolOlderThanMinTest(tool) + "; then",
+		fmt.Sprintf(`    log_warning "%[1]s ${TOOL_VERSION} at %[2]s is still older than %[3]s, which ocfp needs; install %[1]s %[3]s or later there"`,
+			tool.Name, tool.Dest, tool.MinVersion),
+		"fi",
+	}
 }
 
 // generateCustomInstallation generates installation script for tools with custom InstallCommand.

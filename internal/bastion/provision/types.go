@@ -61,6 +61,10 @@ type BinaryTool struct {
 	InstallCommand string `yaml:"installCommand"`
 	Verify         string `yaml:"verify"`
 	Sudo           bool   `yaml:"sudo"`
+	// MinVersion, when set, is the oldest version that may stay at Dest. A
+	// binary there that reports an older version with --version is replaced
+	// with the latest release.
+	MinVersion string `yaml:"minVersion"`
 }
 
 // APTRepository defines an APT repository to add.

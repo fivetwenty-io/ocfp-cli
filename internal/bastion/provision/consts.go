@@ -58,6 +58,11 @@ const (
 	fileModeExecutable    = 0755
 )
 
+// safeMinVersion is the oldest safe the bastion keeps. It matches the
+// version the inception vault commands require, since v1.27.0 is the first
+// release whose `safe target` and `safe local` offer --keep-current.
+const safeMinVersion = "1.27.0"
+
 // System configuration defaults.
 const (
 	systemWaitTimeSeconds = 10
