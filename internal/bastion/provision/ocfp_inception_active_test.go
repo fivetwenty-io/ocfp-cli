@@ -12,12 +12,17 @@ import (
 )
 
 // fakeSafeScript answers the three safe commands the inception gate runs.
-// 'safe targets --json' prints the JSON list on stdout, indented as safe
+// Like safe, it refuses to list targets when SAFE_TARGET names one it does
+// not know. 'safe targets --json' prints the JSON list on stdout, indented as safe
 // prints it or all on one line when a compact file sits beside the script,
 // while 'safe targets' and 'safe target' print their reports on stderr, as
 // safe does.
 const fakeSafeScript = `#!/bin/sh
 dir=$(dirname "$0")
+if [ "$1" = targets ] && [ -n "${SAFE_TARGET:-}" ] && ! grep -Fx -- "$SAFE_TARGET" "$dir/targets" >/dev/null; then
+  printf '!! unknown target %s\n' "$SAFE_TARGET" >&2
+  exit 1
+fi
 if [ "$1" = targets ] && [ "${2:-}" = --json ] && [ -e "$dir/compact" ]; then
   printf '['
   sep=''
@@ -354,6 +359,19 @@ func TestInceptionActiveSnippet_ASafeTargetFailureEndsNothing(t *testing.T) {
 		run := runGate(t, gateSetup{noSafe: true})
 		assert.Equal(t, "no", run.active)
 		assert.Empty(t, run.target)
+	})
+
+	t.Run("a named bloc, SAFE_TARGET naming an unknown target is ignored", func(t *testing.T) {
+		active, target := runInceptionGateWith(t, gateSetup{
+			bloc: bloc, targets: []string{"ops", bloc + "-inception"}, current: "ops", env: []string{"SAFE_TARGET=ghost"},
+		})
+		assert.Equal(t, "yes", active)
+		assert.Equal(t, bloc+"-inception", target)
+
+		active, _ = runInceptionGateWith(t, gateSetup{
+			bloc: bloc, targets: []string{bloc + "-inception", bloc + "-mgmt"}, env: []string{"SAFE_TARGET=ghost"},
+		})
+		assert.Equal(t, "no", active, "the bloc vault's target still wins")
 	})
 
 	t.Run("no bloc named, SAFE_TARGET naming an unknown target is ignored", func(t *testing.T) {

@@ -287,8 +287,10 @@ type safeTarget struct {
 // inceptionTargetRegistered reports whether safe has the bloc's target and
 // that it points at the bloc's port. It reads every target, never the current
 // one, because the current target is global and any sibling can move it.
+// SAFE_TARGET is dropped, because safe refuses to list targets when it names
+// one that safe does not know.
 func inceptionTargetRegistered(ctx context.Context, safePath string, paths map[string]string) bool {
-	out, err := vaultOps.run(ctx, cleanupCommand{name: safePath, args: []string{"targets", "--json"}})
+	out, err := vaultOps.run(ctx, cleanupCommand{name: safePath, args: []string{"targets", "--json"}, noSafeTarget: true})
 	if err != nil {
 		return false
 	}

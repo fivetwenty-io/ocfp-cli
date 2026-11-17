@@ -867,3 +867,19 @@ func TestBlocTargetToken_PrefersTheRunningVaultsTarget(t *testing.T) {
 		paths["safeLocalName"]+":\n    url: http://127.0.0.1:1\n    token: s.OTHER-PORT\n")
 	assert.Equal(t, "s.EARLIER-VAULT", blocTargetToken(paths))
 }
+
+// safe resolves SAFE_TARGET before it lists targets and fails when the name
+// is unknown, so the check lists them without it. An operator's exported
+// SAFE_TARGET must not make the bloc's registered target look missing.
+func TestInceptionTargetRegistered_IgnoresSafeTargetFromTheEnvironment(t *testing.T) {
+	paths := stopTestPaths(t, "ocfp-lab-drgao")
+	safePath, _ := installFakeSafe(t, t.TempDir())
+
+	require.NoError(t, writeFakeSafeRCFile(&fakeSafeRC{Version: 1, Current: "ops", Vaults: map[string]*fakeSafeVault{
+		"ops":              {URL: "https://ops.example:8200"},
+		paths["vaultName"]: {URL: "http://127.0.0.1:" + paths["port"]},
+	}}))
+
+	t.Setenv("SAFE_TARGET", "ghost")
+	assert.True(t, inceptionTargetRegistered(context.Background(), safePath, paths))
+}

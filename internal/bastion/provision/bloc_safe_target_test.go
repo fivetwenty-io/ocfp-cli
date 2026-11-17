@@ -15,12 +15,17 @@ import (
 )
 
 // pinnedFakeSafeScript is a safe that answers reads only through the
-// targets listed in its allowed file, named with -T. A bare read, which safe
+// targets listed in its allowed file, named with -T. Like safe, it refuses
+// to list targets when SAFE_TARGET names one it does not know. A bare read, which safe
 // would send to the operator's current target, fails. Every call is logged,
 // one line each, to the calls file.
 const pinnedFakeSafeScript = `#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/calls"
+if [ "$1" = targets ] && [ -n "${SAFE_TARGET:-}" ] && ! grep -Fx -- "$SAFE_TARGET" "$dir/targets" >/dev/null; then
+  printf '!! unknown target %s\n' "$SAFE_TARGET" >&2
+  exit 1
+fi
 if [ "$1" = targets ] && [ "${2:-}" = --json ]; then
   printf '['
   sep=''
@@ -70,8 +75,9 @@ type safeScriptRun struct {
 }
 
 // runWithPinnedSafe runs script under bash with OCFP_BLOC=lab, a fake safe
-// that knows targets and answers only through allowed, and a fake pmx.
-func runWithPinnedSafe(t *testing.T, script string, targets, allowed []string) safeScriptRun {
+// that knows targets and answers only through allowed, a fake pmx, and env
+// added to the environment.
+func runWithPinnedSafe(t *testing.T, script string, targets, allowed []string, env ...string) safeScriptRun {
 	t.Helper()
 
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -101,6 +107,7 @@ func runWithPinnedSafe(t *testing.T, script string, targets, allowed []string) s
 		"HOME=" + bin,
 		"XDG_CONFIG_HOME=" + filepath.Join(bin, "config"),
 	}
+	cmd.Env = append(cmd.Env, env...)
 
 	out, err := cmd.CombinedOutput()
 
@@ -158,6 +165,19 @@ func TestBlocSafeTargetSnippet_PinsReadsToTheBlocsOwnTarget(t *testing.T) {
 
 			assert.Contains(t, run.out, "READ ok")
 			assert.Equal(t, []string{"-T " + tc.wantTarget + " get secret/config/lab:key"}, vaultReads(run.calls))
+		})
+	}
+}
+
+// An operator's exported SAFE_TARGET, known to safe or not, never hides the
+// bloc's own targets, because they are listed without it.
+func TestBlocSafeTargetSnippet_IgnoresSafeTargetFromTheEnvironment(t *testing.T) {
+	for _, safeTarget := range []string{"ghost", "ops"} {
+		t.Run(safeTarget, func(t *testing.T) {
+			script := strings.Join(blocSafeTargetSnippet(""), "\n")
+			run := runWithPinnedSafe(t, script, []string{"ops", "lab-inception", "lab-mgmt"}, nil, "SAFE_TARGET="+safeTarget)
+			require.NoError(t, run.err, run.out)
+			assert.Contains(t, run.out, "BLOC_SAFE_TARGET=lab-mgmt\n")
 		})
 	}
 }
