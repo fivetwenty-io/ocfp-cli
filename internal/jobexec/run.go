@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -251,6 +252,19 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 	}
 
 	if created {
+		// The owner check read the clock before this run made its spool. A
+		// stall since then can have closed the window, and a job must not
+		// start after that.
+		err = checkIssueWindow(req, o.Clock.Now())
+		if err != nil {
+			rerr := removeEmptySpool(s)
+			if rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+
+			return refusalStream(o, req.JobID, err)
+		}
+
 		return runNew(o, s, req.JobID, v)
 	}
 
@@ -265,6 +279,22 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 	_, err = attach(ctx, o, s, req.JobID, verbHeader(req.JobID, v))
 
 	return err
+}
+
+// removeEmptySpool removes the spool that this run made and has put nothing
+// in, so that a later request for the same job can make it again. It removes
+// a directory only when it is empty. A run that attached in the meantime
+// finds no spool and waits out statusGrace, the same as for a run that made
+// its spool and died before writing status.json, and then reports the job
+// orphaned. Leaving the empty spool would give every later request that
+// same fate.
+func removeEmptySpool(s Spool) error {
+	err := os.Remove(s.Dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove spool of a request that expired: %w", err)
+	}
+
+	return nil
 }
 
 // cancelJob asks the job that a cancel request names to stop, and then

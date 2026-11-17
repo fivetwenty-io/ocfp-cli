@@ -302,9 +302,9 @@ func checkRequest(req Request, unknown []string, format int, now time.Time) erro
 		return invalid("job request holds the unknown field " + quote(unknown[0]))
 	}
 
-	if req.IssuedAt.Before(now.Add(-issuedBefore)) || req.IssuedAt.After(now.Add(issuedAfter)) {
-		return invalid(fmt.Sprintf("job request was issued at %s, outside %s before to %s after this host's clock at %s",
-			req.IssuedAt.UTC().Format(time.RFC3339Nano), issuedBefore, issuedAfter, now.UTC().Format(time.RFC3339Nano)))
+	err := checkIssueWindow(req, now)
+	if err != nil {
+		return err
 	}
 
 	if !jobIDPattern.MatchString(req.JobID) {
@@ -316,6 +316,18 @@ func checkRequest(req Request, unknown []string, format int, now time.Time) erro
 	}
 
 	return checkAction(req)
+}
+
+// checkIssueWindow refuses a request whose issue time is outside the window
+// around now. The owner check and a run's start both use it, so that a stall
+// between the two cannot start a job after its window has closed.
+func checkIssueWindow(req Request, now time.Time) error {
+	if req.IssuedAt.Before(now.Add(-issuedBefore)) || req.IssuedAt.After(now.Add(issuedAfter)) {
+		return invalid(fmt.Sprintf("job request was issued at %s, outside %s before to %s after this host's clock at %s",
+			req.IssuedAt.UTC().Format(time.RFC3339Nano), issuedBefore, issuedAfter, now.UTC().Format(time.RFC3339Nano)))
+	}
+
+	return nil
 }
 
 // checkAction refuses a request whose action is missing or not one of the

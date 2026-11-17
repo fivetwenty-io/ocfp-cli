@@ -44,15 +44,27 @@ func newFakeClock() *fakeClock { return &fakeClock{now: testNow} }
 
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
-	now := c.now
 	hook := c.onNow
 	c.mu.Unlock()
 
+	// The hook runs first, so that a hook which moves the clock changes the
+	// reading this call returns.
 	if hook != nil {
 		hook()
 	}
 
-	return now
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.now
+}
+
+// advance moves the clock on by d without a wait.
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.now = c.now.Add(d)
 }
 
 func (c *fakeClock) After(d time.Duration) <-chan time.Time {
@@ -511,6 +523,107 @@ func TestRunRefusedLeavesNoSpool(t *testing.T) {
 
 	if recs := records(t, again.stdout.Bytes()); recs[len(recs)-1].Kind != progress.KindResult {
 		t.Fatalf("the second run's stream does not end in a result:\n%s", again.stdout)
+	}
+}
+
+// TestRunRechecksTheIssueWindowBeforeStarting stalls the clock between the
+// owner check and the start, once the spool exists.
+func TestRunRechecksTheIssueWindowBeforeStarting(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		stall time.Duration
+		ok    bool
+	}{
+		// The request is issued a minute before the clock, so a stall of
+		// nine minutes leaves its age at exactly the ten the window allows.
+		{"still inside the window", 9 * time.Minute, true},
+		{"just outside the window", 9*time.Minute + time.Nanosecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := spoolRoot(t)
+			dir := filepath.Join(root, "job-0001")
+			store := storeWith(t, liveRecord())
+			sr := signedRequest(t, goodRequest())
+
+			rc := newRun(t, store, root, sr)
+
+			stalled := false
+
+			rc.clock.onNow = func() {
+				if stalled {
+					return
+				}
+
+				if _, err := os.Stat(dir); err != nil {
+					return
+				}
+
+				stalled = true
+
+				rc.clock.advance(tc.stall)
+			}
+
+			started := false
+			begin := rc.opts.start
+
+			rc.opts.start = func(vs verbStart) (*verbProc, error) {
+				started = true
+
+				return begin(vs)
+			}
+
+			err := rc.run(t)
+			if !stalled {
+				t.Fatal("the clock was never stalled")
+			}
+
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("Run = %v", err)
+				}
+
+				if !started {
+					t.Fatal("a request inside the window did not start")
+				}
+
+				return
+			}
+
+			r := wantRefusal(t, err, progress.CodeJobRequestInvalid)
+			if !strings.Contains(r.Message, "issued") {
+				t.Fatalf("message %q does not name the issue time", r.Message)
+			}
+
+			wantRefusalStream(t, rc.stdout.Bytes(), progress.CodeJobRequestInvalid, "job-0001")
+
+			if started || rc.host.calls.Load() != 0 {
+				t.Fatal("a verb ran for a request that had expired")
+			}
+
+			wantNoPath(t, dir)
+
+			// A fresh request for the same job id then makes the spool and
+			// runs.
+			again := newRun(t, store, root, signedRequest(t, goodRequest()))
+
+			err = again.run(t)
+			if err != nil {
+				t.Fatalf("Run of the fresh request = %v", err)
+			}
+
+			recs := records(t, again.stdout.Bytes())
+			if recs[len(recs)-1].Kind != progress.KindResult {
+				t.Fatalf("the fresh run's stream does not end in a result:\n%s", again.stdout)
+			}
+
+			if again.host.calls.Load() == 0 {
+				t.Fatal("the fresh request did not run its verb")
+			}
+		})
 	}
 }
 
