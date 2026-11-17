@@ -129,19 +129,41 @@ func TestIsolateFailsWhenItCannotFindTheGoCaches(t *testing.T) {
 	assert.Equal(t, home, os.Getenv("HOME"), "nothing moves when the caches can't be pinned")
 }
 
-func TestRunRemovesItsTreeAndReturnsTheCode(t *testing.T) {
-	fakeEnv(t, map[string]string{"HOME": t.TempDir(), "GOCACHE": os.Getenv("GOCACHE")})
+// quietGoHome returns a temporary home in which the go command keeps no
+// telemetry. Run asks the go command for its settings, and with telemetry
+// on, the go command writes counters under the home's config directory and
+// can leave a child process writing there after it exits, which races the
+// removal of the temporary directory. A mode file that says "off", under
+// each config directory the go command may use, stops both.
+func quietGoHome(t *testing.T) string {
+	t.Helper()
 
-	var home string
+	home := t.TempDir()
+
+	for _, config := range []string{filepath.Join(home, ".config"), filepath.Join(home, "Library", "Application Support")} {
+		dir := filepath.Join(config, "go", "telemetry")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "mode"), []byte("off"), 0o600))
+	}
+
+	return home
+}
+
+func TestRunRemovesItsTreeAndReturnsTheCode(t *testing.T) {
+	home := quietGoHome(t)
+	fakeEnv(t, map[string]string{"HOME": home, "GOCACHE": os.Getenv("GOCACHE")})
+
+	var isolated string
 
 	code := testenv.Run(func() int {
-		home = os.Getenv("HOME")
+		isolated = os.Getenv("HOME")
 
 		return 3
 	})
 
 	assert.Equal(t, 3, code)
-	assert.NoDirExists(t, filepath.Dir(home), "Run removes the tree")
+	assert.NoDirExists(t, filepath.Dir(isolated), "Run removes the tree")
+	assert.NoDirExists(t, filepath.Join(home, ".config", "go", "telemetry", "local"), "the go command kept telemetry in the test's home")
 }
 
 // A test binary that job exec started as a verb's process, but whose
