@@ -32,6 +32,10 @@ var safeLocalRequiredOptions = []string{"--cluster-port", "--root-token-file", s
 // ErrSafeTooOld reports a safe that cannot run a raft-backed inception vault.
 var ErrSafeTooOld = errors.New("safe is too old for raft-backed inception vaults")
 
+// ErrSafeHelpUnreadable reports a `safe help` that printed nothing or could
+// not run, which says nothing about the options safe offers.
+var ErrSafeHelpUnreadable = errors.New("could not read safe's help")
+
 // ErrSafeLacksKeepCurrent reports a safe that cannot register a target
 // without making it the current one.
 var ErrSafeLacksKeepCurrent = errors.New("safe cannot register a target without selecting it")
@@ -91,7 +95,12 @@ func checkSafeCompatibilityWith(ctx context.Context, help *safeHelp) error {
 		}
 	}
 
-	if safeHelpOffersRequiredOptions(ctx, help) {
+	offers, err := safeHelpOffersRequiredOptions(ctx, help)
+	if err != nil {
+		return err
+	}
+
+	if offers {
 		return nil
 	}
 
@@ -154,39 +163,67 @@ func compareVersions(a, b [3]int) int {
 // share what it printed.
 type safeHelp struct {
 	safePath string
-	pages    map[string]string
+	pages    map[string]safeHelpPage
+}
+
+// safeHelpPage is what one `safe help <command>` printed, or why it could
+// not be read.
+type safeHelpPage struct {
+	text string
+	err  error
 }
 
 // newSafeHelp returns a safeHelp for the safe at safePath.
 func newSafeHelp(safePath string) *safeHelp {
-	return &safeHelp{safePath: safePath, pages: map[string]string{}}
+	return &safeHelp{safePath: safePath, pages: map[string]safeHelpPage{}}
 }
 
-// page returns what `safe help <command>` printed. The exit status is
-// ignored; only the text counts.
-func (h *safeHelp) page(ctx context.Context, command string) string {
-	if text, ok := h.pages[command]; ok {
-		return text
+// page returns what `safe help <command>` printed. A non-zero exit is
+// ignored when safe printed its help, because only the text counts. When
+// safe printed nothing, could not start, or was killed, the page says
+// nothing about safe's options, and page returns ErrSafeHelpUnreadable so
+// the caller does not mistake it for an old safe.
+func (h *safeHelp) page(ctx context.Context, command string) (string, error) {
+	if cached, ok := h.pages[command]; ok {
+		return cached.text, cached.err
 	}
 
-	out, _ := exec.CommandContext(ctx, h.safePath, "help", command).CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
-	h.pages[command] = string(out)
+	out, runErr := exec.CommandContext(ctx, h.safePath, "help", command).CombinedOutput() // #nosec G204 -- safePath is the resolved safe binary
 
-	return h.pages[command]
+	page := safeHelpPage{text: string(out)}
+
+	var exitErr *exec.ExitError
+
+	switch {
+	case runErr != nil && !errors.As(runErr, &exitErr):
+		page.err = fmt.Errorf("%w: could not run `safe help %s`: %w", ErrSafeHelpUnreadable, command, runErr)
+	case exitErr != nil && exitErr.ExitCode() < 0:
+		page.err = fmt.Errorf("%w: could not run `safe help %s`, which was killed: %w", ErrSafeHelpUnreadable, command, runErr)
+	case strings.TrimSpace(page.text) == "":
+		page.err = fmt.Errorf("%w: could not run `safe help %s`, which printed nothing; check that %s is safe",
+			ErrSafeHelpUnreadable, command, h.safePath)
+	}
+
+	h.pages[command] = page
+
+	return page.text, page.err
 }
 
 // safeHelpOffersRequiredOptions reports whether `safe help local` mentions
-// every option ocfp passes.
-func safeHelpOffersRequiredOptions(ctx context.Context, help *safeHelp) bool {
-	text := help.page(ctx, "local")
+// every option ocfp passes, or why the help could not be read.
+func safeHelpOffersRequiredOptions(ctx context.Context, help *safeHelp) (bool, error) {
+	text, err := help.page(ctx, "local")
+	if err != nil {
+		return false, err
+	}
 
 	for _, option := range safeLocalRequiredOptions {
 		if !strings.Contains(text, option) {
-			return false
+			return false, nil
 		}
 	}
 
-	return true
+	return true, nil
 }
 
 // checkSafeKeepCurrent refuses a safe whose `target` and `local` commands
@@ -208,7 +245,12 @@ func checkSafeKeepCurrent(ctx context.Context, safePath string) error {
 // through help, which the prerequisite check shares between its checks.
 func checkSafeKeepCurrentWith(ctx context.Context, help *safeHelp) error {
 	for _, command := range safeKeepCurrentCommands {
-		if !strings.Contains(help.page(ctx, command), safeKeepCurrentOption) {
+		text, err := help.page(ctx, command)
+		if err != nil {
+			return err
+		}
+
+		if !strings.Contains(text, safeKeepCurrentOption) {
 			return fmt.Errorf("%w: `safe help %s` does not offer %s, which ocfp needs so that it never changes "+
 				"the current safe target; upgrade safe to a release with %s with "+
 				"'brew upgrade cloudfoundry-community/cf/safe', or download one from %s",

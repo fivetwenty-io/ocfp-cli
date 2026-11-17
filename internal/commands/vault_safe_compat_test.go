@@ -253,3 +253,28 @@ esac
 	require.NoError(t, err)
 	assert.Equal(t, "--version\nhelp local\nhelp target\n", string(raw))
 }
+
+// A safe help that prints nothing, such as a wrong binary or a wrapper that
+// swallows its output, says nothing about which options safe offers. Both
+// checks report that they could not run it rather than call safe too old.
+func TestSafeChecks_ReportAHelpThatPrintsNothing(t *testing.T) {
+	t.Parallel()
+
+	silent := `case "$1" in
+  --version) printf '%s\n' "$VERSION" ;;
+  help) exit 1 ;;
+esac
+`
+
+	release := writeFakeExecutable(t, t.TempDir(), "safe", "VERSION='safe v1.27.0'\n"+silent)
+	err := checkSafeKeepCurrent(context.Background(), release)
+	require.ErrorIs(t, err, ErrSafeHelpUnreadable)
+	assert.Contains(t, err.Error(), "could not run `safe help")
+	assert.NotErrorIs(t, err, ErrSafeLacksKeepCurrent)
+
+	dev := writeFakeExecutable(t, t.TempDir(), "safe", "VERSION='safe (development build)'\n"+silent)
+	err = checkSafeCompatibility(context.Background(), dev)
+	require.ErrorIs(t, err, ErrSafeHelpUnreadable)
+	assert.Contains(t, err.Error(), "could not run `safe help local`")
+	assert.NotErrorIs(t, err, ErrSafeTooOld)
+}
