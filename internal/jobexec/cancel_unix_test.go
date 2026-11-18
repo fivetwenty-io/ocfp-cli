@@ -191,8 +191,8 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 		t.Fatalf("warning = %+v, want one that lists the undo hook that did not run", w)
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCancelled {
-		t.Fatalf("error = %+v, want %s", e, progress.CodeJobCancelled)
+	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCanceled {
+		t.Fatalf("error = %+v, want %s", e, progress.CodeJobCanceled)
 	}
 
 	if r := bodyOf[progress.ResultBody](t, recs[5]); r.Cancel != progress.CancelKilled || r.ExitCode == 0 {

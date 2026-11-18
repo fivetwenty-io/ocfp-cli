@@ -764,7 +764,7 @@ type verbEnd struct {
 	// the run saw none.
 	seenAt time.Time
 
-	// message says how the cancel ended the job, for its JOB_CANCELLED
+	// message says how the cancel ended the job, for its JOB_CANCELED
 	// error.
 	message string
 

@@ -131,7 +131,7 @@ type waitClock interface {
 // every 200 ms, on its own clock. The first time it finds one, it passes the
 // cancel on to the verb, which stops at its next safe point and runs its undo
 // hooks. A job that stops that way, and a job whose marker was there before
-// its verb started, end with a JOB_CANCELLED error and a result whose cancel
+// its verb started, end with a JOB_CANCELED error and a result whose cancel
 // is stopped, and exit.json records the outcome and when the run first saw
 // the marker. A verb that finishes before it reaches a safe point ends the
 // job as if no cancel had come. A verb that has not exited once its cancel
@@ -562,7 +562,7 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 
 // writeEnd writes the records that end a job's stream: a warning that names
 // the work left undone, when a cancelled verb left any, a
-// JOB_CANCELLED error when a cancel ended the job, and the result, which
+// JOB_CANCELED error when a cancel ended the job, and the result, which
 // names the cancel's outcome.
 func writeEnd(enc *progress.Encoder, end verbEnd) error {
 	if len(end.undone) > 0 {
@@ -578,7 +578,7 @@ func writeEnd(enc *progress.Encoder, end verbEnd) error {
 	}
 
 	if end.cancel != "" {
-		err := enc.Encode(progress.KindError, progress.ErrorBody{Code: progress.CodeJobCancelled, Message: end.message})
+		err := enc.Encode(progress.KindError, progress.ErrorBody{Code: progress.CodeJobCanceled, Message: end.message})
 		if err != nil {
 			return err
 		}

@@ -50,9 +50,9 @@ const (
 	// the one the host's owner record names.
 	CodeOrgBlocMismatch Code = "ORG_BLOC_MISMATCH"
 
-	// CodeJobCancelled reports a job that ended because a cancel asked it to
+	// CodeJobCanceled reports a job that ended because a cancel asked it to
 	// stop.
-	CodeJobCancelled Code = "JOB_CANCELLED"
+	CodeJobCanceled Code = "JOB_CANCELED"
 
 	// CodeJobNotFound reports a cancel of a job that has no spool on the
 	// host. A requester whose own run has not yet made the spool can try

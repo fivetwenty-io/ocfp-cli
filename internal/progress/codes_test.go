@@ -24,7 +24,7 @@ func TestRefusalCodesAreUpperSnake(t *testing.T) {
 		"JOB_ORPHANED":              progress.CodeJobOrphaned,
 		"OWNER_RECORD_INVALID":      progress.CodeOwnerRecordInvalid,
 		"ORG_BLOC_MISMATCH":         progress.CodeOrgBlocMismatch,
-		"JOB_CANCELLED":             progress.CodeJobCancelled,
+		"JOB_CANCELED":              progress.CodeJobCanceled,
 		"JOB_NOT_FOUND":             progress.CodeJobNotFound,
 	}
 

@@ -22,11 +22,11 @@ func TestCancelOutcomesAreStable(t *testing.T) {
 	}
 }
 
-func TestJobCancelledCodeIsStable(t *testing.T) {
+func TestJobCanceledCodeIsStable(t *testing.T) {
 	t.Parallel()
 
-	if string(progress.CodeJobCancelled) != "JOB_CANCELLED" {
-		t.Fatalf("CodeJobCancelled = %q, want JOB_CANCELLED", progress.CodeJobCancelled)
+	if string(progress.CodeJobCanceled) != "JOB_CANCELED" {
+		t.Fatalf("CodeJobCanceled = %q, want JOB_CANCELED", progress.CodeJobCanceled)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestCancelOutcomeOfAStoppedStream(t *testing.T) {
 	t.Parallel()
 
 	got, ok := progress.CancelOutcomeOf(
-		&progress.ErrorBody{Code: progress.CodeJobCancelled, Message: "job job-0001 was cancelled and stopped at a safe point"},
+		&progress.ErrorBody{Code: progress.CodeJobCanceled, Message: "job job-0001 was cancelled and stopped at a safe point"},
 		progress.ResultBody{ExitCode: 1, Cancel: progress.CancelStopped})
 	if !ok || got != progress.CancelStopped {
 		t.Fatalf("outcome = %q, %v; want stopped", got, ok)
@@ -156,7 +156,7 @@ func TestCancelOutcomeOfAKilledStream(t *testing.T) {
 	t.Parallel()
 
 	got, ok := progress.CancelOutcomeOf(
-		&progress.ErrorBody{Code: progress.CodeJobCancelled, Message: "job job-0001 was cancelled and killed when its cancel budget of 5s passed"},
+		&progress.ErrorBody{Code: progress.CodeJobCanceled, Message: "job job-0001 was cancelled and killed when its cancel budget of 5s passed"},
 		progress.ResultBody{ExitCode: 1, Cancel: progress.CancelKilled})
 	if !ok || got != progress.CancelKilled {
 		t.Fatalf("outcome = %q, %v; want killed", got, ok)
@@ -188,7 +188,7 @@ func TestAnOrphanedStreamHasNoCancelOutcome(t *testing.T) {
 	}{
 		"orphaned": {&progress.ErrorBody{Code: progress.CodeJobOrphaned, Message: "job job-0001 is orphaned"}, progress.ResultBody{ExitCode: 1}},
 		"refused":  {&progress.ErrorBody{Code: progress.CodeJobNotFound, Message: "job job-0001 has no spool on this host"}, progress.ResultBody{ExitCode: 2}},
-		"unknown":  {&progress.ErrorBody{Code: progress.CodeJobCancelled, Message: "job job-0001 was cancelled"}, progress.ResultBody{ExitCode: 1, Cancel: "unknown-outcome"}},
+		"unknown":  {&progress.ErrorBody{Code: progress.CodeJobCanceled, Message: "job job-0001 was cancelled"}, progress.ResultBody{ExitCode: 1, Cancel: "unknown-outcome"}},
 		"stored":   {nil, progress.ResultBody{ExitCode: 0, Cancel: progress.CancelAlreadyFinished}},
 	} {
 		if got, ok := progress.CancelOutcomeOf(tc.err, tc.res); ok || got != "" {

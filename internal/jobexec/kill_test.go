@@ -125,7 +125,7 @@ func killRunWith(t *testing.T, setup func(rc *runCase), lines ...string) (*runCa
 // before that, and first at it. The scripted verb exits at its first kill,
 // so it is killed once. A real verb whose kill fails is killed again at the
 // next look, and its group gets one more kill when it is reaped. The stream
-// ends with JOB_CANCELLED and a result that says the job was killed, and
+// ends with JOB_CANCELED and a result that says the job was killed, and
 // exit.json records it.
 func TestACancelKillsWhenTheBudgetPasses(t *testing.T) {
 	t.Parallel()
@@ -158,8 +158,8 @@ func TestACancelKillsWhenTheBudgetPasses(t *testing.T) {
 		t.Fatalf("record kinds = %v, want %v and no warning:\n%s", got, want, rc.stdout)
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[3]); e.Code != progress.CodeJobCancelled || e.Message != "job job-0001 was cancelled and killed when its cancel budget of 5s passed" {
-		t.Fatalf("error = %+v, want JOB_CANCELLED for a kill", e)
+	if e := bodyOf[progress.ErrorBody](t, recs[3]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and killed when its cancel budget of 5s passed" {
+		t.Fatalf("error = %+v, want JOB_CANCELED for a kill", e)
 	}
 
 	if r := bodyOf[progress.ResultBody](t, recs[4]); r.ExitCode != 1 || r.Cancel != progress.CancelKilled {
@@ -264,8 +264,8 @@ func TestAStopBeforeTheBudgetIsNotAKill(t *testing.T) {
 				t.Fatalf("result = %+v, want exit code 1 and cancel stopped", r)
 			}
 
-			if e := bodyOf[progress.ErrorBody](t, recs[len(recs)-2]); e.Code != progress.CodeJobCancelled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
-				t.Fatalf("error = %+v, want JOB_CANCELLED for a stop", e)
+			if e := bodyOf[progress.ErrorBody](t, recs[len(recs)-2]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
+				t.Fatalf("error = %+v, want JOB_CANCELED for a stop", e)
 			}
 		})
 	}

@@ -122,7 +122,7 @@ func stoppedRunOf(t *testing.T, w *waitingVerb) (*runCase, *waitingVerb, Spool, 
 }
 
 // A cancel reaches the verb, which stops at its next safe point. Its undo
-// hook runs once, and the stream ends with JOB_CANCELLED and a result that
+// hook runs once, and the stream ends with JOB_CANCELED and a result that
 // says the job stopped.
 func TestACancelStopsAtTheNextSafePoint(t *testing.T) {
 	t.Parallel()
@@ -153,8 +153,8 @@ func TestACancelStopsAtTheNextSafePoint(t *testing.T) {
 		}
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCancelled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
-		t.Fatalf("error = %+v, want JOB_CANCELLED for a stop", e)
+	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
+		t.Fatalf("error = %+v, want JOB_CANCELED for a stop", e)
 	}
 
 	if r := bodyOf[progress.ResultBody](t, recs[5]); r.ExitCode != 1 || r.Cancel != progress.CancelStopped {
@@ -230,7 +230,7 @@ func TestACancelledExitRecordsTheOutcome(t *testing.T) {
 
 // A marker already in the spool when the run has written the header stops
 // the job before its verb starts: no verb runs, no hook runs, and the stream
-// ends with JOB_CANCELLED and a stop.
+// ends with JOB_CANCELED and a stop.
 func TestACancelBeforeTheVerbStartsRunsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -286,8 +286,8 @@ func TestACancelBeforeTheVerbStartsRunsNothing(t *testing.T) {
 		t.Fatalf("header = %+v, want the verb's budget", h)
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[1]); e.Code != progress.CodeJobCancelled || !strings.Contains(e.Message, "before its verb started") {
-		t.Fatalf("error = %+v, want JOB_CANCELLED before the verb started", e)
+	if e := bodyOf[progress.ErrorBody](t, recs[1]); e.Code != progress.CodeJobCanceled || !strings.Contains(e.Message, "before its verb started") {
+		t.Fatalf("error = %+v, want JOB_CANCELED before the verb started", e)
 	}
 
 	if r := bodyOf[progress.ResultBody](t, recs[2]); r.ExitCode != 1 || r.Cancel != progress.CancelStopped {
