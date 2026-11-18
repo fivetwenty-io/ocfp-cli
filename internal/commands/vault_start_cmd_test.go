@@ -532,7 +532,7 @@ func TestVaultStart_OpenVaultWithMalformedKeysIsLeftRunning(t *testing.T) {
 // Before it restarts a stopped vault, vault start gives the key files the
 // same repairs reconcile does. Each one keeps the key's value: here it
 // strips the whitespace that safe would otherwise hand the engine.
-func TestVaultStart_StoppedVaultKeyFilesAreCanonicalised(t *testing.T) {
+func TestVaultStart_StoppedVaultKeyFilesAreCanonicalized(t *testing.T) {
 	paths := reconcilePaths(t)
 	writeRaftData(t, paths["vaultDir"])
 	writeKeys(t, paths, true, false)

@@ -193,7 +193,7 @@ func (c *Client) Connect(ctx context.Context) error {
 					return fmt.Errorf("failed to connect to %s: %w", c.config.Host, timeoutErr)
 				}
 
-				return fmt.Errorf("SSH connection cancelled: %w", ctx.Err())
+				return fmt.Errorf("SSH connection canceled: %w", ctx.Err())
 			case <-time.After(retryInterval):
 				// Exponential backoff
 				retryInterval = time.Duration(float64(retryInterval) * sshRetryBackoffMultiplier)
@@ -290,7 +290,7 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 		return fmt.Errorf("failed to listen on local port %d: %w", localPort, err)
 	}
 
-	// Close the listener when the context is cancelled so the blocking
+	// Close the listener when the context is canceled so the blocking
 	// Accept below unblocks and the accept goroutine can exit promptly.
 	go func() {
 		<-ctx.Done()
@@ -307,7 +307,7 @@ func (c *Client) CreateTunnel(ctx context.Context, localPort, remotePort int) er
 			conn, err := listener.Accept()
 			if err != nil {
 				// A failed Accept means the listener is closed (context
-				// cancelled) or otherwise unusable. Exit instead of
+				// canceled) or otherwise unusable. Exit instead of
 				// busy-spinning on a permanent error.
 				if ctx.Err() == nil {
 					c.log.Errorw("Stopping tunnel: accept failed", "error", err)
@@ -653,7 +653,7 @@ func (c *Client) connectWithNativeClient(ctx context.Context, sshConfig *ssh.Cli
 //
 // The handshake is bounded. conn gets a deadline of config.Timeout, or
 // shortTimeout when that is unset, brought forward to ctx's deadline when
-// that comes first, and conn is closed if ctx is cancelled meanwhile, so a
+// that comes first, and conn is closed if ctx is canceled meanwhile, so a
 // peer that never sends its banner cannot hold the caller. The deadline is
 // cleared once the handshake succeeds.
 func (c *Client) handshake(ctx context.Context, conn net.Conn, address string, config *ssh.ClientConfig) (*ssh.Client, error) {
@@ -901,7 +901,7 @@ func (c *Client) handleTunnelConnection(ctx context.Context, localConn net.Conn,
 	case <-done:
 		// Connection closed by one side
 	case <-ctx.Done():
-		// Context cancelled
+		// Context canceled
 	}
 }
 
@@ -1024,7 +1024,7 @@ func (c *Client) executeWithContext(ctx context.Context, session *ssh.Session, c
 			_ = err
 		}
 
-		return nil, fmt.Errorf("context cancelled: %w", ctx.Err())
+		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	case err := <-done:
 		return c.buildCommandResult(cmd, err, startTime, stdout, stderr)
 	}

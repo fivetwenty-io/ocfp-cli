@@ -26,7 +26,7 @@ func realSSH(t *testing.T) string {
 // ProxyCommand and returns the arguments the inner ssh starts with, after
 // the outer ssh has expanded its %-tokens and the shell has split it. A
 // fake ssh first on PATH stands in for the inner one: it records its
-// arguments and exits, so nothing is dialled. The outer ssh reads no ssh
+// arguments and exits, so nothing is dialed. The outer ssh reads no ssh
 // config and records no host key.
 func proxyCommandInnerArgv(t *testing.T, proxyCommand string) []string {
 	t.Helper()

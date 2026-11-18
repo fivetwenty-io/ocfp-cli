@@ -180,7 +180,7 @@ func (c *BastionRecycleCluster) dataVolumeOwnedBy(ctx context.Context, instanceI
 
 	// The recorded id is consulted next because a handover renames the disk.
 	// Ask for it rather than requiring it: a bloc whose disk has never been
-	// recorded still has to be recognisable.
+	// recorded still has to be recognizable.
 	recorded, _ := c.dataVolumeID()
 
 	for _, v := range vols {

@@ -363,9 +363,9 @@ func TestVMDisks_ReturnsReadErrors(t *testing.T) {
 	}
 }
 
-// TestVMDisks_RejectsAnUnrecognisedPendingShape guards against reading a
+// TestVMDisks_RejectsAnUnrecognizedPendingShape guards against reading a
 // changed API shape as "nothing pending".
-func TestVMDisks_RejectsAnUnrecognisedPendingShape(t *testing.T) {
+func TestVMDisks_RejectsAnUnrecognizedPendingShape(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakePVEClient{getResponses: map[string]interface{}{

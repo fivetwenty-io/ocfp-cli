@@ -456,7 +456,7 @@ func TestReplaceWaitsForSharedLock(t *testing.T) {
 	}
 }
 
-func TestReplaceStopsWaitingWhenCancelled(t *testing.T) {
+func TestReplaceStopsWaitingWhenCanceled(t *testing.T) {
 	t.Parallel()
 
 	s, _, _ := createdStore(t)
@@ -472,7 +472,7 @@ func TestReplaceStopsWaitingWhenCancelled(t *testing.T) {
 	ownerrecord.SetLockWaitHook(s, cancel)
 
 	if err := s.Replace(ctx, genPtr(7), liveAt(t, 8)); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Replace while cancelled: err = %v, want context.Canceled", err)
+		t.Fatalf("Replace while canceled: err = %v, want context.Canceled", err)
 	}
 
 	ownerrecord.SetLockWaitHook(s, nil)
@@ -483,7 +483,7 @@ func TestReplaceStopsWaitingWhenCancelled(t *testing.T) {
 
 	// The abandoned wait gives its lock back, so a later write goes ahead.
 	if err := s.Replace(t.Context(), genPtr(7), liveAt(t, 8)); err != nil {
-		t.Fatalf("Replace after a cancelled wait: %v", err)
+		t.Fatalf("Replace after a canceled wait: %v", err)
 	}
 }
 
@@ -650,7 +650,7 @@ func TestReplaceRefusesAStoredRecordThatDoesNotOpen(t *testing.T) {
 	}
 }
 
-func TestStoreHonoursACancelledContext(t *testing.T) {
+func TestStoreHonorsACanceledContext(t *testing.T) {
 	t.Parallel()
 
 	s, _, _ := createdStore(t)

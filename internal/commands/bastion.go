@@ -327,8 +327,8 @@ func tryDiscoverBastionContext(blocName, key, user string) (*BastionContext, err
 	// Explicit operator override wins and short-circuits provider discovery.
 	// bastion_ip is the documented reachable entry point (e.g. tailscale IP)
 	// for bastions whose provider-side address is not routable from the
-	// operator. Honouring it here avoids a needless provider API round-trip
-	// and works even when the provider client cannot initialise.
+	// operator. Honoring it here avoids a needless provider API round-trip
+	// and works even when the provider client cannot initialize.
 	if ip := strings.TrimSpace(cfg.BastionIP); ip != "" {
 		return &BastionContext{
 			IP:           ip,

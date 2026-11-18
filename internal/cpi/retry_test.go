@@ -60,7 +60,7 @@ func TestWaitForCondition_ConditionError(t *testing.T) {
 	}
 }
 
-func TestWaitForCondition_ContextCancelled(t *testing.T) {
+func TestWaitForCondition_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -71,7 +71,7 @@ func TestWaitForCondition_ContextCancelled(t *testing.T) {
 	})
 
 	if err == nil {
-		t.Fatal("expected error for cancelled context")
+		t.Fatal("expected error for canceled context")
 	}
 }
 

@@ -151,7 +151,7 @@ func (eh *ErrorHandler) ExecuteWithRetry(ctx context.Context, phase string, fn f
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			return fmt.Errorf("context canceled during retry: %w", ctx.Err())
 		case <-time.After(delay):
 			// Continue to next attempt
 		}

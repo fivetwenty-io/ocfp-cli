@@ -28,7 +28,7 @@ func findBastionIP(ctx context.Context, provider cpi.Provider, blocName string) 
 	// documented way to reach a bastion whose provider-side address is not
 	// routable from the operator (PVE bridge-mode SDN IP unreachable from the
 	// Mac; the tailscale IP is the real entry point). Provider discovery below
-	// only ever yields the private SDN address, so honour the override first —
+	// only ever yields the private SDN address, so honor the override first —
 	// matching the bastion-init resolution path.
 	if ip := configBastionIP(blocName, log); ip != "" {
 		log.Debugf("Using bastion_ip override from config: %s", ip)
@@ -178,7 +178,7 @@ func tryLabelBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, 
 }
 
 func tryNameBasedInstanceDiscovery(ctx context.Context, provider cpi.Provider, blocName string, log logger.Logger) *cpi.Instance {
-	// Try the tagged path first — providers that honour label filters return
+	// Try the tagged path first — providers that honor label filters return
 	// the right VM directly. Then fall back to an unfiltered listing so
 	// untagged legacy VMs (e.g. PVE bastions created before native tag
 	// support landed) are still discoverable by name match against

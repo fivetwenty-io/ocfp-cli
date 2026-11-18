@@ -110,7 +110,7 @@ g @ocfp-lab-wayne-mgmt:bosh b upload-stemcell -n \
 
 A bare `bosh` would have nothing to target here. Genesis creates no `bosh` alias for us, so we reach each director through its environment. The mgmt director is born by `create-env` and has no parent director above it, so `b` already points at the right place and needs no `--self`.
 
-Note where `-n` sits. Genesis parses the options ahead of the bosh subcommand as its own and passes through only what it does not recognise, so a flag it later claims would be silently eaten rather than rejected. Genesis already uses `-n` for `--dry-run` on `deploy`. Putting `-n` after `upload-stemcell` takes the question away, because Genesis stops parsing at the first non-option argument.
+Note where `-n` sits. Genesis parses the options ahead of the bosh subcommand as its own and passes through only what it does not recognize, so a flag it later claims would be silently eaten rather than rejected. Genesis already uses `-n` for `--dry-run` on `deploy`. Putting `-n` after `upload-stemcell` takes the question away, because Genesis stops parsing at the first non-option argument.
 
 (The name carries no `-go_agent` suffix, and yes, `openstack-kvm` is correct, because the PVE CPI consumes OpenStack KVM stemcells.) bosh.io delists old point-releases, so if that URL ever returns 404 the same tarball lives permanently at `https://storage.googleapis.com/bosh-core-stemcells/1.562/bosh-stemcell-1.562-openstack-kvm-ubuntu-noble.tgz`. Compiled releases cached for an older noble still apply, because the director reuses compiled packages across any noble 1.x stemcell. When we bump the line, we bump every env file, the CLI's `DefaultStemcell`, and this chapter together.
 

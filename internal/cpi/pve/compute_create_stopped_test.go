@@ -22,7 +22,7 @@ func TestShouldStartAfterCreate(t *testing.T) {
 		req  *cpi.InstanceRequest
 		want bool
 	}{
-		{"default starts, preserving existing behaviour", &cpi.InstanceRequest{}, true},
+		{"default starts, preserving existing behavior", &cpi.InstanceRequest{}, true},
 		{"explicitly stopped", &cpi.InstanceRequest{CreateStopped: true}, false},
 		{"nil request starts", nil, true},
 	}

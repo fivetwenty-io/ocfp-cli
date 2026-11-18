@@ -113,7 +113,7 @@ func TestResolve_QueryReturnsHighCPU_Clamped(t *testing.T) {
 }
 
 // TestResolve_ExplicitWorkers_QueryForMaxInFlight verifies that cfgWorkers > 0
-// but cfgMaxInFlight == 0 defers MaxInFlight to the querier while honouring
+// but cfgMaxInFlight == 0 defers MaxInFlight to the querier while honoring
 // the explicit Workers value.
 func TestResolve_ExplicitWorkers_QueryForMaxInFlight(t *testing.T) {
 	t.Parallel()
@@ -122,7 +122,7 @@ func TestResolve_ExplicitWorkers_QueryForMaxInFlight(t *testing.T) {
 
 	got := capacity.Resolve(context.Background(), q, "pve01", 6, 0)
 
-	assert.Equal(t, 6, got.Workers, "explicit Workers must be honoured")
+	assert.Equal(t, 6, got.Workers, "explicit Workers must be honored")
 	assert.Equal(t, 12, got.MaxInFlight, "MaxInFlight from CPUCount=12 within clamp")
 	assert.Equal(t, capacity.SourceQuery, got.Source)
 }

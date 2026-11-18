@@ -425,7 +425,7 @@ func TestPVEStemcellUpload_SHA1Override_SkipsFetch(t *testing.T) {
 		{out: []byte("upload ok"), err: nil}, // upload-stemcell
 	}
 
-	// We need a builder that honours the sha1Override the same way defaultStemcellUploadBuilder
+	// We need a builder that honors the sha1Override the same way defaultStemcellUploadBuilder
 	// does. Because fakeStemcellBuilder does not inspect sha1Override, we use a custom
 	// builder here that returns the override directly.
 	var boshCalls [][]string

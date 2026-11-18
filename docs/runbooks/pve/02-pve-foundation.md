@@ -134,7 +134,7 @@ The failure mode for skipping this is memorably misleading. DHCP still works (dn
 
 Earlier iterations of these runbooks had us downloading cloud images, running a ritual of `qm create` and `qm importdisk`, and hand-authoring cloud-init snippets. That era is over, and it is worth saying why so nobody resurrects it. PVE 9.x rejects snippet uploads through the storage API entirely, so the CLI moved to a fully API-driven flow. When the template a bloc names is missing, OCFP downloads the Ubuntu cloud image *on the PVE node*, builds the VM, and converts it to a template. VMIDs come from the 9000+ range, with no SSH to the host and no snippets anywhere. Per-VM configuration rides in SMBIOS fields the guest reads at first boot.
 
-The catalog names are case-sensitive, and we choose by role. Each image comes in a plain and a bastion flavour, and each flavour comes in Noble and Resolute:
+The catalog names are case-sensitive, and we choose by role. Each image comes in a plain and a bastion flavor, and each flavor comes in Noble and Resolute:
 
 - `ubuntu-noble-template` is vanilla Ubuntu 24.04, and it suits artifacts, jumpbox-style VMs, and anything that needs no first-boot magic.
 

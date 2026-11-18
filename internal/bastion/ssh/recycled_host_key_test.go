@@ -261,7 +261,7 @@ func TestRecycledHostNeverUsesTheExternalFallback(t *testing.T) {
 	}
 }
 
-// Cancelling the caller's context while Connect waits for a recycled host's
+// Canceling the caller's context while Connect waits for a recycled host's
 // previous key stops the wait at once with a cancellation, not a timeout.
 func TestRecycledHostWaitStopsWhenTheCallerCancels(t *testing.T) {
 	knownHosts := isolateSSHEnv(t)
@@ -278,7 +278,7 @@ func TestRecycledHostWaitStopsWhenTheCallerCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	var cancelled atomic.Int64
+	var canceled atomic.Int64
 
 	go func() {
 		for srv.conns.Load() < 1 {
@@ -286,7 +286,7 @@ func TestRecycledHostWaitStopsWhenTheCallerCancels(t *testing.T) {
 		}
 
 		time.Sleep(100 * time.Millisecond)
-		cancelled.Store(time.Now().UnixNano())
+		canceled.Store(time.Now().UnixNano())
 		cancel()
 	}()
 
@@ -297,10 +297,10 @@ func TestRecycledHostWaitStopsWhenTheCallerCancels(t *testing.T) {
 	}
 
 	if errors.Is(err, ErrRecycledHostKeyNotRestored) {
-		t.Errorf("a cancelled wait reported as a timeout: %v", err)
+		t.Errorf("a canceled wait reported as a timeout: %v", err)
 	}
 
-	if since := time.Since(time.Unix(0, cancelled.Load())); since > 2*time.Second {
+	if since := time.Since(time.Unix(0, canceled.Load())); since > 2*time.Second {
 		t.Errorf("Connect returned %s after the cancel, want promptly", since)
 	}
 }

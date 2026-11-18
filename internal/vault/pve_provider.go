@@ -1030,7 +1030,7 @@ func (p *PVEVaultProvider) ConfigureSecurityGroups(_envPath, envType string, rep
 
 // ConfigureBlobstores writes blobstore configuration to vault.
 //
-// Two modes are honoured:
+// Two modes are honored:
 //
 //   - local (default): writes only `mode: local` and `status: configured` to
 //     cf/blobstores/main. No endpoint, region, or credentials are written.
@@ -2141,10 +2141,10 @@ func pveCPIStemcellStorage(cfg *config.Config) string {
 // When storageType is set (the PVE storage type from disk_storage_type), it is
 // authoritative: shared types (rbd, cephfs, nfs, cifs, glusterfs, pbs) return
 // "shared", dir returns "dir", and local block types (lvm, lvmthin, zfspool,
-// btrfs) return "block". An unrecognised type falls through to the pool-name
+// btrfs) return "block". An unrecognized type falls through to the pool-name
 // heuristic below, as does an empty storageType.
 //
-// The pool-name heuristic only recognises names that literally are a type
+// The pool-name heuristic only recognizes names that literally are a type
 // keyword. Any other name returns "block" (conservative default, suitable for
 // most installs). Site-specific names such as an NFS share called after the
 // cluster carry no type hint, which is why disk_storage_type exists.
@@ -2167,7 +2167,7 @@ func pveStorageBackend(poolName, storageType string) string {
 
 // pveStorageBackendForType maps a PVE storage type keyword to the CPI
 // storage_backend value. The second result is false when the keyword is not a
-// recognised type.
+// recognized type.
 func pveStorageBackendForType(storageType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(storageType)) {
 	case "rbd", "cephfs", "nfs", "cifs", "glusterfs", "pbs":
@@ -2186,7 +2186,7 @@ func pveStorageBackendForType(storageType string) (string, bool) {
 // When storageType is set (the PVE storage type from disk_storage_type), it is
 // authoritative: lvm, lvmthin, zfspool, and btrfs are block backends that need
 // raw, rbd images are always raw, and the file-backed types (dir, nfs, cifs,
-// glusterfs, cephfs, pbs) take qcow2. An unrecognised or empty storageType
+// glusterfs, cephfs, pbs) take qcow2. An unrecognized or empty storageType
 // falls through to the pool-name heuristic.
 //
 // The heuristic exists because pool names are site-specific aliases rather

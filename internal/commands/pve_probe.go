@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	// pveDefaultProbePort is the BOSH director API port dialled by defaultProbeBuilder.
+	// pveDefaultProbePort is the BOSH director API port dialed by defaultProbeBuilder.
 	pveDefaultProbePort = 25555
 	// pveDefaultProbeTimeout is the TCP dial timeout used by defaultProbeBuilder.
 	pveDefaultProbeTimeout = 5 * time.Second

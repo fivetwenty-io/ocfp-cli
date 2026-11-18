@@ -360,11 +360,11 @@ func writeControl(w io.Writer, c control) error {
 func runVerbChild(ctx context.Context, v verb, hostname func() (string, error), rt *jobRuntime, stderr io.Writer) int {
 	code, err := v.run(ctx, rt, hostname)
 
-	cancelled := errors.Is(err, ErrCancelled)
+	canceled := errors.Is(err, ErrCanceled)
 
 	switch {
-	case cancelled || (err != nil && rt.Checkpoint() != nil):
-		if !cancelled {
+	case canceled || (err != nil && rt.Checkpoint() != nil):
+		if !canceled {
 			_, _ = fmt.Fprintf(stderr, "job verb %s: %v\n", v.name, err)
 		}
 
@@ -768,7 +768,7 @@ type verbEnd struct {
 	// error.
 	message string
 
-	// undone lists the work that a cancelled verb left undone, oldest
+	// undone lists the work that a canceled verb left undone, oldest
 	// first: the undo hooks it had registered and had not reported done,
 	// with whether each failed.
 	undone []progress.UndoneWork
@@ -794,12 +794,12 @@ type verbEnd struct {
 // killed unless the verb had written the stopped mark before then, and a
 // killed job names the work of the undo hooks that never ran.
 func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (verbEnd, error) {
-	if s.cancelled() {
+	if s.canceled() {
 		return verbEnd{
 			code:    exitVerbFailed,
 			cancel:  progress.CancelStopped,
 			seenAt:  o.Clock.Now().UTC(),
-			message: fmt.Sprintf("job %s was cancelled and stopped before its verb started", jobID),
+			message: fmt.Sprintf("job %s was canceled and stopped before its verb started", jobID),
 		}, nil
 	}
 
@@ -866,7 +866,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 			code:    exitVerbFailed,
 			cancel:  progress.CancelKilled,
 			seenAt:  sv.seenUTC(),
-			message: fmt.Sprintf("job %s was cancelled and killed when its cancel budget of %s passed", jobID, v.cancelBudget),
+			message: fmt.Sprintf("job %s was canceled and killed when its cancel budget of %s passed", jobID, v.cancelBudget),
 			undone:  rl.pendingUndo(),
 		}, nil
 	}
@@ -876,7 +876,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 			code:    exitVerbFailed,
 			cancel:  progress.CancelStopped,
 			seenAt:  sv.seenUTC(),
-			message: fmt.Sprintf("job %s was cancelled and stopped at a safe point", jobID),
+			message: fmt.Sprintf("job %s was canceled and stopped at a safe point", jobID),
 			undone:  rl.pendingUndo(),
 		}, nil
 	}
@@ -941,7 +941,7 @@ func (sv *supervisor) watch() {
 
 		if !sv.seenAt.IsZero() {
 			sv.enforce()
-		} else if sv.spool.cancelled() {
+		} else if sv.spool.canceled() {
 			sv.seenAt = sv.clock.Now()
 
 			ms := sv.budget.Milliseconds()

@@ -10,7 +10,7 @@ import (
 // fakeCluster records every mutating call in order, so the tests can assert on
 // sequence and — more importantly — on what did not happen.
 //
-// The engine's real behaviour is a sequence of Proxmox calls, so this is where
+// The engine's real behavior is a sequence of Proxmox calls, so this is where
 // the safety properties are pinned. We never assert on HTTP; we assert that
 // the original is not destroyed before its disk is safely elsewhere.
 type fakeCluster struct {
@@ -319,7 +319,7 @@ func TestEngine_JournalsEveryPhaseBeforeActing(t *testing.T) {
 	}
 
 	if f.indexOf("SaveJournal:quiesced") > f.indexOf("StopOriginal") {
-		t.Errorf("the quiesce was journalled after it ran: %v", f.calls)
+		t.Errorf("the quiesce was journaled after it ran: %v", f.calls)
 	}
 
 	if !f.called("ClearJournal") {

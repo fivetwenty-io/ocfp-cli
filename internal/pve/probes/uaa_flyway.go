@@ -21,7 +21,7 @@ var reFailedRows = regexp.MustCompile(`FAILED_ROWS=(\d+)`)
 //	SKIP_NO_MYSQL_BIN  — percona mysql binary not found (OK)
 //	OK_DB_MISSING      — "uaa" database not yet created (OK)
 //	OK_FRESH           — schema_version table not yet created (OK)
-//	PROBE_ERROR:<msg>  — mysql returned an unrecognised error (non-fatal)
+//	PROBE_ERROR:<msg>  — mysql returned an unrecognized error (non-fatal)
 //	FAILED_ROWS=N      — N rows with success=0 found; remediation required
 const uaaRemoteScript = "" +
 	"set -e; " +
@@ -106,7 +106,7 @@ func (p *UAAFlywayProbe) instance() string {
 // Run implements Probe. It shells out via p.RunBosh and parses sentinel tokens
 // from the combined stdout+stderr of the remote script.
 //
-// Failure modes and their behaviour:
+// Failure modes and their behavior:
 //
 //	RunBosh returns error AND output contains "doesn't exist"
 //	  → OK (CF deployment not yet present on this director)

@@ -158,7 +158,7 @@ func TestACancelKillsWhenTheBudgetPasses(t *testing.T) {
 		t.Fatalf("record kinds = %v, want %v and no warning:\n%s", got, want, rc.stdout)
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[3]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and killed when its cancel budget of 5s passed" {
+	if e := bodyOf[progress.ErrorBody](t, recs[3]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was canceled and killed when its cancel budget of 5s passed" {
 		t.Fatalf("error = %+v, want JOB_CANCELED for a kill", e)
 	}
 
@@ -264,7 +264,7 @@ func TestAStopBeforeTheBudgetIsNotAKill(t *testing.T) {
 				t.Fatalf("result = %+v, want exit code 1 and cancel stopped", r)
 			}
 
-			if e := bodyOf[progress.ErrorBody](t, recs[len(recs)-2]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
+			if e := bodyOf[progress.ErrorBody](t, recs[len(recs)-2]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was canceled and stopped at a safe point" {
 				t.Fatalf("error = %+v, want JOB_CANCELED for a stop", e)
 			}
 		})

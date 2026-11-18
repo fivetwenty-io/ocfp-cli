@@ -31,7 +31,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewRestoreCmd())
 
 	// CLI housekeeping: the config group owns the on-disk layout; the bare
-	// migrate alias is hidden and deprecated in favour of `config migrate`.
+	// migrate alias is hidden and deprecated in favor of `config migrate`.
 	root.AddCommand(commands.NewConfigCmd())
 	root.AddCommand(commands.NewMigrateCmd())
 

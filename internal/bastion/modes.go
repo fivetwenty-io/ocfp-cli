@@ -317,7 +317,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"helper_scripts", manager.installHelperScripts},
 		{"genesis", manager.setupGenesis},
 		// The ordering constraints here are the same ones the remote lists
-		// carry, and they were not being honoured: vault_populate must follow
+		// carry, and they were not being honored: vault_populate must follow
 		// vault_inception immediately because it needs that vault to exist,
 		// bloc_ca_trust must land before anything reaches the artifacts
 		// endpoint over TLS, and ocfp_configure must precede

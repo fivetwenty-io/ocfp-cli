@@ -166,7 +166,7 @@ func TestSSHAddressMatcherAsksNoProvider(t *testing.T) {
 	isBastion := sshAddressMatcher(cfg)
 
 	if !isBastion(context.Background(), "100.109.226.53") {
-		t.Error("the configured bastion address was not recognised")
+		t.Error("the configured bastion address was not recognized")
 	}
 
 	if isBastion(context.Background(), "10.64.64.20") {

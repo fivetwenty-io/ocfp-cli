@@ -41,7 +41,7 @@ var (
 
 // getEC2 returns the EC2API to use for this manager.
 // In tests, m.ec2 is set directly.  In production, m.ec2 is nil and
-// this falls back to the real client, preserving existing behaviour.
+// this falls back to the real client, preserving existing behavior.
 func (m *ComputeManager) getEC2(ctx context.Context) (EC2API, error) {
 	if m.ec2 != nil {
 		return m.ec2, nil
@@ -777,7 +777,7 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID st
 
 	for {
 		if ctx.Err() != nil {
-			return fmt.Errorf("context cancelled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
+			return fmt.Errorf("context canceled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
 		}
 
 		result, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
@@ -810,7 +810,7 @@ func (m *ComputeManager) waitForInstanceState(ctx context.Context, instanceID st
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
+			return fmt.Errorf("context canceled: %w", ctx.Err()) //nolint:wrapcheck // wrapping context error
 		case <-ticker.C:
 		}
 	}

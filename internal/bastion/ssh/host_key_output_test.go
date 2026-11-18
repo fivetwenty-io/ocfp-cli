@@ -49,7 +49,7 @@ func TestSystemSSHHostKeyErrorMatchesErrHostKeyMismatch(t *testing.T) {
 }
 
 // The hint names the entry the way ssh printed it, so it is right for a
-// non-default port and for a name other than the one we dialled.
+// non-default port and for a name other than the one we dialed.
 func TestSystemSSHHostKeyFailureNamesTheEntrySSHPrinted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -162,12 +162,12 @@ func TestSystemSSHHostKeyFailureComparesThePort(t *testing.T) {
 		bastion string
 		want    bool
 	}{
-		{"BarePrintedBareDialled", "127.0.0.1", "127.0.0.1", true},
-		{"BracketedDialledOn22", "127.0.0.1", "[127.0.0.1]:22", true},
+		{"BarePrintedBareDialed", "127.0.0.1", "127.0.0.1", true},
+		{"BracketedDialedOn22", "127.0.0.1", "[127.0.0.1]:22", true},
 		{"BracketedWithoutAPort", "127.0.0.1", "[127.0.0.1]", true},
 		{"SamePort", "[127.0.0.1]:2222", "[127.0.0.1]:2222", true},
 		{"OtherPortPrinted", "[127.0.0.1]:9", "127.0.0.1", false},
-		{"OtherPortDialled", "127.0.0.1", "[127.0.0.1]:2222", false},
+		{"OtherPortDialed", "127.0.0.1", "[127.0.0.1]:2222", false},
 		{"DifferentPorts", "[127.0.0.1]:9", "[127.0.0.1]:2222", false},
 		{"IPv6OtherPort", "[fd00::10]:9", "fd00::10", false},
 	}
@@ -175,7 +175,7 @@ func TestSystemSSHHostKeyFailureComparesThePort(t *testing.T) {
 	for _, tt := range tests {
 		err := SystemSSHHostKeyFailure(changedKeyOutput(knownHosts, tt.printed), tt.bastion, nil)
 		if got := errors.Is(err, ErrHostKeyMismatch); got != tt.want {
-			t.Errorf("%s: printed %s, dialled %s: got %v, want a mismatch %v", tt.name, tt.printed, tt.bastion, err, tt.want)
+			t.Errorf("%s: printed %s, dialed %s: got %v, want a mismatch %v", tt.name, tt.printed, tt.bastion, err, tt.want)
 		}
 	}
 }

@@ -76,7 +76,7 @@ func TestGenerateSeedPassword(t *testing.T) {
 	}
 
 	// Password must keep the prefix so an accidental log capture is
-	// recognisable as the ephemeral seed credential.
+	// recognizable as the ephemeral seed credential.
 	if !strings.HasPrefix(pw, templateSeedPasswordPrefix) {
 		t.Errorf("generateSeedPassword = %q, want prefix %q", pw, templateSeedPasswordPrefix)
 	}

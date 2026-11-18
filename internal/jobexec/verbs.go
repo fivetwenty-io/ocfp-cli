@@ -19,7 +19,7 @@ type verb struct {
 	cancelBudget time.Duration
 
 	// run runs the verb against j. It returns the job's exit code, and an
-	// error that matches ErrCancelled when it stopped at a safe point after a
+	// error that matches ErrCanceled when it stopped at a safe point after a
 	// cancel. It writes no header and no result.
 	run func(ctx context.Context, j Job, hostname func() (string, error)) (exitCode int, err error)
 }

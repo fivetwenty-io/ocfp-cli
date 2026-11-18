@@ -122,7 +122,7 @@ sub run_shell {
 # Uses run_shell form so shell handles redirection correctly.
 sub which_tool {
     my ($name) = @_;
-    # Sanitise: allow only word chars and hyphens (tool names).
+    # Sanitize: allow only word chars and hyphens (tool names).
     return 0 unless $name =~ /\A[\w\-]+\z/;
     my $rc = system('/bin/bash', '-c', "which '$name' >/dev/null 2>&1");
     return ($rc == 0) ? 1 : 0;

@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestRunBootstrapForBlocs_StopsOnCancelledContext covers the interrupt path:
-// once the signal-aware root context is cancelled, the bloc loop returns the
+// TestRunBootstrapForBlocs_StopsOnCanceledContext covers the interrupt path:
+// once the signal-aware root context is canceled, the bloc loop returns the
 // cancellation instead of starting (or continuing into) another bloc. The
 // config path does not exist, so any bloc that did start would fail with a
 // config error rather than context.Canceled.
-func TestRunBootstrapForBlocs_StopsOnCancelledContext(t *testing.T) {
+func TestRunBootstrapForBlocs_StopsOnCanceledContext(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())

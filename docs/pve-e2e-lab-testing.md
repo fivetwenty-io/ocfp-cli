@@ -1289,7 +1289,7 @@ Fresh execution of the e2e flow after the lab rebuild (bloc `ocfp-lab-wayne`, pe
 
 - **`vendored-compiled-releases` dispatch.** The feature validated (`validate_ocfp_features`) and gated the ops-file include, but was missing from `@handled_features`, so the trailing dispatch chain bailed "Unknown feature". Added it to `@handled_features` in `hooks/blueprint.pm`.
 
-- **Stemcell version pin dropped.** `ocfp/pve/stemcell.yml` hard-pinned `stemcell_version: "1.383"`, desynchronised from whatever noble the deploying director actually has (1.460 here). Pin removed; base default `latest` flows through. GCS compiled blobs (noble/1.333) pair with any same-OS stemcell ≥ compile version.
+- **Stemcell version pin dropped.** `ocfp/pve/stemcell.yml` hard-pinned `stemcell_version: "1.383"`, desynchronized from whatever noble the deploying director actually has (1.460 here). Pin removed; base default `latest` flows through. GCS compiled blobs (noble/1.333) pair with any same-OS stemcell ≥ compile version.
 
 - **Env YAML flow-seq parse bug.** `haproxy_ips: [ (( vault ... ":haproxy_ip" )) ]` breaks YAML flow-sequence parsing (`:` inside the flow scalar) — genesis reported it as "Spruce returned empty output". Rewrote as a block sequence.
 
@@ -1348,7 +1348,7 @@ state. Teardown is now its own chapter, [13. Teardown](runbooks/pve/13-teardown.
 
 - **`bosh delete-env` fails on stemcell templates PVE no longer has.** The rescued state file named template 30512, already deleted. Clearing the `stemcells` array and re-running completes at RC=0. The delete is idempotent, so the empty `current_vm_cid`/`current_disk_id`/`disks` fields after a partial run are that run succeeding.
 
-- **Orphaned disks strand when directors are deleted before a disk cleanup.** Six BOSH persistent disks totalling ~424 GiB survived in `local-lvm-data` with no owning VM, identifiable only by LVM creation time once the directors were gone. `bosh clean-up --all` on each director *before* terminating it prevents this; recovery is `pmx -c <ctx> --insecure --node <node> pve storage volume delete <volid> --yes`, one volume at a time.
+- **Orphaned disks strand when directors are deleted before a disk cleanup.** Six BOSH persistent disks totaling ~424 GiB survived in `local-lvm-data` with no owning VM, identifiable only by LVM creation time once the directors were gone. `bosh clean-up --all` on each director *before* terminating it prevents this; recovery is `pmx -c <ctx> --insecure --node <node> pve storage volume delete <volid> --yes`, one volume at a time.
 
 - **`safe` v1.20 breaks every genesis command on a fresh bastion.** A bastion built by `ocfp init bastion` on or after 2026-08-23 gets safe v1.20.0 from `releases/latest`, which prints its version banner to stdout. Genesis' prereq check reads stderr (`safe -v 2>&1 >/dev/null`, `Genesis/Commands.pm`), captures an empty string, and dies with "Missing `safe`" even though the binary works. Workaround: copy v1.9.0 from an existing bastion. Real fix: pin the safe version in the CLI's tool table (`internal/bastion/provision/tools.go`) or widen the Genesis check to capture both streams.
 

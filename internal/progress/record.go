@@ -47,7 +47,7 @@ type ErrorBody struct {
 	Message string `json:"message"`
 }
 
-// CancelOutcome says how a cancelled job ended.
+// CancelOutcome says how a canceled job ended.
 type CancelOutcome string
 
 // The cancel outcomes. A run stores only stopped and killed. A requester

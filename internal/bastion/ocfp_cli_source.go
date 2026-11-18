@@ -47,7 +47,7 @@ var (
 // rather than a shell.
 var ocfpCLIVersionPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+-]*$`)
 
-// ocfpCLIReleasePattern recognises a version that a tagged release build
+// ocfpCLIReleasePattern recognizes a version that a tagged release build
 // stamps: a bare semver, optionally with a prerelease suffix. Anything else,
 // such as the git-describe strings the Makefile stamps (v0.1.0-3-gabc1234,
 // v0.1.0-dirty, dev/main/abc1234), has no release asset to download, so it

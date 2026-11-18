@@ -66,7 +66,7 @@ const fileBackedVolumeFormat = "qcow2"
 // matching format is returned so PVE's filename parser accepts it; on every
 // other pool the name is returned untouched with an empty format so PVE
 // applies its native default (raw). A name that already carries a
-// recognised extension is kept as-is with that extension as the format.
+// recognized extension is kept as-is with that extension as the format.
 func volumeNameAndFormat(volName, storageType string) (string, string) {
 	if _, ok := fileBackedStorageTypes[strings.ToLower(storageType)]; !ok {
 		return volName, ""
@@ -294,7 +294,7 @@ func (m *StorageManager) GetVolume(ctx context.Context, id string) (*cpi.Volume,
 
 // ListVolumes lists volumes with optional filters.
 //
-// Recognised filters: "storage" picks the pool (default: the configured
+// Recognized filters: "storage" picks the pool (default: the configured
 // DefaultStorage), "node" picks the cluster node (default: the configured node,
 // else the first online one), and "name" keeps volumes whose volid contains the
 // given substring.
@@ -428,7 +428,7 @@ func parseAttachDevice(device string) (bus, slot, props string) {
 		return bus, slot, props
 	}
 
-	// An unrecognised spec keeps the historical default bus and pins nothing.
+	// An unrecognized spec keeps the historical default bus and pins nothing.
 	return bus, "", props
 }
 
@@ -572,7 +572,7 @@ func findVolumeBySerial(config map[string]interface{}, serial string) (string, b
 }
 
 // diskCarriesSerial reports whether a disk's config value sets exactly the
-// given serial. The whole option is compared so that a disk serialised
+// given serial. The whole option is compared so that a disk serialized
 // ocfpdata-old is not mistaken for ocfpdata.
 func diskCarriesSerial(value, serial string) bool {
 	for _, opt := range strings.Split(value, ",") {
@@ -628,7 +628,7 @@ const reassignTaskTimeout = 300
 // which for a task-returning endpoint is the UPID string. Some endpoints wrap
 // it in an object instead, and some return nothing at all when the work was
 // synchronous, so all three shapes are accepted and only a genuinely
-// unrecognised one is an error.
+// unrecognized one is an error.
 func upidFromResponse(resp interface{}) (string, error) {
 	switch v := resp.(type) {
 	case nil:

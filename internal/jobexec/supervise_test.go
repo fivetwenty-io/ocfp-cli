@@ -129,11 +129,11 @@ func TestACancelStopsAtTheNextSafePoint(t *testing.T) {
 
 	rc, w, s, err := stoppedRun(t)
 	if err == nil {
-		t.Fatal("Run reported success for a cancelled job")
+		t.Fatal("Run reported success for a canceled job")
 	}
 
 	if _, ok := progress.AsRefusal(err); ok {
-		t.Fatalf("a cancelled job is a refusal: %v", err)
+		t.Fatalf("a canceled job is a refusal: %v", err)
 	}
 
 	if n := w.undos.Load(); n != 1 {
@@ -153,7 +153,7 @@ func TestACancelStopsAtTheNextSafePoint(t *testing.T) {
 		}
 	}
 
-	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was cancelled and stopped at a safe point" {
+	if e := bodyOf[progress.ErrorBody](t, recs[4]); e.Code != progress.CodeJobCanceled || e.Message != "job job-0001 was canceled and stopped at a safe point" {
 		t.Fatalf("error = %+v, want JOB_CANCELED for a stop", e)
 	}
 
@@ -174,7 +174,7 @@ func TestAStopNamesTheHooksThatFailed(t *testing.T) {
 
 	rc, w, _, err := stoppedRunOf(t, &waitingVerb{undoErr: errors.New("boom")})
 	if err == nil {
-		t.Fatal("Run reported success for a cancelled job")
+		t.Fatal("Run reported success for a canceled job")
 	}
 
 	if n := w.undos.Load(); n != 1 {
@@ -200,14 +200,14 @@ func TestAStopNamesTheHooksThatFailed(t *testing.T) {
 
 // exit.json of a stopped job names the outcome and when the run first saw the
 // marker, which is the clock's reading at the poll after the marker came.
-func TestACancelledExitRecordsTheOutcome(t *testing.T) {
+func TestACanceledExitRecordsTheOutcome(t *testing.T) {
 	t.Parallel()
 
 	_, _, s, _ := stoppedRun(t)
 
 	raw := readFile(t, filepath.Join(s.Dir, exitFile))
 
-	wantKeysOf(t, raw, "exit-cancelled-v1.json")
+	wantKeysOf(t, raw, "exit-canceled-v1.json")
 
 	var e Exit
 
@@ -264,7 +264,7 @@ func TestACancelBeforeTheVerbStartsRunsNothing(t *testing.T) {
 
 	err := rc.run(t)
 	if err == nil {
-		t.Fatal("Run reported success for a job cancelled before it started")
+		t.Fatal("Run reported success for a job canceled before it started")
 	}
 
 	if n := starts.Load(); n != 0 {

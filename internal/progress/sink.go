@@ -67,8 +67,8 @@ type Event struct {
 	Outcome  string    `json:"outcome,omitempty"`
 	Artifact *Artifact `json:"artifact,omitempty"`
 
-	// Undone lists the work that a cancelled job left undone, because its
-	// undo hook did not run or failed. Only the warning that a cancelled
+	// Undone lists the work that a canceled job left undone, because its
+	// undo hook did not run or failed. Only the warning that a canceled
 	// job's stream carries sets it.
 	Undone []UndoneWork `json:"undone,omitempty"`
 }

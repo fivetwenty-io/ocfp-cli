@@ -23,7 +23,7 @@ func Lookup(name string) (Layout, error) {
 func Default() Layout {
 	layout, err := Builtins().Lookup(defaultStrategyName)
 	if err != nil {
-		// Programmer error: the wide built-in failed to load/compile, which
+		// Programr error: the wide built-in failed to load/compile, which
 		// would already have panicked inside builtinLayouts().
 		panic(err)
 	}

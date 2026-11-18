@@ -94,7 +94,7 @@ endpoint: https://s3.example.com`,
 	}
 }
 
-// TestBlobstoreConfigResolvedMode covers the local-default behaviour. Empty
+// TestBlobstoreConfigResolvedMode covers the local-default behavior. Empty
 // mode must resolve to "local" so bootstrap step 7 skips bucket creation.
 func TestBlobstoreConfigResolvedMode(t *testing.T) {
 	t.Parallel()

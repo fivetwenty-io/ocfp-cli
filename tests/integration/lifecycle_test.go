@@ -532,7 +532,7 @@ func TestPVELifecycle_16Steps(t *testing.T) {
 	// tracker records each resource in creation order. t.Cleanup calls
 	// tracker.Cleanup in reverse order (LIFO) using the CPI client. Runs on
 	// test completion regardless of pass/fail; a background context ensures
-	// cleanup proceeds even when the test context is cancelled.
+	// cleanup proceeds even when the test context is canceled.
 	tracker := cleanup.New()
 
 	// buildCleanCall returns a callback that invokes method with args via the
@@ -982,7 +982,7 @@ const (
 
 // parseNetworkTestMode parses the OCFP_NETWORK_TEST_MODE environment variable.
 // Valid values: "" (treated as "off"), "off", "sdn", "bridge".
-// Returns an error for unrecognised values.
+// Returns an error for unrecognized values.
 func parseNetworkTestMode(raw string) (networkTestMode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "off":

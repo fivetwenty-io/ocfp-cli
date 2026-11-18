@@ -350,7 +350,7 @@ func TestSkipReason(t *testing.T) {
 			want:   "",
 		},
 		{
-			name:   "cleanup honours skip-cleanup",
+			name:   "cleanup honors skip-cleanup",
 			runner: &TestRunner{SkipCleanup: true}, //nolint:exhaustruct // defaults
 			step:   testStep{Name: "smoke/delete_app", Run: nil, Needs: []string{"smoke/push_app"}, Cleanup: true},
 			status: passed,
@@ -725,7 +725,7 @@ func TestReadCFSSLDisabled(t *testing.T) {
 	assert.False(t, readCFSSLDisabled(path))
 }
 
-func TestCFConfigPathHonoursCFHome(t *testing.T) {
+func TestCFConfigPathHonorsCFHome(t *testing.T) {
 	t.Setenv("CF_HOME", "/tmp/cfhome")
 
 	assert.Equal(t, filepath.Join("/tmp/cfhome", ".cf", "config.json"), cfConfigPath())

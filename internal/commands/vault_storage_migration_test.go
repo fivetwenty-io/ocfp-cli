@@ -62,7 +62,7 @@ func TestSafeLocalRaftNodeIDMatchesSafe(t *testing.T) {
 }
 
 // fakeEngineScript is a stand-in for vault or bao that answers `operator
-// migrate` the way the real engines do. The behaviour for each migrate run
+// migrate` the way the real engines do. The behavior for each migrate run
 // comes from the lines of plan, one per run, and the last line repeats:
 //
 //	ok      writes vault.db and raft/ into the destination and succeeds

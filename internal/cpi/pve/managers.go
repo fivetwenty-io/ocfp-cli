@@ -33,7 +33,7 @@ var pveOCFPCommentRegex = regexp.MustCompile(`ocfp:([A-Za-z0-9._-]+)`)
 
 // pveRedundantDescPrefix matches the legacy "Security group for " / "Security
 // group " prefix that bootstrap descriptions historically carried. Stripped
-// from the comment because the PVE UI column is already labelled "Comment" on
+// from the comment because the PVE UI column is already labeled "Comment" on
 // a firewall-groups page — the words add no information.
 var pveRedundantDescPrefix = regexp.MustCompile(`(?i)^security group(?:\s+for)?\s+`)
 

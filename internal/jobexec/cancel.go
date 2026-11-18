@@ -10,9 +10,9 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 )
 
-// ErrCancelled is what Checkpoint returns once the job has been asked to stop.
+// ErrCanceled is what Checkpoint returns once the job has been asked to stop.
 // A verb returns it unchanged, and the runtime then runs the undo hooks.
-var ErrCancelled = errors.New("job cancelled")
+var ErrCanceled = errors.New("job canceled")
 
 // stepUndo is the step that the start and end of each undo hook appear under.
 const stepUndo = "undo"
@@ -24,7 +24,7 @@ const undoMargin = 250 * time.Millisecond
 
 // Job is what a verb gets from the runtime.
 type Job interface {
-	// Checkpoint marks a safe point. It returns ErrCancelled once a cancel
+	// Checkpoint marks a safe point. It returns ErrCanceled once a cancel
 	// has arrived, and nil otherwise. A verb returns that error unchanged.
 	Checkpoint() error
 
@@ -34,13 +34,13 @@ type Job interface {
 
 	// OnCancel registers undo for work, which the verb has started outside
 	// the job. The runtime calls undo at most once, in reverse order of
-	// registration, and only when the verb returns ErrCancelled or fails
+	// registration, and only when the verb returns ErrCanceled or fails
 	// with any error once a cancel has come. The returned forget removes the
 	// hook once the work has finished on its own.
 	OnCancel(work progress.WorkRef, undo func(ctx context.Context) error) (forget func())
 
 	// Emit writes an event record. A write that fails once a cancel has
-	// come returns an error that matches ErrCancelled as well as the
+	// come returns an error that matches ErrCanceled as well as the
 	// write's own error, since the wrapper may have gone.
 	Emit(ev progress.Event) error
 
@@ -129,7 +129,7 @@ func (r *jobRuntime) budgetLeft(budget time.Duration) time.Duration {
 func (r *jobRuntime) Checkpoint() error {
 	select {
 	case <-r.done:
-		return ErrCancelled
+		return ErrCanceled
 	default:
 		return nil
 	}
@@ -201,11 +201,11 @@ func (r *jobRuntime) Log(stream, line string) error {
 }
 
 // write writes one record. A write that fails once a cancel has come also
-// matches ErrCancelled.
+// matches ErrCanceled.
 func (r *jobRuntime) write(kind progress.Kind, body any) error {
 	err := r.enc.Encode(kind, body)
 	if err != nil && r.Checkpoint() != nil {
-		return fmt.Errorf("%w: %w", ErrCancelled, err)
+		return fmt.Errorf("%w: %w", ErrCanceled, err)
 	}
 
 	return err //nolint:wrapcheck // the encoder's errors name what failed

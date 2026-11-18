@@ -10,7 +10,7 @@ import (
 var builtinFS embed.FS
 
 // builtinDefinitions returns the parsed built-in strategy definitions,
-// panicking if any embedded YAML is invalid (programmer error).
+// panicking if any embedded YAML is invalid (programr error).
 func builtinDefinitions() []Definition {
 	entries, err := builtinFS.ReadDir("strategies")
 	if err != nil {
@@ -44,7 +44,7 @@ func builtinDefinitions() []Definition {
 }
 
 // builtinLayouts returns a map of strategy name to compiled layout for
-// every built-in strategy. It panics if compilation fails (programmer error).
+// every built-in strategy. It panics if compilation fails (programr error).
 func builtinLayouts() map[string]*compiledLayout {
 	layouts := make(map[string]*compiledLayout)
 

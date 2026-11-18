@@ -61,7 +61,7 @@ func blocFlagChanged(cmd *cobra.Command) bool {
 // cmd may be nil in isolated unit tests; nil is treated as "flag not provided".
 func resolveInitAWSBloc(cmd *cobra.Command) (string, error) {
 	// Explicit --bloc flag wins.  Read via viper so the binding in root.go
-	// (viper.BindPFlag) is honoured; Changed() guards against stale values.
+	// (viper.BindPFlag) is honored; Changed() guards against stale values.
 	if blocFlagChanged(cmd) {
 		if v := viper.GetString("bloc"); v != "" {
 			return v, nil

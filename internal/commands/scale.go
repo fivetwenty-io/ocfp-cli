@@ -199,7 +199,7 @@ func confirmScaling(resource string, count int, force, dryRun bool, log logger.L
 	_, _ = fmt.Scanln(&response)
 
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		log.Info("Scaling cancelled by user")
+		log.Info("Scaling canceled by user")
 
 		return
 	}

@@ -1307,7 +1307,7 @@ func TestStreamLeavesReadBehindWhenDeadlineFails(t *testing.T) {
 	}
 }
 
-func TestStreamKeepsExitStatusWhenCancelledAfterExit(t *testing.T) {
+func TestStreamKeepsExitStatusWhenCanceledAfterExit(t *testing.T) {
 	t.Parallel()
 
 	fx := newStreamFixture(t)
@@ -1542,7 +1542,7 @@ func TestStreamRequiresPrivateKey(t *testing.T) {
 	}
 }
 
-func TestStreamReturnsAtOnceForCancelledContext(t *testing.T) {
+func TestStreamReturnsAtOnceForCanceledContext(t *testing.T) {
 	t.Parallel()
 
 	fx := newStreamFixture(t)

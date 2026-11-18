@@ -513,7 +513,7 @@ func runPVEUnstick(ctx context.Context, f *unstickFlags, instanceRef string) err
 }
 
 // buildSSHArgs returns the SSH option list shared by the QGA probe and the
-// guest-exec restart. Centralising this keeps the two call sites in sync when
+// guest-exec restart. Centralizing this keeps the two call sites in sync when
 // host-key handling changes.
 func buildSSHArgs(sshUnsafe bool) []string {
 	args := []string{"-o", "BatchMode=yes"}

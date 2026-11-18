@@ -769,7 +769,7 @@ func (m *LoadBalancerManager) waitForLoadBalancerActive(ctx context.Context, cli
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for load balancer: %w", ctx.Err())
+			return fmt.Errorf("context canceled while waiting for load balancer: %w", ctx.Err())
 		case <-time.After(loadBalancerCheckInterval):
 			// Continue waiting
 		}

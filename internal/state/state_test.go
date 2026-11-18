@@ -115,7 +115,7 @@ func TestNewManager_EmptyStateDirUsesXDGStateHome(t *testing.T) {
 	}
 }
 
-// TestAddResource_UpdatesIDOfExistingResource pins the behaviour a bastion
+// TestAddResource_UpdatesIDOfExistingResource pins the behavior a bastion
 // recycle depends on, and which it did not have.
 //
 // Resources are keyed by type and name, not by provider id, precisely so that

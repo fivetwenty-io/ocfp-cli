@@ -281,7 +281,7 @@ func runMigrate(dryRun bool) error {
 	// printed: it prunes stale command locks on both sides as it scans, so
 	// they never surface as conflicts, and a refused operator is not shown
 	// moves that will not happen. It never runs on dry-run, because that
-	// pruning is a change on disk; the conflict walk below recognises
+	// pruning is a change on disk; the conflict walk below recognizes
 	// stale locks read-only instead (see migrateDiscardable).
 	if !dryRun {
 		err = refuseIfLiveProcessesActive(legacyDir, config.StateHome())

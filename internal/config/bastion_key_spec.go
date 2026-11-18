@@ -30,7 +30,7 @@ type BastionKeySpec struct {
 }
 
 // ErrBastionKeySpecInvalid marks a bastion.keys entry that names no
-// recognised key source.
+// recognized key source.
 var ErrBastionKeySpecInvalid = errors.New(
 	"want github/<user>, gitlab/<user>, github.com/<user>, gitlab.com/<user>, or an OpenSSH public key")
 

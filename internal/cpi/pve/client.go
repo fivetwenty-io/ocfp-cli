@@ -489,7 +489,7 @@ func splitPVEEndpoint(endpoint string) (host string, port int, protocol string) 
 }
 
 // splitHostPort splits "host:port" without resolving anything. Returns an
-// error if the format is unrecognised.
+// error if the format is unrecognized.
 func splitHostPort(hp string) (host string, port string, err error) {
 	idx := strings.LastIndex(hp, ":")
 	if idx <= 0 || idx == len(hp)-1 {

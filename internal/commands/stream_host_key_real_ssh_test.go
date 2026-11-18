@@ -212,7 +212,7 @@ func TestRealSSHRefusalIsReportedWithItsEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The bastion is spelled the way it was dialled, with its port.
+	// The bastion is spelled the way it was dialed, with its port.
 	err = executeSSH(context.Background(), localSSHCommand(t, port), entry)
 	if !errors.Is(err, bastionssh.ErrHostKeyMismatch) {
 		t.Fatalf("got %v, want an error matching ErrHostKeyMismatch", err)

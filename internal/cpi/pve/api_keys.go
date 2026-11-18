@@ -1,7 +1,7 @@
 package pve
 
 // PVE API map key constants used in VM config / firewall rule payloads.
-// Centralised here so goconst finds no duplicates across the package.
+// Centralized here so goconst finds no duplicates across the package.
 const (
 	pveKeyMemory = "memory"
 	pveKeyCores  = "cores"

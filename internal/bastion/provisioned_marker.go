@@ -13,7 +13,7 @@ const (
 	// isAlreadyProvisioned would short-circuit the entire provisioning run
 	// on the strength of it.
 	//
-	// The rule generalises: the persistent disk carries data, never claims
+	// The rule generalizes: the persistent disk carries data, never claims
 	// about the state of the OS. /var/lib/ocfp already holds the firstboot
 	// sentinel for the same reason.
 	ProvisionedMarkerPath = "/var/lib/ocfp/provisioned"

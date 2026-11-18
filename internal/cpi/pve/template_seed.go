@@ -33,7 +33,7 @@ const (
 	templateSeedPasswordBytes = 16
 
 	// templateSeedPasswordPrefix is prepended to every generated seed
-	// password so the ephemeral nature is recognisable in any logs that
+	// password so the ephemeral nature is recognizable in any logs that
 	// accidentally capture it.
 	templateSeedPasswordPrefix = "OcfpSeed." // #nosec G101 -- this is a label prefix prepended to a generated password, not a credential itself
 
@@ -119,7 +119,7 @@ type seedConsole interface {
 
 // generateSeedPassword returns a fresh, prefixed, hex-encoded random
 // password. The prefix tags the credential as ephemeral so it is
-// recognisable in any incidental log capture; the random suffix supplies
+// recognizable in any incidental log capture; the random suffix supplies
 // 128 bits of entropy from crypto/rand.
 func generateSeedPassword() (string, error) {
 	b := make([]byte, templateSeedPasswordBytes)
@@ -377,7 +377,7 @@ func seedWriteUnits(sess *TermproxySession) error {
 // modules out of the initramfs, rebuilds every installed kernel's initramfs,
 // and then checks each one, so a template is never converted while an
 // initramfs could still bring the NIC up. The drop-in stays in the image,
-// so initramfs rebuilds after a kernel update in a clone honour it too.
+// so initramfs rebuilds after a kernel update in a clone honor it too.
 func seedDisableInitrdNetwork(sess *TermproxySession) error {
 	if err := writeRemoteFile(sess, initrdNoNetworkConfPath, initrdNoNetworkConf, "0644"); err != nil {
 		return fmt.Errorf("write %s: %w", initrdNoNetworkConfPath, err)

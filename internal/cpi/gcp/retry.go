@@ -68,7 +68,7 @@ func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig,
 		// Check context before each attempt
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("operation %s cancelled before attempt %d: %w", operation, attempt, ctx.Err())
+			return fmt.Errorf("operation %s canceled before attempt %d: %w", operation, attempt, ctx.Err())
 		default:
 		}
 
@@ -112,7 +112,7 @@ func WithRetryConfig(ctx context.Context, operation string, config *RetryConfig,
 		jitteredDelay := addJitter(delay, config.JitterFactor)
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("operation %s cancelled during backoff: %w", operation, ctx.Err())
+			return fmt.Errorf("operation %s canceled during backoff: %w", operation, ctx.Err())
 		case <-time.After(jitteredDelay):
 		}
 
@@ -192,7 +192,7 @@ func (w *OperationWaiter) Wait(ctx context.Context, operation string, check Oper
 				return ErrOperationTimeout
 			}
 
-			return fmt.Errorf("operation %s cancelled: %w", operation, ctx.Err())
+			return fmt.Errorf("operation %s canceled: %w", operation, ctx.Err())
 
 		case <-ticker.C:
 			status, err := check(ctx)
@@ -274,7 +274,7 @@ func (w *ResourceWaiter) WaitForState(ctx context.Context, resourceName string, 
 				return ErrOperationTimeout
 			}
 
-			return fmt.Errorf("waiting for resource %s cancelled: %w", resourceName, ctx.Err())
+			return fmt.Errorf("waiting for resource %s canceled: %w", resourceName, ctx.Err())
 
 		case <-ticker.C:
 			state, err := check(ctx)

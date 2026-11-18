@@ -102,7 +102,7 @@ func TestDatasetScript_ReassertsAuthorizedKeys(t *testing.T) {
 	}
 }
 
-// TestDatasetScript_MarkerLivesOnTheOSDisk pins the rule that generalises past
+// TestDatasetScript_MarkerLivesOnTheOSDisk pins the rule that generalizes past
 // this script: the persistent disk carries data, never claims about the state
 // of the OS.
 //

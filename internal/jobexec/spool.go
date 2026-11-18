@@ -395,13 +395,13 @@ func (s Spool) readCancel() (Cancel, bool, error) {
 	return c, true, nil
 }
 
-// cancelled reports whether the spool holds a cancel marker. A marker that
+// canceled reports whether the spool holds a cancel marker. A marker that
 // opens and reads but does not decode, or is too large, still counts,
 // because only a cancel writes one. A marker that cannot be opened or read
 // is not seen yet, since that can happen with no marker there at all, as
 // when the process is out of descriptors, and the run looks again at its
 // next poll.
-func (s Spool) cancelled() bool {
+func (s Spool) canceled() bool {
 	_, ok, err := s.readCancel()
 
 	var bad *malformedError

@@ -30,7 +30,7 @@ The source and the destination stay in front of the separator, because ocfp need
 
 If we forget the separator, ocfp reports the unknown flag and reminds us how to pass it, so the fix is to move the flag after `--` and run the command again.
 
-Ordering is worth knowing. We render the modelled flags first, then the `--exclude` and `--include` patterns in the order they were given, then anything from `--rsync-options`, and finally everything after the separator. When the relative order of a filter rule matters, we put the whole set of rules after the separator so that rsync sees them in exactly the order we wrote.
+Ordering is worth knowing. We render the modeled flags first, then the `--exclude` and `--include` patterns in the order they were given, then anything from `--rsync-options`, and finally everything after the separator. When the relative order of a filter rule matters, we put the whole set of rules after the separator so that rsync sees them in exactly the order we wrote.
 
 ## Flags
 

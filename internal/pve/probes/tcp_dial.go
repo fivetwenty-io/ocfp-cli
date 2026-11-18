@@ -47,7 +47,7 @@ func (p *TCPDialProbe) Name() string {
 //
 //	Empty Host or invalid Port
 //	  → FAIL with configuration error detail (no remediation; operator must fix config)
-//	Context already cancelled before dial
+//	Context already canceled before dial
 //	  → FAIL with context error detail
 //	Dial returns error (connection refused, timeout, no route, etc.)
 //	  → FAIL with remediation hint to verify the service is running
@@ -73,17 +73,17 @@ func (p *TCPDialProbe) Run(ctx context.Context) Result {
 	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
 	label := p.label(addr)
 
-	// Honour context cancellation before attempting the dial.
+	// Honor context cancellation before attempting the dial.
 	select {
 	case <-ctx.Done():
 		return Result{
 			OK:     false,
-			Detail: fmt.Sprintf("%s: context cancelled before dial: %v", label, ctx.Err()),
+			Detail: fmt.Sprintf("%s: context canceled before dial: %v", label, ctx.Err()),
 		}
 	default:
 	}
 
-	// DialContext honours both the per-probe timeout and the caller's ctx (e.g. SIGINT
+	// DialContext honors both the per-probe timeout and the caller's ctx (e.g. SIGINT
 	// via signal.NotifyContext), so the leading ctx.Done() fast-path above is kept
 	// only as a lightweight check before the syscall.
 	d := net.Dialer{Timeout: timeout}

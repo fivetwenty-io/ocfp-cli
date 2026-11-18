@@ -116,14 +116,14 @@ func TestTCPDialProbe_PortAboveMax_FAIL(t *testing.T) {
 	}
 }
 
-func TestTCPDialProbe_CancelledContext_FAIL(t *testing.T) {
+func TestTCPDialProbe_CanceledContext_FAIL(t *testing.T) {
 	t.Parallel()
 
 	ln, port := listenTCP(t)
 	defer ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel() // already canceled
 
 	p := &probes.TCPDialProbe{
 		Host:    "127.0.0.1",
@@ -132,10 +132,10 @@ func TestTCPDialProbe_CancelledContext_FAIL(t *testing.T) {
 	}
 	r := p.Run(ctx)
 	if r.OK {
-		t.Fatal("expected OK=false for cancelled context")
+		t.Fatal("expected OK=false for canceled context")
 	}
-	if !strings.Contains(r.Detail, "context cancelled") {
-		t.Errorf("Detail should mention context cancelled: %q", r.Detail)
+	if !strings.Contains(r.Detail, "context canceled") {
+		t.Errorf("Detail should mention context canceled: %q", r.Detail)
 	}
 }
 

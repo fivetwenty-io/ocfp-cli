@@ -464,7 +464,7 @@ func confirmLBDeletion(count int, log logger.Logger) bool {
 	_, _ = fmt.Scanln(&response)
 
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		log.Info("Deletion cancelled by user")
+		log.Info("Deletion canceled by user")
 
 		return false
 	}
@@ -1063,7 +1063,7 @@ func extractResourceValue(resource state.Resource, key string) string {
 }
 
 // confirmServiceRemoval prompts the user to confirm service removal if force is false.
-// Returns true if confirmed, false if cancelled, and error on I/O failure.
+// Returns true if confirmed, false if canceled, and error on I/O failure.
 func confirmServiceRemoval(force bool, serviceIP, lbName string, log logger.Logger) (bool, error) {
 	if force {
 		return true, nil
@@ -1078,7 +1078,7 @@ func confirmServiceRemoval(force bool, serviceIP, lbName string, log logger.Logg
 
 	_, _ = fmt.Scanln(&response)
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		log.Info("Removal cancelled by user")
+		log.Info("Removal canceled by user")
 
 		return false, nil
 	}

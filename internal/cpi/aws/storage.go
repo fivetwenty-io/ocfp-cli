@@ -27,7 +27,7 @@ const (
 
 // getEC2 returns the EC2API to use for this manager.
 // In tests, m.ec2 is set directly. In production, m.ec2 is nil and
-// this falls back to the real client, preserving existing behaviour.
+// this falls back to the real client, preserving existing behavior.
 func (m *StorageManager) getEC2(ctx context.Context) (EC2API, error) {
 	if m.ec2 != nil {
 		return m.ec2, nil
@@ -38,7 +38,7 @@ func (m *StorageManager) getEC2(ctx context.Context) (EC2API, error) {
 
 // getS3 returns the S3API to use for this manager.
 // In tests, m.s3 is set directly. In production, m.s3 is nil and
-// this falls back to the real client, preserving existing behaviour.
+// this falls back to the real client, preserving existing behavior.
 func (m *StorageManager) getS3(ctx context.Context) (S3API, error) {
 	if m.s3 != nil {
 		return m.s3, nil

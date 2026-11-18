@@ -107,8 +107,8 @@ func TestRunWithEnv_NonZeroExit(t *testing.T) {
 	_ = out
 }
 
-// TestRunWithEnv_ContextCancelled propagates context cancellation.
-func TestRunWithEnv_ContextCancelled(t *testing.T) {
+// TestRunWithEnv_ContextCanceled propagates context cancellation.
+func TestRunWithEnv_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,9 +116,9 @@ func TestRunWithEnv_ContextCancelled(t *testing.T) {
 
 	_, err := ocfpexec.RunWithEnv(ctx, nil, "true")
 	if err == nil {
-		// On some platforms a pre-cancelled context still allows a fast exec.
+		// On some platforms a pre-canceled context still allows a fast exec.
 		// Acceptable: the important thing is the function does not hang.
-		t.Log("note: pre-cancelled context did not produce error on this platform (acceptable)")
+		t.Log("note: pre-canceled context did not produce error on this platform (acceptable)")
 	}
 }
 

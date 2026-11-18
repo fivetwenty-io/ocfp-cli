@@ -264,7 +264,7 @@ func (m *Manager) CreateArtifacts(ctx context.Context) error {
 
 	err = m.waitArtifactsReady(ctx, ep, creds)
 	if err != nil {
-		// An interrupted run (cancelled context) stops here: the vault write
+		// An interrupted run (canceled context) stops here: the vault write
 		// and bucket creation below would only fail against the same dead
 		// context. The VM is already recorded in state, so a re-run converges
 		// on it and teardown can remove it.

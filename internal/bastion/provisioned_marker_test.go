@@ -14,7 +14,7 @@ import (
 // rebuilt machine that has no brew, no binaries, and no genesis, and
 // `ocfp bastion init` would look at it and decide there was nothing to do.
 //
-// The rule this encodes generalises past the marker: the persistent disk
+// The rule this encodes generalizes past the marker: the persistent disk
 // carries data, never claims about the state of the OS. /var/lib/ocfp is on
 // the OS disk, next to the firstboot sentinel that already lives there.
 func TestProvisionedMarkerLivesOnTheOSDisk(t *testing.T) {
@@ -31,7 +31,7 @@ func TestProvisionedMarkerLivesOnTheOSDisk(t *testing.T) {
 }
 
 // TestLegacyProvisionedMarkerStillRead asserts bastions provisioned before the
-// move are still recognised, so the change does not re-run a full provision on
+// move are still recognized, so the change does not re-run a full provision on
 // every existing box the first time it is touched.
 func TestLegacyProvisionedMarkerStillRead(t *testing.T) {
 	t.Parallel()

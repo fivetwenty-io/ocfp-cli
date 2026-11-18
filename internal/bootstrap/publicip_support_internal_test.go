@@ -43,7 +43,7 @@ func TestSupportsPublicIPsHonorsDeclaredCapability(t *testing.T) {
 }
 
 // A manager whose network manager is silent on the question keeps the previous
-// behaviour: support is assumed.
+// behavior: support is assumed.
 func TestSupportsPublicIPsDefaultsToSupportedWhenUndeclared(t *testing.T) {
 	t.Parallel()
 

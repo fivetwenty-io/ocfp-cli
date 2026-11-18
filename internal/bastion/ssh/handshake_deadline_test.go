@@ -84,7 +84,7 @@ func returnsWithin(t *testing.T, limit time.Duration, fn func() error) error {
 
 // A peer that accepts the connection and never sends its banner must not
 // hold Connect past the caller's deadline or past a cancellation.
-func TestConnectHandshakeHonoursTheContext(t *testing.T) {
+func TestConnectHandshakeHonorsTheContext(t *testing.T) {
 	t.Run("deadline", func(t *testing.T) {
 		isolateSSHEnv(t)
 

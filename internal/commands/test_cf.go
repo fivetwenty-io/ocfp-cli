@@ -340,7 +340,7 @@ func parseCFAPIEndpoint(out string) string {
 	return ""
 }
 
-// cfConfigPath returns the cf CLI's config file, honouring CF_HOME.
+// cfConfigPath returns the cf CLI's config file, honoring CF_HOME.
 func cfConfigPath() string {
 	home := os.Getenv("CF_HOME")
 	if home == "" {

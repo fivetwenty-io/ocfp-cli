@@ -74,10 +74,10 @@ type recycledHostKeys struct {
 }
 
 func (r *recycledHostKeys) expects(key ssh.PublicKey) bool {
-	marshalled := key.Marshal()
+	marshaled := key.Marshal()
 
 	return slices.ContainsFunc(r.keys, func(want ssh.PublicKey) bool {
-		return bytes.Equal(want.Marshal(), marshalled)
+		return bytes.Equal(want.Marshal(), marshaled)
 	})
 }
 
@@ -241,9 +241,9 @@ func (c *Client) replaceStaleHostKey(knownHostsPath, hostname string, key ssh.Pu
 
 // recycledKeyTimeout returns the error for a recycle-mode wait that ran
 // out, or nil when Connect is not waiting on a recycled key or its caller
-// cancelled.
-func (c *Client) recycledKeyTimeout(callerCancelled bool) error {
-	if c.recycled == nil || callerCancelled || !c.recycled.waiting() {
+// canceled.
+func (c *Client) recycledKeyTimeout(callerCanceled bool) error {
+	if c.recycled == nil || callerCanceled || !c.recycled.waiting() {
 		return nil
 	}
 

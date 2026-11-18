@@ -19,7 +19,7 @@ permissions:
 # This module links the Azure, AWS, GCP and STACKIT SDKs, so a single
 # compile of the dependency tree is a heavy memory consumer on the lab
 # runners. GOFLAGS caps the compiler's own package parallelism, the same
-# cap ci.yml applies; the goreleaser step below serialises the targets on
+# cap ci.yml applies; the goreleaser step below serializes the targets on
 # top of that, since six simultaneous links of this tree is exactly the
 # fan-out that OOM-killed CI's build matrix (exit 137).
 env:

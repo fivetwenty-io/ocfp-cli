@@ -23,7 +23,7 @@ func TestDryRunStartErrorMatchesStartingTheCommand(t *testing.T) {
 	file := filepath.Join(base, "file")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	cases := []struct {
@@ -38,7 +38,7 @@ func TestDryRunStartErrorMatchesStartingTheCommand(t *testing.T) {
 		{"directory missing", filepath.Join(base, "missing"), "tool", context.Background(), true},
 		{"directory under a file", filepath.Join(file, "sub"), "tool", context.Background(), true},
 		{"directory is a file", file, "tool", context.Background(), true},
-		{"context cancelled", base, "tool", cancelled, true},
+		{"context canceled", base, "tool", canceled, true},
 	}
 
 	for _, tc := range cases {

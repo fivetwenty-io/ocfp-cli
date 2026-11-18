@@ -769,7 +769,7 @@ func (m *Manager) waitForSSHReady(ctx context.Context, host string, timeout time
 		// Wait before next attempt, respecting context cancellation
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("SSH readiness check cancelled: %w", ctx.Err())
+			return fmt.Errorf("SSH readiness check canceled: %w", ctx.Err())
 		case <-time.After(retryInterval):
 			// Exponential backoff up to maxRetryInterval
 			retryInterval = time.Duration(float64(retryInterval) * 1.5) //nolint:mnd
@@ -2395,7 +2395,7 @@ func (m *Manager) executeGitJobWithRetry(ctx context.Context, j *job) (*ssh.Comm
 
 		select {
 		case <-ctx.Done():
-			return result, fmt.Errorf("git job %s cancelled: %w", j.name, err)
+			return result, fmt.Errorf("git job %s canceled: %w", j.name, err)
 		case <-time.After(backoff):
 		}
 

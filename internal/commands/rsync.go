@@ -20,9 +20,9 @@ const (
 	// Command arguments.
 	rsyncTwoArgs = 2
 
-	// rsyncModelledFlagCount is how many rsync flags ocfp models as its own
+	// rsyncModeledFlagCount is how many rsync flags ocfp models as its own
 	// boolean flags, used to size the slice that renders them.
-	rsyncModelledFlagCount = 6
+	rsyncModeledFlagCount = 6
 )
 
 // NewRSyncCmd creates the rsync command.
@@ -121,7 +121,7 @@ Advanced options include:
 - Include/exclude patterns for selective sync
 - Itemized change summaries for auditing a dry run
 
-Only the most common rsync flags are modelled as ocfp flags. Every other rsync
+Only the most common rsync flags are modeled as ocfp flags. Every other rsync
 flag goes after a -- separator, and everything after that separator is handed
 to rsync unchanged and in the order it was written, so any rsync flag at all
 can be used:
@@ -387,7 +387,7 @@ func processRSyncPath(path, bastionIP, user string) string {
 func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string) ([]string, error) {
 	cmd := []string{"rsync"}
 
-	cmd = append(cmd, rsyncModelledFlags(config)...)
+	cmd = append(cmd, rsyncModeledFlags(config)...)
 
 	// Add progress indicator
 	cmd = append(cmd, "--progress")
@@ -442,9 +442,9 @@ func buildRSyncCommand(config *rsyncConfig, source, destination, keyPath string)
 	return cmd, nil
 }
 
-// rsyncModelledFlags renders the rsync flags that ocfp models as its own.
-func rsyncModelledFlags(config *rsyncConfig) []string {
-	flags := make([]string, 0, rsyncModelledFlagCount)
+// rsyncModeledFlags renders the rsync flags that ocfp models as its own.
+func rsyncModeledFlags(config *rsyncConfig) []string {
+	flags := make([]string, 0, rsyncModeledFlagCount)
 
 	if config.archive {
 		flags = append(flags, "-a")

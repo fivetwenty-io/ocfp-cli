@@ -83,7 +83,7 @@ func TestCreateBastion_ForgetsStaleHostKeys(t *testing.T) {
 // entry must go as well.
 //
 //nolint:paralleltest // shares the package test known_hosts file
-func TestCreateBastion_ForgetsStaleKeyForLabelledPublicIP(t *testing.T) {
+func TestCreateBastion_ForgetsStaleKeyForLabeledPublicIP(t *testing.T) {
 	unrelated := "192.0.2.8 " + otherHostKey + "\n"
 	knownHosts := useKnownHosts(t, "192.0.2.7 "+staleHostKey+"\n"+unrelated)
 

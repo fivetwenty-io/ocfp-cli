@@ -49,8 +49,8 @@ func TestCheckpointReportsACancel(t *testing.T) {
 	j.cancel()
 	j.cancel()
 
-	if err := j.Checkpoint(); !errors.Is(err, ErrCancelled) {
-		t.Fatalf("Checkpoint after a cancel = %v, want ErrCancelled", err)
+	if err := j.Checkpoint(); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Checkpoint after a cancel = %v, want ErrCanceled", err)
 	}
 
 	select {
@@ -279,13 +279,13 @@ func TestNoopStopsAtACheckpoint(t *testing.T) {
 	j.cancel()
 
 	_, err := runNoop(t.Context(), j, func() (string, error) { return "host", nil })
-	if !errors.Is(err, ErrCancelled) {
-		t.Fatalf("runNoop of a cancelled job = %v, want ErrCancelled", err)
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("runNoop of a canceled job = %v, want ErrCanceled", err)
 	}
 
 	recs := records(t, append(headerLine(t), buf.Bytes()...))
 	if len(recs) != 2 || recs[1].Kind != progress.KindEvent {
-		t.Fatalf("a cancelled noop wrote %d records, want the header and step_started:\n%s", len(recs), buf)
+		t.Fatalf("a canceled noop wrote %d records, want the header and step_started:\n%s", len(recs), buf)
 	}
 }
 
@@ -341,7 +341,7 @@ func TestAVerbWhoseWriteFailsAfterTheWrapperGoesIsUndone(t *testing.T) {
 		t.Fatalf("the undo hook ran %d times, want once (stderr %q)", undos, stderr)
 	}
 
-	if !errors.Is(logErr, ErrCancelled) || !strings.Contains(logErr.Error(), "broken pipe") {
+	if !errors.Is(logErr, ErrCanceled) || !strings.Contains(logErr.Error(), "broken pipe") {
 		t.Fatalf("the log after the cancel = %v, want a cancel that holds the write's error", logErr)
 	}
 

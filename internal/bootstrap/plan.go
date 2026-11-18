@@ -14,8 +14,8 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/ui"
 )
 
-// ErrBootstrapCancelled is returned when user cancels bootstrap operation.
-var ErrBootstrapCancelled = errors.New("bootstrap cancelled by user")
+// ErrBootstrapCanceled is returned when user cancels bootstrap operation.
+var ErrBootstrapCanceled = errors.New("bootstrap canceled by user")
 
 // Plan data structures for dry run rendering.
 type (
@@ -635,7 +635,7 @@ func (m *Manager) showBootstrapPlan(ctx context.Context) error {
 	// Prompt for confirmation unless --yes flag is set
 	if !m.options.Yes {
 		if !m.confirmBootstrap(plan.CreateCount) {
-			return ErrBootstrapCancelled
+			return ErrBootstrapCanceled
 		}
 	}
 

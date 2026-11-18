@@ -248,10 +248,10 @@ func TestExitRefusesAStoredAlreadyFinished(t *testing.T) {
 	}
 }
 
-func TestCancelledExitFixtureLoads(t *testing.T) {
+func TestCanceledExitFixtureLoads(t *testing.T) {
 	t.Parallel()
 
-	s := spoolWith(t, exitFile, "exit-cancelled-v1.json")
+	s := spoolWith(t, exitFile, "exit-canceled-v1.json")
 
 	e, ok, err := s.readExit()
 	if err != nil || !ok {
@@ -275,12 +275,12 @@ func TestCancelledExitFixtureLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := readFile(t, filepath.Join(w.Dir, exitFile)), progresstest.Fixture("exit-cancelled-v1.json"); string(got) != string(want) {
+	if got, want := readFile(t, filepath.Join(w.Dir, exitFile)), progresstest.Fixture("exit-canceled-v1.json"); string(got) != string(want) {
 		t.Fatalf("WriteExit wrote\n%s\nthe fixture holds\n%s", got, want)
 	}
 }
 
-func TestAnUncancelledExitWritesAsBefore(t *testing.T) {
+func TestAnUncanceledExitWritesAsBefore(t *testing.T) {
 	t.Parallel()
 
 	s, _, err := CreateSpool(spoolRoot(t), "job-0001")
@@ -386,8 +386,8 @@ func TestOnlyAMarkerThatIsThereCountsAsACancel(t *testing.T) {
 
 			tc.make(t, filepath.Join(s.Dir, cancelFile))
 
-			if got := s.cancelled(); got != tc.want {
-				t.Fatalf("cancelled = %v, want %v", got, tc.want)
+			if got := s.canceled(); got != tc.want {
+				t.Fatalf("canceled = %v, want %v", got, tc.want)
 			}
 		})
 	}

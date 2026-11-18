@@ -9,7 +9,7 @@ package provision
 // no brew, no binaries, and no genesis — where the early-exit check at the top
 // of the generated script would believe it and skip everything.
 //
-// The rule generalises: the persistent disk carries data, never claims about
+// The rule generalizes: the persistent disk carries data, never claims about
 // the state of the OS.
 const ProvisionedMarker = "/var/lib/ocfp/provisioned"
 

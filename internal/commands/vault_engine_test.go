@@ -38,7 +38,7 @@ func TestResolveInceptionEngine_PrefersVaultLikeSafe(t *testing.T) {
 	assert.Equal(t, vaultPath, engine.path)
 }
 
-func TestResolveInceptionEngine_HonoursSafeEngine(t *testing.T) {
+func TestResolveInceptionEngine_HonorsSafeEngine(t *testing.T) {
 	bin := t.TempDir()
 	writeFakeExecutable(t, bin, "vault", "exit 0\n")
 	baoPath := writeFakeExecutable(t, bin, "bao", "exit 0\n")

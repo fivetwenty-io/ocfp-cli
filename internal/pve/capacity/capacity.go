@@ -218,7 +218,7 @@ func Resolve(ctx context.Context, q Querier, node string, cfgWorkers, cfgMaxInFl
 		}
 	}
 
-	// Workers explicitly set but MaxInFlight not — honour Workers from config
+	// Workers explicitly set but MaxInFlight not — honor Workers from config
 	// and derive MaxInFlight from query / default.
 	explicitWorkers := cfgWorkers > 0
 

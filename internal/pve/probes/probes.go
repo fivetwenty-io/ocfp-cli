@@ -22,7 +22,7 @@ const (
 	// "FAILED_ROWS=N" where N is the integer row count.
 	SentinelFailedRows = "FAILED_ROWS="
 	// SentinelProbeError is the prefix emitted when the remote script hit an
-	// unrecognised mysql error. Treated as non-fatal (logged, not failed) per
+	// unrecognized mysql error. Treated as non-fatal (logged, not failed) per
 	// lab semantics: a fresh director has no CF deployment yet.
 	SentinelProbeError = "PROBE_ERROR"
 )

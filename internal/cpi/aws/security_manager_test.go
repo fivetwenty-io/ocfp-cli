@@ -14,7 +14,7 @@ import (
 
 // secFakeEC2 is a test-local stub for EC2API. Fields hold canned responses;
 // panics on any method not overridden (fail-loud contract).
-// All overrideable methods are set via func fields so each test can customise.
+// All overrideable methods are set via func fields so each test can customize.
 
 type secFakeEC2 struct {
 	EC2API // embed interface — un-overridden methods panic at runtime

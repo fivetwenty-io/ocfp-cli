@@ -823,7 +823,7 @@ func currentStartOutput(ctx context.Context, paths map[string]string) string {
 	return vaultPaneHistory(ctx, paths)
 }
 
-// vaultLogWithSealKey returns a log's text, without colour codes, when it
+// vaultLogWithSealKey returns a log's text, without color codes, when it
 // holds a seal key, and "" when it does not exist or holds none. A log that
 // exists but cannot be read is an error.
 func vaultLogWithSealKey(logFile string) (string, error) {
@@ -845,7 +845,7 @@ func vaultLogWithSealKey(logFile string) (string, error) {
 }
 
 // vaultPaneHistory returns the whole of the bloc's tmux pane history without
-// colour codes, or "" when the pane cannot be captured, such as when the
+// color codes, or "" when the pane cannot be captured, such as when the
 // session is gone. A pane that cannot be read holds no key ocfp can use.
 func vaultPaneHistory(ctx context.Context, paths map[string]string) string {
 	pane, err := vaultOps.run(ctx, cleanupCommand{

@@ -117,7 +117,7 @@ func (h *safeTargetHarness) useVaultOps(t *testing.T, cancel context.CancelFunc)
 // startFreshVault runs the inception vault reconcile for the bloc, with the
 // real start, target, and stop steps; with no vault on disk it starts a new
 // one. When interrupt is
-// set, the run's context is cancelled once safe local has registered its
+// set, the run's context is canceled once safe local has registered its
 // target, as when the operator stops ocfp part way.
 func (h *safeTargetHarness) startFreshVault(t *testing.T, interrupt bool) error {
 	t.Helper()

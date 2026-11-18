@@ -67,7 +67,7 @@ func (e *SystemSSHHostKeyError) Unwrap() error {
 // SystemSSHHostKeyFailure returns a *SystemSSHHostKeyError when output, the
 // captured stderr of a system ssh, scp, or rsync run, shows that the local
 // ssh refused the bastion's host key. bastionHost names the bastion as ssh
-// dialled it, as a bare host on port 22 or as "[host]:port" on any other,
+// dialed it, as a bare host on port 22 or as "[host]:port" on any other,
 // and cause is the error the command exited with. It returns nil when the
 // output does not prove such a refusal.
 //
@@ -140,7 +140,7 @@ func knownHostsHostName(name string) string {
 	return host
 }
 
-// knownHostsHostPort splits a known_hosts name, or a host as dialled, into
+// knownHostsHostPort splits a known_hosts name, or a host as dialed, into
 // its host, in lower case, and its port. ssh writes a host on port 22
 // bare and any other port as "[host]:port", so a bare host, or one in
 // brackets with no port, is on port 22.
@@ -161,11 +161,11 @@ func knownHostsHostPort(name string) (string, string) {
 }
 
 // sameKnownHostsHost reports whether a known_hosts name and a host as
-// dialled name the same host on the same port, comparing addresses as IPs
+// dialed name the same host on the same port, comparing addresses as IPs
 // so that different spellings of one IPv6 address match.
-func sameKnownHostsHost(name, dialled string) bool {
+func sameKnownHostsHost(name, dialed string) bool {
 	a, portA := knownHostsHostPort(name)
-	b, portB := knownHostsHostPort(dialled)
+	b, portB := knownHostsHostPort(dialed)
 
 	if portA != portB {
 		return false

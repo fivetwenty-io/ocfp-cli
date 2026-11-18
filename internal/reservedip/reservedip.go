@@ -225,7 +225,7 @@ func processOffsetAssignment(
 	// "{target}_a"/"{target}_b" and separately unions every key matching
 	// the unanchored pattern /{target}_ip/, so a bound named
 	// "{target}_ip_a" is swept into the target's static range as if it
-	// were an address — and with consecutive offsets it IS a neighbouring
+	// were an address — and with consecutive offsets it IS a neighboring
 	// service's live address (FWT-1115).
 	vaultIPs[assignmentType+"_a"] = AddOffsetToIP(baseIP, offset-1)
 	vaultIPs[assignmentType+"_b"] = AddOffsetToIP(baseIP, offset+1)

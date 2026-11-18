@@ -17,7 +17,7 @@ import (
 // The HM resurrector is disabled lab-wide by the hm-tuning.yml ops file
 // (resurrector_enabled: false), which is baked into the director VM.
 // The per-deployment CLI toggle — bosh update-resurrection on/off — is a
-// separate flag that survives director restarts and is honoured by bosh
+// separate flag that survives director restarts and is honored by bosh
 // recreate and the scan-and-fix plugin. Wrapping the deploy with off/on
 // ensures that any recreates triggered during the deploy also run without
 // resurrection interference, and restores the operator-friendly default

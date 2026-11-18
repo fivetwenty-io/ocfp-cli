@@ -1302,13 +1302,13 @@ func (m *ComputeManager) resizeBootDisk(ctx context.Context, node string, vmid, 
 // supports:
 //
 //   - The native VM tags field as a semicolon-separated list of identifiers
-//     (each "<key>-<value>" lowercased and ASCII-sanitised so it matches PVE's
+//     (each "<key>-<value>" lowercased and ASCII-sanitized so it matches PVE's
 //     allowed tag charset). This is what's filterable in the UI and what
 //     ListInstances reads back to evaluate label-based queries.
 //   - The description field as readable "key=value" lines, preserving the
 //     original casing/values for operators inspecting the VM.
 //
-// Both writes happen in one PUT so the VM is fully labelled before the start
+// Both writes happen in one PUT so the VM is fully labeled before the start
 // task completes.
 func (m *ComputeManager) setVMTags(ctx context.Context, node string, vmid int, tags map[string]string) {
 	if len(tags) == 0 {
@@ -1427,9 +1427,9 @@ func parsePVETags(raw string) []string {
 // filter is matched against the VM's name).
 //
 // The convention mirrors setVMTags: a filter "label.bloc=520-pve-wayne"
-// matches when the tag "bloc--520-pve-wayne" (post-sanitisation) is
+// matches when the tag "bloc--520-pve-wayne" (post-sanitization) is
 // present. A VM with no tags can never satisfy a label filter — that's the
-// desirable behaviour because it keeps untagged VMs from being returned as
+// desirable behavior because it keeps untagged VMs from being returned as
 // false-positive bastions.
 func matchesLabelFilters(vmTags []string, filters map[string]string) bool {
 	if len(filters) == 0 {

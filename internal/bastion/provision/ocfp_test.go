@@ -424,7 +424,7 @@ func TestGenerateOCFPConfigureScript_GenesisCallSequence(t *testing.T) {
 
 	devList := lines[devLine-1]
 	if strings.Index(devList, `"bosh"`) > strings.Index(devList, `"cf"`) {
-		t.Errorf("bosh must be initialised before cf: %s", devList)
+		t.Errorf("bosh must be initialized before cf: %s", devList)
 	}
 
 	for i, line := range lines {
@@ -575,7 +575,7 @@ func TestBastionInceptionPort_StartAndConsumersAgree(t *testing.T) {
 		},
 		{
 			// Pinned: the live reference bloc pins 8234 in config, and both
-			// sides must honour the pin rather than the derived port.
+			// sides must honor the pin rather than the derived port.
 			name:         "config-pinned port",
 			blocName:     "ocfp-lab-nabramovitz",
 			configPort:   8234,

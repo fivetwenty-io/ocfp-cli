@@ -90,7 +90,7 @@ func TestApplyDefaultsConvergesDNSWithoutYAML(t *testing.T) {
 
 // TestApplyDefaultsPVEBastionFlavor checks the PVE provider case of
 // applyDefaults fills the bastion flavor preset and leaves an explicit one
-// alone, matching the other providers' behaviour.
+// alone, matching the other providers' behavior.
 func TestApplyDefaultsPVEBastionFlavor(t *testing.T) {
 	t.Parallel()
 

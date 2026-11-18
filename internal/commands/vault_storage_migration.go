@@ -530,7 +530,7 @@ func abandonInterruptedCopy(paths map[string]string, journal *migrationJournal, 
 // finishInterruptedSwap completes a swap that a crash cut short and returns
 // where the file store is kept. A crash can stop it at three points: before
 // either rename, after the file store became the backup, or after both
-// renames. Each is recognised by what sits where, and any other arrangement
+// renames. Each is recognized by what sits where, and any other arrangement
 // is refused with every path named and nothing moved.
 func finishInterruptedSwap(paths map[string]string, journal *migrationJournal, log *zap.SugaredLogger) (string, error) {
 	layout := newMigrationLayout(paths, time.Now())

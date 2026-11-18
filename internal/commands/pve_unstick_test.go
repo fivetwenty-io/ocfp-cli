@@ -200,9 +200,9 @@ func TestQGAPingUntil_TimeoutReturnsLastDiag(t *testing.T) {
 	assert.Contains(t, diag, "QEMU guest agent is not running")
 }
 
-// TestQGAPingUntil_CancelledContextReturnsImmediately verifies the loop honors
+// TestQGAPingUntil_CanceledContextReturnsImmediately verifies the loop honors
 // caller cancellation rather than running to the wall-clock deadline.
-func TestQGAPingUntil_CancelledContextReturnsImmediately(t *testing.T) {
+func TestQGAPingUntil_CanceledContextReturnsImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -215,7 +215,7 @@ func TestQGAPingUntil_CancelledContextReturnsImmediately(t *testing.T) {
 	elapsed := time.Since(start)
 
 	assert.False(t, ok)
-	assert.Less(t, elapsed, time.Second, "cancelled context must short-circuit the wait")
+	assert.Less(t, elapsed, time.Second, "canceled context must short-circuit the wait")
 }
 
 // TestFormatQGAUnreachableError verifies the actionable error message contains

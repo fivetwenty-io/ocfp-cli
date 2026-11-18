@@ -5,7 +5,7 @@ package ssh
 import "os"
 
 // lockFile does nothing where no advisory file lock is available; writers
-// there are not serialised.
+// there are not serialized.
 func lockFile(_ *os.File) error { return nil }
 
 func unlockFile(_ *os.File) error { return nil }

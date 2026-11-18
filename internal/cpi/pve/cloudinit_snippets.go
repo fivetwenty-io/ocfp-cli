@@ -67,7 +67,7 @@ func (m *ComputeManager) resolveSnippetStorage(ctx context.Context, node string)
 	return choice
 }
 
-// listNodeStorages fetches /nodes/{node}/storage and normalises the entries
+// listNodeStorages fetches /nodes/{node}/storage and normalizes the entries
 // the resolver cares about (name, content, enabled).
 func (m *ComputeManager) listNodeStorages(ctx context.Context, node string) []nodeStorage {
 	path := buildPVEPath(node, "storage")

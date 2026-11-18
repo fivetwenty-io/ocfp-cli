@@ -75,8 +75,8 @@ const (
 )
 
 var (
-	// ErrTeardownCancelled indicates the user cancelled the teardown operation.
-	ErrTeardownCancelled = errors.New("teardown cancelled by user")
+	// ErrTeardownCanceled indicates the user canceled the teardown operation.
+	ErrTeardownCanceled = errors.New("teardown canceled by user")
 	// ErrResourceSkipped indicates a resource was intentionally skipped during teardown.
 	ErrResourceSkipped = errors.New("resource skipped (not an error)")
 )
@@ -976,9 +976,9 @@ func (m *TeardownManager) handleDeletionPlan(sortedResources []*ResourceToDelete
 
 	if !m.options.Force && !m.options.DryRun {
 		if !m.confirmDeletion(len(sortedResources)) {
-			log.Info("Teardown cancelled by user")
+			log.Info("Teardown canceled by user")
 
-			return ErrTeardownCancelled
+			return ErrTeardownCanceled
 		}
 	}
 

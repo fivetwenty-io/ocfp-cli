@@ -46,7 +46,7 @@ func TestValidatePath(t *testing.T) {
 		{name: "trailing .. resolves safe", path: "/a/b/..", wantErr: false},
 
 		// Directory traversal — Windows-style (backslash not in POSIX path but worth confirming)
-		// On darwin/linux filepath.Clean normalises \\; the regex catches the remaining ".."
+		// On darwin/linux filepath.Clean normalizes \\; the regex catches the remaining ".."
 		{name: "backslash traversal", path: `..\..\etc\passwd`, wantErr: true, errFrag: "dangerous"},
 
 		// URL-encoded traversal — validator URL-decodes once and rejects paths where

@@ -200,7 +200,7 @@ func TestReservedIPGuardStampsSchemeOnFreshWrite(t *testing.T) {
 }
 
 // TestReservedIPGuardWithholdsStampOnDrift is what keeps the stamp honest:
-// a bloc that disagrees with the current table must not be labelled as
+// a bloc that disagrees with the current table must not be labeled as
 // conforming to it.
 func TestReservedIPGuardWithholdsStampOnDrift(t *testing.T) {
 	under := newCountingSafe()

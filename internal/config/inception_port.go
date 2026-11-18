@@ -25,7 +25,7 @@ const (
 
 	// InceptionVaultPortRangeStart is the first port of the per-bloc range.
 	// The range deliberately mirrors the legacy port (8234 -> 18234) so an
-	// operator seeing 18xxx recognises it as an inception vault.
+	// operator seeing 18xxx recognizes it as an inception vault.
 	InceptionVaultPortRangeStart = 18234
 
 	// InceptionVaultPortRangeSize is the number of ports in the per-bloc range.

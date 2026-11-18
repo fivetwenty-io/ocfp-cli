@@ -46,7 +46,7 @@ cf restart e2e-test              # the app must restart to pick it up
 cf ssh e2e-test -c "echo ok && hostname"
 ```
 
-`cf ssh-enabled` is a query, despite reading like a switch. Enabling SSH for an app takes `cf enable-ssh`, and the app only honours it after a restart.
+`cf ssh-enabled` is a query, despite reading like a switch. Enabling SSH for an app takes `cf enable-ssh`, and the app only honors it after a restart.
 
 **Verify**: `ok` and a container hostname. An interactive `cf ssh e2e-test` should also drop us at a prompt inside the container, and `ps aux` there is a strange and pleasant view after ten chapters of building toward it.
 

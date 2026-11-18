@@ -13,7 +13,7 @@ import (
 )
 
 // startTestPaths returns a bloc's paths moved into a temp directory, with key
-// files holding recognisable values so a test can prove they never reach the
+// files holding recognizable values so a test can prove they never reach the
 // command line typed into tmux.
 func startTestPaths(t *testing.T, dataDir string) map[string]string {
 	t.Helper()

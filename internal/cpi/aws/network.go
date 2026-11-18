@@ -15,7 +15,7 @@ import (
 )
 
 // getEC2 returns the EC2API to use. In tests m.ec2 is set; in production
-// it falls back to the real client, preserving existing behaviour.
+// it falls back to the real client, preserving existing behavior.
 func (m *NetworkManager) getEC2(ctx context.Context) (EC2API, error) {
 	if m.ec2 != nil {
 		return m.ec2, nil

@@ -230,7 +230,7 @@ func (rf *restoreFlags) confirmRestore(cfg *config.Config, backupID string) erro
 	_, _ = fmt.Scanln(&response)
 
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		logger.Get().Info("Restore cancelled by user")
+		logger.Get().Info("Restore canceled by user")
 
 		return nil
 	}

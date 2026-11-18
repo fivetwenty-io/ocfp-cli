@@ -561,7 +561,7 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 }
 
 // writeEnd writes the records that end a job's stream: a warning that names
-// the work left undone, when a cancelled verb left any, a
+// the work left undone, when a canceled verb left any, a
 // JOB_CANCELED error when a cancel ended the job, and the result, which
 // names the cancel's outcome.
 func writeEnd(enc *progress.Encoder, end verbEnd) error {

@@ -409,7 +409,7 @@ func (m *StorageManager) SetBucketLifecycle(ctx context.Context, name string, no
 	return nil
 }
 
-// isBucketAlreadyOwned recognises S3 "you already own this bucket" responses
+// isBucketAlreadyOwned recognizes S3 "you already own this bucket" responses
 // so CreateBucket is idempotent across re-runs.
 func isBucketAlreadyOwned(err error) bool {
 	if err == nil {

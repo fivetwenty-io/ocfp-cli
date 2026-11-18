@@ -19,7 +19,7 @@ func TestConfirmInitialization_NoTerminalNamesTheFlag(t *testing.T) {
 	err := f.confirmInitializationIfNeeded(RoleBastion)
 
 	require.ErrorIs(t, err, ErrInitNeedsConfirmation)
-	require.NotErrorIs(t, err, ErrInitCancelled)
+	require.NotErrorIs(t, err, ErrInitCanceled)
 	assert.Contains(t, err.Error(), "--yes")
 	assert.Contains(t, err.Error(), "ocfp init bastion")
 }

@@ -72,7 +72,7 @@ func newVolumeTestClient(pool, storageType string) (*StorageManager, *fakePVECli
 // TestCreateVolumeShapesNameForStorageType drives CreateVolume end to end
 // against a fake API: an NFS pool must receive a ".qcow2" filename with
 // format=qcow2, and an LVM-thin pool must receive the bare name with no
-// format key, which is the behaviour that already worked on block pools.
+// format key, which is the behavior that already worked on block pools.
 func TestCreateVolumeShapesNameForStorageType(t *testing.T) {
 	t.Parallel()
 

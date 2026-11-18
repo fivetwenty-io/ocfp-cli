@@ -64,7 +64,7 @@ func TestProbeInceptionVault_SealedFileVault(t *testing.T) {
 	assert.Equal(t, "file", probe.storageType)
 }
 
-// Older engines omit storage_type. The probe must still recognise the vault
+// Older engines omit storage_type. The probe must still recognize the vault
 // and leave the storage unnamed, so the caller falls back to the on-disk
 // classification.
 func TestProbeInceptionVault_VaultWithoutStorageType(t *testing.T) {

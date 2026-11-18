@@ -47,7 +47,7 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, isRetryable IsRe
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		// Check context before attempting
 		if ctx.Err() != nil {
-			return fmt.Errorf("retry cancelled before attempt %d: %w", attempt, ctx.Err())
+			return fmt.Errorf("retry canceled before attempt %d: %w", attempt, ctx.Err())
 		}
 
 		// Execute the function
@@ -78,7 +78,7 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, isRetryable IsRe
 		// Sleep with context cancellation support
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("retry cancelled during backoff at attempt %d: %w", attempt, ctx.Err())
+			return fmt.Errorf("retry canceled during backoff at attempt %d: %w", attempt, ctx.Err())
 		case <-time.After(backoff):
 			// Continue to next attempt
 		}

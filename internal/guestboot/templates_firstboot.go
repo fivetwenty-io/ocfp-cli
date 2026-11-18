@@ -85,7 +85,7 @@ adv_routes=$(jq -r 'if (.advertise_routes // "") != "" then "--advertise-routes=
 
 # Idempotent install. command -v skips when the static binary is already
 # on $PATH; otherwise pull the official install script which handles both
-# apt and tarball flavours.
+# apt and tarball flavors.
 if ! command -v tailscale >/dev/null 2>&1; then
   curl -fsSL https://tailscale.com/install.sh | sh
 fi

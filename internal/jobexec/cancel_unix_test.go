@@ -115,7 +115,7 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 	cancel := cancelRun(t, store, root)
 	cancel.opts.CancelOutcome = oc.report
 
-	cancelled := make(chan error, 1)
+	canceled := make(chan error, 1)
 
 	rc.clock.onWait = func(n int) {
 		if n != 1 {
@@ -133,7 +133,7 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 			return err == nil
 		})
 
-		go func() { cancelled <- cancel.run(t) }()
+		go func() { canceled <- cancel.run(t) }()
 
 		waitFor(t, func() bool {
 			_, ok, _ := s.readCancel()
@@ -200,7 +200,7 @@ func TestJobExecCancelKillsTheProcessGroup(t *testing.T) {
 	}
 
 	select {
-	case err := <-cancelled:
+	case err := <-canceled:
 		if err == nil {
 			t.Fatal("the cancel of a killed job reported success")
 		}

@@ -225,14 +225,14 @@ func Load(yamlPath string, _ BoshInt) (*Config, error) {
 //
 // Auth preference: pve_api_token wins when non-empty and not a dry-run
 // placeholder; otherwise pve_password is used. If both are empty/placeholder,
-// both are included in the map (dry-run behaviour).
+// both are included in the map (dry-run behavior).
 //
 // network_bridge: cfg.Tier1.NetworkBridge takes precedence over
 // pve_network_bridge from vars when non-empty.
 //
 // pve_port: absent/empty → default 8006. Non-integer → error.
 //
-// verify_ssl is always false for test isolation (matches Python behaviour).
+// verify_ssl is always false for test isolation (matches Python behavior).
 //
 // Failure modes:
 //   - boshInt returns error for any path → error with path name included

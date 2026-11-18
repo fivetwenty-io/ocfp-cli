@@ -354,7 +354,7 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 	name, email, fallback := om.repoInitGitIdentity()
 
 	lines := []string{
-		"# Initialise genesis deployment repos (must exist before env files are written)",
+		"# Initialize genesis deployment repos (must exist before env files are written)",
 		"# One repo per kit directory. repo-init takes a bare name and creates ./<name>,",
 		"# and --force would delete the env files and dev symlink already there, so",
 		"# each repo is staged under mktemp and only its .genesis is moved into place.",
@@ -370,19 +370,19 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 
 	if fallback {
 		lines = append(lines,
-			`log_warning 'Bloc config has no bastion.git.user; genesis will initialise the deployment repos with a placeholder git identity'`,
+			`log_warning 'Bloc config has no bastion.git.user; genesis will initialize the deployment repos with a placeholder git identity'`,
 			`log_warning 'Commits made from the bastion need a real identity: set bastion.git.user.name and bastion.git.user.email, or run git config --global user.name / user.email'`,
 		)
 	}
 
 	lines = append(lines,
 		"",
-		`log_info 'Initialising genesis deployment repos'`,
+		`log_info 'Initializing genesis deployment repos'`,
 		`for deployment in "${DEV_DEPLOYMENTS[@]}"; do`,
 		`    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`,
 		`    KIT_DIR="${KITS_ROOT}/${deployment}"`,
 		`    if [ -f "${DEPLOY_PATH}/.genesis/config" ]; then`,
-		`        log_info "genesis repo already initialised: ${deployment}"`,
+		`        log_info "genesis repo already initialized: ${deployment}"`,
 		"        continue",
 		"    fi",
 		`    if [ ! -d "${KIT_DIR}" ]; then`,
@@ -415,14 +415,14 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 		`    log_success "genesis repo-init completed for ${deployment}"`,
 		"done",
 		"",
-		`log_info 'Initialising genesis config for release-mode deployments'`,
+		`log_info 'Initializing genesis config for release-mode deployments'`,
 		`for deployment in "${RELEASE_DEPLOYMENTS[@]}"; do`,
 		`    DEPLOY_PATH="${DEPLOYMENTS_ROOT}/${deployment}"`,
 		`    if [ ! -d "${DEPLOY_PATH}" ]; then`,
 		"        continue",
 		"    fi",
 		`    if [ -f "${DEPLOY_PATH}/.genesis/config" ]; then`,
-		`        log_info "genesis repo already initialised: ${deployment}"`,
+		`        log_info "genesis repo already initialized: ${deployment}"`,
 		"        continue",
 		"    fi",
 		`    log_info "Running genesis repo-init for ${deployment}"`,
@@ -455,7 +455,7 @@ func (om *OCFPManager) generateGenesisRepoInitScript() []string {
 // repo-init`, and whether it is the bloc-derived placeholder. The configured
 // bastion.git.user wins when both keys are set; otherwise the placeholder
 // names the bloc under the reserved .invalid TLD so it can never route and is
-// recognisable as a stand-in if it ever leaks into a commit.
+// recognizable as a stand-in if it ever leaks into a commit.
 //
 //nolint:funcorder,nonamedreturns // Helper placed after exported methods; named returns for clarity
 func (om *OCFPManager) repoInitGitIdentity() (name, email string, fallback bool) {

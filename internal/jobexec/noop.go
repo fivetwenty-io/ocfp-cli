@@ -30,9 +30,9 @@ type noopOutput struct {
 // {"hostname":...,"version":...} on stdout. When the host name cannot be read,
 // the line names the failure on stderr instead, the step fails, and the exit
 // code is 1. It marks a safe point before the log line and again before
-// step_finished, and returns ErrCancelled at either one once a cancel has
+// step_finished, and returns ErrCanceled at either one once a cancel has
 // arrived. runNoop returns the job's exit code, and an error only when a
-// record could not be written or the job was cancelled. It writes no result,
+// record could not be written or the job was canceled. It writes no result,
 // which belongs to the wrapper.
 func runNoop(_ context.Context, j Job, hostname func() (string, error)) (int, error) {
 	err := j.Emit(progress.Event{Kind: progress.EventStepStarted, Step: verbNoop})

@@ -41,7 +41,7 @@ type Record struct {
 	// InstallationID names the installation that owns the bloc.
 	InstallationID string `json:"installationId"`
 
-	// Org and Bloc name the organisation and the bloc that this record's host
+	// Org and Bloc name the organization and the bloc that this record's host
 	// serves. A job request must name the same two. Org matches NamePattern
 	// and Bloc matches BlocPattern.
 	Org  string `json:"org"`

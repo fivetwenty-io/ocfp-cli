@@ -196,7 +196,7 @@ func confirmReservedIPMigration(w io.Writer, drifts, obsoletes int, log logger.L
 	_, _ = fmt.Scanln(&response)
 
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		log.Info("Reserved IP migration cancelled by user")
+		log.Info("Reserved IP migration canceled by user")
 
 		return false
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 // WaitForCondition polls condition on the given interval until it returns true,
-// the timeout elapses, or the context is cancelled.
+// the timeout elapses, or the context is canceled.
 func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.Duration,
 	condition func() (bool, error)) error {
 	deadline := time.Now().Add(timeout)
@@ -31,7 +31,7 @@ func WaitForCondition(ctx context.Context, interval time.Duration, timeout time.
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled during wait condition: %w", ctx.Err())
+			return fmt.Errorf("context canceled during wait condition: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

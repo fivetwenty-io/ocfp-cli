@@ -384,10 +384,10 @@ run_deploy_with_watchdog() {
     # Shared state files written by the pump subshell, read by the watcher.
     local f_last_ts="${state_dir}/last_ts"
     local f_task_id="${state_dir}/task_id"
-    local f_cancelled="${state_dir}/cancelled"
+    local f_canceled="${state_dir}/canceled"
     printf '%s' "$(date +%s)" > "$f_last_ts"
     printf ''                 > "$f_task_id"
-    printf '0'                > "$f_cancelled"
+    printf '0'                > "$f_canceled"
 
     local -a deploy_cmd=(
         bosh -e "$bosh_env" -n -d "$dep" deploy "$manifest"
@@ -441,24 +441,24 @@ run_deploy_with_watchdog() {
     BG_PIDS+=("$pump_pid")
 
     # Watcher loop: poll until deploy exits, watching for stall.
-    local cancelled=0
+    local canceled=0
     while kill -0 "$deploy_pid" 2>/dev/null; do
         sleep 5
-        local now last_ts task_id already_cancelled
+        local now last_ts task_id already_canceled
         now="$(date +%s)"
         last_ts="$(cat "$f_last_ts" 2>/dev/null || printf '%s' "$now")"
-        already_cancelled="$(cat "$f_cancelled" 2>/dev/null || printf '0')"
+        already_canceled="$(cat "$f_canceled" 2>/dev/null || printf '0')"
 
-        if [[ "$already_cancelled" == "1" ]]; then
+        if [[ "$already_canceled" == "1" ]]; then
             continue
         fi
 
         local silence=$(( now - last_ts ))
         if (( silence > stall_s )); then
-            printf '1' > "$f_cancelled"
-            cancelled=1
+            printf '1' > "$f_canceled"
+            canceled=1
             task_id="$(cat "$f_task_id" 2>/dev/null || true)"
-            warn "deploy stalled: no progress for ${silence}s (threshold ${stall_s}s); cancelling task ${task_id:-'(unknown)'} to release the lock and retry"
+            warn "deploy stalled: no progress for ${silence}s (threshold ${stall_s}s); canceling task ${task_id:-'(unknown)'} to release the lock and retry"
             if [[ -n "$task_id" ]]; then
                 bosh -e "$bosh_env" -n cancel-task "$task_id" 2>/dev/null || true
             else
@@ -496,7 +496,7 @@ run_deploy_with_watchdog() {
 
     # A stall-cancel can still let bosh exit 0 in a race; force non-zero so
     # the caller retries rather than treating the attempt as successful.
-    if [[ "$cancelled" -eq 1 && "$rc" -eq 0 ]]; then
+    if [[ "$canceled" -eq 1 && "$rc" -eq 0 ]]; then
         return 1
     fi
     return "$rc"

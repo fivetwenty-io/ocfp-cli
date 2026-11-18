@@ -24,7 +24,7 @@ const inceptionPortEnvVar = "OCFP_VAULT_INCEPTION_PORT"
 // vaultArchiveTimeFormat stamps the directories a superseded vault moves to.
 const vaultArchiveTimeFormat = keyfile.TimestampFormat
 
-// inceptionLockFileName is the per-bloc lock that serialises every ocfp run
+// inceptionLockFileName is the per-bloc lock that serializes every ocfp run
 // that starts, migrates, or tears down the bloc's inception vault.
 const inceptionLockFileName = "inception-vault.lock"
 

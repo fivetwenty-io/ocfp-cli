@@ -195,7 +195,7 @@ func NewPVEStemcellUploadCmd() *cobra.Command {
 
 // newPVEStemcellUploadCmdWithBuilder is the internal constructor that accepts a
 // stemcellUploadBuilder and a stemcellResolverBuilder. Tests inject fakes to
-// control bosh, HTTP, and blobstore behaviour without a live director or S3.
+// control bosh, HTTP, and blobstore behavior without a live director or S3.
 func newPVEStemcellUploadCmdWithBuilder(builder stemcellUploadBuilder, resolverBuilder stemcellResolverBuilder) *cobra.Command {
 	f := &stemcellUploadFlags{
 		env: "pve",

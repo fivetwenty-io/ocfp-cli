@@ -93,7 +93,7 @@ func phaseIndex(p Phase) int {
 }
 
 // NextPhase returns the phase that follows, or false at the end of the run or
-// for an unrecognised phase.
+// for an unrecognized phase.
 func NextPhase(p Phase) (Phase, bool) {
 	idx := phaseIndex(p)
 	if idx < 0 {

@@ -23,7 +23,7 @@ type commandRunner interface {
 }
 
 // osCommandRunner is the production commandRunner. It delegates directly to
-// os/exec with no additional logic so production behaviour is unchanged.
+// os/exec with no additional logic so production behavior is unchanged.
 type osCommandRunner struct{}
 
 // Output executes name with args and returns stdout only.

@@ -179,11 +179,11 @@ func TestCalculate_OffsetAssignmentWithIPKeyOverride(t *testing.T) {
 // UNANCHORED pattern /{target}_ip/ as reserved addresses. Writing bounds as
 // "{target}_ip_a"/"{target}_ip_b" therefore sweeps both bounds into the
 // target's static range — and with consecutive offsets each bound IS a
-// neighbouring service's live address (FWT-1115: bosh's static range absorbed
+// neighboring service's live address (FWT-1115: bosh's static range absorbed
 // the bastion and OpenBao addresses).
 func TestCalculate_BoundKeyGenesisContract(t *testing.T) {
 	// Consecutive offsets mirroring the PVE mgmt tier (bastion 1, bosh 2,
-	// vault 3): every bound lands exactly on a neighbour's address.
+	// vault 3): every bound lands exactly on a neighbor's address.
 	assignments := reservedip.AssignmentTable{
 		"bastion": {"mgmt": {Offset: 1}},
 		"bosh":    {"mgmt": {Offset: 2}}, //nolint:mnd
@@ -204,7 +204,7 @@ func TestCalculate_BoundKeyGenesisContract(t *testing.T) {
 	assert.Equal(t, "10.108.20.10", got["doomsday_b"])
 
 	// The tripwire: no bound key may sit inside the *_ip namespace, or
-	// Genesis' unanchored /{target}_ip/ union claims both neighbours.
+	// Genesis' unanchored /{target}_ip/ union claims both neighbors.
 	for key := range got {
 		if strings.HasSuffix(key, "_a") || strings.HasSuffix(key, "_b") {
 			assert.NotContains(t, key, "_ip",

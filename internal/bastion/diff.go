@@ -4,7 +4,7 @@ import (
 	udiff "github.com/aymanbagabas/go-udiff"
 )
 
-// unifiedDiff renders a unified diff between current and desired, labelling the
+// unifiedDiff renders a unified diff between current and desired, labeling the
 // two sides fromLabel and toLabel. It returns an empty string when the two
 // match, so callers can treat "no output" as "no change".
 func unifiedDiff(fromLabel, toLabel, current, desired string) string {

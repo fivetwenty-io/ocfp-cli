@@ -836,7 +836,7 @@ func TestLBManager_WaitForLoadBalancerActive_ContextCancel(t *testing.T) {
 	m := newLBManager(fake)
 	err := m.waitForLoadBalancerActive(ctx, fake, lbARN)
 	if err == nil {
-		t.Fatal("expected context-cancelled error")
+		t.Fatal("expected context-canceled error")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled wrapped, got %v", err)

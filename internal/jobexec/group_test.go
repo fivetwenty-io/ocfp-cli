@@ -163,7 +163,7 @@ func TestNoGroupSignalAfterTheReap(t *testing.T) {
 	}
 
 	if n := signals.Load(); n != 1 {
-		t.Fatalf("the reap signalled the group %d times, want one sweep", n)
+		t.Fatalf("the reap signaled the group %d times, want one sweep", n)
 	}
 
 	must(t, c.g.kill())
@@ -174,7 +174,7 @@ func TestNoGroupSignalAfterTheReap(t *testing.T) {
 	}
 
 	if n := signals.Load(); n != 1 {
-		t.Fatalf("the group was signalled %d times after the reap", n-1)
+		t.Fatalf("the group was signaled %d times after the reap", n-1)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestAKillSignalsOnlyAnUnreapedGroup(t *testing.T) {
 	must(t, c.g.kill())
 
 	if n := signals.Load(); n != 1 {
-		t.Fatalf("a kill before the reap signalled the group %d times, want 1", n)
+		t.Fatalf("a kill before the reap signaled the group %d times, want 1", n)
 	}
 
 	c.wantEOF(t)
@@ -210,6 +210,6 @@ func TestAKillSignalsOnlyAnUnreapedGroup(t *testing.T) {
 	must(t, c.g.kill())
 
 	if n := signals.Load(); n != before {
-		t.Fatal("a kill after the reap signalled the group")
+		t.Fatal("a kill after the reap signaled the group")
 	}
 }

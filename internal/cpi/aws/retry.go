@@ -136,7 +136,7 @@ func performRetryWait(
 
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("operation cancelled during retry: %w", ctx.Err())
+		return fmt.Errorf("operation canceled during retry: %w", ctx.Err())
 	default:
 	}
 
@@ -149,7 +149,7 @@ func performRetryWait(
 
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("operation cancelled during backoff: %w", ctx.Err())
+		return fmt.Errorf("operation canceled during backoff: %w", ctx.Err())
 	case <-time.After(delay):
 	}
 

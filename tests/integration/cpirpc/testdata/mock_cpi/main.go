@@ -1,7 +1,7 @@
 // mock_cpi simulates a BOSH CPI binary for unit testing.
 //
 // It reads a single JSON-RPC request from stdin and writes a JSON-RPC response
-// to stdout, keyed on the "method" field. Behaviour is controlled by two
+// to stdout, keyed on the "method" field. Behavior is controlled by two
 // command-line flags injected by the test harness via Client wrapper helpers:
 //
 //	--mock-response  Raw JSON to emit as the response body. When absent the

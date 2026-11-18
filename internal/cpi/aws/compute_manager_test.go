@@ -740,7 +740,7 @@ func TestComputeManager_waitForInstanceState_ContextCancel(t *testing.T) {
 
 	err := m.waitForInstanceState(ctx, "i-cancel", types.InstanceStateNameRunning, 10*time.Second)
 	if err == nil {
-		t.Fatal("expected context-cancelled error, got nil")
+		t.Fatal("expected context-canceled error, got nil")
 	}
 }
 

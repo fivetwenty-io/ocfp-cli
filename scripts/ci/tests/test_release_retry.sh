@@ -95,7 +95,7 @@ assert_out_contains "retrying" "announces the retry"
 
 scenario ansi ok
 release "ansi-colored timeout" bash "$SCRIPT"
-assert_status 0 "an ANSI-colored timeout line is recognised"
+assert_status 0 "an ANSI-colored timeout line is recognized"
 assert_call_count "goreleaser release" 2 "retries after an ANSI-colored timeout"
 
 scenario timeout timeout ok

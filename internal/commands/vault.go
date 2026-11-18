@@ -1290,7 +1290,7 @@ func isSafeNonFatalWarning(line string) bool {
 }
 
 // vaultStartupOutput returns safe's output so far, from the tmux pane and the
-// log file that tee writes, with colour codes removed.
+// log file that tee writes, with color codes removed.
 func vaultStartupOutput(ctx context.Context, paths map[string]string) string {
 	pane, _ := vaultOps.run(ctx, cleanupCommand{
 		name: "tmux", args: capturePaneArgs(paths["tmuxSession"], "-200"), tmux: true,

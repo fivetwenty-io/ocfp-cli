@@ -100,7 +100,7 @@ var quotedSourceLine = regexp.MustCompile(`(?m)^\s*>?\s*\d+\s*\|`)
 // outermost is returned as it is, since its creator knew more about the
 // failure. Otherwise the class comes from what the error is, a parse failure,
 // a timeout, or a file error, and path is the file it concerns; anything
-// unrecognised is unexpected, and its text is dropped. It returns nil for a
+// unrecognized is unexpected, and its text is dropped. It returns nil for a
 // nil error.
 func Classify(err error, path string) *ClassifiedError {
 	if err == nil {

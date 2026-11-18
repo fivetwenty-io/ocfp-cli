@@ -1227,7 +1227,7 @@ func TestCheckOwnerReleasesOnce(t *testing.T) {
 	})
 }
 
-func TestCheckOwnerCancelledContext(t *testing.T) {
+func TestCheckOwnerCanceledContext(t *testing.T) {
 	t.Parallel()
 
 	st := storeWith(t, liveRecord())
@@ -1237,7 +1237,7 @@ func TestCheckOwnerCancelledContext(t *testing.T) {
 
 	req, release, err := checkOwner(ctx, baseScenario().signed(t), st, fixedClock{testNow})
 	if !errors.Is(err, context.Canceled) || release != nil || !requestsEqual(req, Request{}) {
-		t.Fatalf("a cancelled check returned %+v, release %v, err %v", req, release != nil, err)
+		t.Fatalf("a canceled check returned %+v, release %v, err %v", req, release != nil, err)
 	}
 
 	wantUnlocked(t, st)

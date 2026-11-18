@@ -196,7 +196,7 @@ func TestWaitForVaultReady_StopsWhenInterrupted(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Less(t, time.Since(started), 2*time.Second)
 	case <-time.After(5 * time.Second):
-		t.Fatal("waitForVaultReady kept polling after its context was cancelled")
+		t.Fatal("waitForVaultReady kept polling after its context was canceled")
 	}
 }
 

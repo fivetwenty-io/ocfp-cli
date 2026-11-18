@@ -6,7 +6,7 @@ This page explains where the vault keeps its files, what `ocfp vault inception` 
 
 ## Requirements
 
-ocfp needs safe v1.27.0 or later. Safe v1.25.0 was the first release that can reopen a raft vault with a saved root token, and v1.27.0 is the first whose `safe target` and `safe local` commands offer `--keep-current`, which ocfp needs so that it never changes the operator's current target. An older safe fails the prerequisite check with an upgrade message before anything is stopped or moved. The engine is OpenBao or HashiCorp Vault, and ocfp finds it the same way safe does, honouring `SAFE_ENGINE` when it is set.
+ocfp needs safe v1.27.0 or later. Safe v1.25.0 was the first release that can reopen a raft vault with a saved root token, and v1.27.0 is the first whose `safe target` and `safe local` commands offer `--keep-current`, which ocfp needs so that it never changes the operator's current target. An older safe fails the prerequisite check with an upgrade message before anything is stopped or moved. The engine is OpenBao or HashiCorp Vault, and ocfp finds it the same way safe does, honoring `SAFE_ENGINE` when it is set.
 
 A development build of safe, or a pre-release of v1.27.0 such as `v1.27.0-rc.1`, has a version number that cannot show whether it can run a raft vault, so ocfp asks the build itself. It accepts such a build only when `safe help local` lists `--cluster-port`, `--root-token-file`, and `--keep-current`, and otherwise it fails the same prerequisite check.
 
@@ -159,7 +159,7 @@ When ocfp finds a journal, it reads it before it classifies the data directory, 
 
 A `migrating` journal means the copy never finished and never touched `data`. ocfp moves any staging directory aside to `data.raft-partial-<timestamp>`, removes the journal, and runs the migration again.
 
-A `swapping` journal means the copy finished. ocfp recognises the three points at which a swap can stop, which are before either rename, after `data` became the backup, and after both renames. It completes whichever rename is missing, removes the journal, and restarts the vault. Any other arrangement of the directories is refused with every path named, and nothing is moved.
+A `swapping` journal means the copy finished. ocfp recognizes the three points at which a swap can stop, which are before either rename, after `data` became the backup, and after both renames. It completes whichever rename is missing, removes the journal, and restarts the vault. Any other arrangement of the directories is refused with every path named, and nothing is moved.
 
 A journal that cannot be parsed, names an unknown phase, or points its backup anywhere other than a `data.file-backup-*` directory beside `data` is refused rather than ignored.
 

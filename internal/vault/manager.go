@@ -308,12 +308,12 @@ func (m *Manager) Migrate(opts *MigrateOptions) error {
 	}
 
 	// Step 4: Confirmation prompt and decommission
-	cancelled, err := m.migrateStepDecommission(opts.DryRun, opts.Force, inceptionName, migratedCount, snapshotPath)
+	canceled, err := m.migrateStepDecommission(opts.DryRun, opts.Force, inceptionName, migratedCount, snapshotPath)
 	if err != nil {
 		return err
 	}
 
-	if cancelled {
+	if canceled {
 		return nil
 	}
 
@@ -428,7 +428,7 @@ func (m *Manager) migrateStepStreamingMigration(
 }
 
 // migrateStepDecommission handles the confirmation prompt and inception vault decommission.
-// Returns (cancelled, error). cancelled is true if the user declined decommission.
+// Returns (canceled, error). canceled is true if the user declined decommission.
 // In dry-run mode, it logs what would happen and returns (false, nil).
 func (m *Manager) migrateStepDecommission(
 	dryRun, force bool, inceptionName string, migratedCount int, snapshotPath string,
@@ -440,12 +440,12 @@ func (m *Manager) migrateStepDecommission(
 	}
 
 	if !force {
-		cancelled, err := m.promptDecommissionConfirmation(migratedCount, snapshotPath)
+		canceled, err := m.promptDecommissionConfirmation(migratedCount, snapshotPath)
 		if err != nil {
 			return false, err
 		}
 
-		if cancelled {
+		if canceled {
 			return true, nil
 		}
 	}
@@ -462,7 +462,7 @@ func (m *Manager) migrateStepDecommission(
 }
 
 // promptDecommissionConfirmation prompts the user to confirm decommission.
-// Returns (cancelled, error). cancelled is true if the user declined.
+// Returns (canceled, error). canceled is true if the user declined.
 func (m *Manager) promptDecommissionConfirmation(migratedCount int, snapshotPath string) (bool, error) {
 	m.logger.Warn("\n⚠️  CRITICAL OPERATION: About to decommission inception vault")
 	m.logger.Infow("Migration Summary",
@@ -475,7 +475,7 @@ func (m *Manager) promptDecommissionConfirmation(migratedCount int, snapshotPath
 	}
 
 	if !confirmed {
-		m.logger.Info("Decommission cancelled by user - inception vault preserved")
+		m.logger.Info("Decommission canceled by user - inception vault preserved")
 		m.logger.Infow("Migration completed but inception vault NOT decommissioned", "snapshot", snapshotPath)
 
 		return true, nil
@@ -518,7 +518,7 @@ func (m *Manager) getInceptionVaultName() string {
 // getProductionVaultName returns the vault that migration writes into.
 //
 // For a named bloc this is always that bloc's own mgmt vault. The previous
-// behaviour — read the .saferc current target — made the migration
+// behavior — read the .saferc current target — made the migration
 // destination depend on whichever bloc most recently ran `safe target`, so a
 // concurrent bootstrap could redirect one bloc's secrets into another bloc's
 // production vault. Only a manager with no bloc consults the global pointer.

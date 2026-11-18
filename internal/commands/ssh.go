@@ -406,11 +406,11 @@ func (r sshRoute) bastionHost() string {
 }
 
 // resolveSSHRoute turns a classified target into a route. The bastion is
-// dialled directly at the address findBastionIP resolves (the bastion_ip
+// dialed directly at the address findBastionIP resolves (the bastion_ip
 // override first). The artifacts VM sits on the SDN, so its private IP is
 // reached through that same bastion unless noProxyJump says the operator is
 // already on the SDN. Addresses pass through unchanged, and one that names
-// the bastion is dialled as the bastion, so its host key is checked.
+// the bastion is dialed as the bastion, so its host key is checked.
 func resolveSSHRoute(ctx context.Context, kind sshTargetKind, target string, noProxyJump bool, resolver sshRouteResolver) (sshRoute, error) {
 	switch kind {
 	case sshTargetBastion:

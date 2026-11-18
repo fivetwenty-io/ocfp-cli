@@ -15,7 +15,7 @@ import (
 
 var errPersistentCreate = errors.New("test: persistent create failure")
 
-// partialFailNet fails one address by name on every attempt, modelling a single
+// partialFailNet fails one address by name on every attempt, modeling a single
 // address in a set that cannot be allocated while its siblings succeed.
 type partialFailNet struct {
 	*fakeNetEnhanced

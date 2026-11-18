@@ -27,7 +27,7 @@ import (
 )
 
 // bastionTailscaleDefaultTag is the ACL tag bastions advertise when the
-// operator hasn't customised tailscale.tags. Kept here so ACL templates in
+// operator hasn't customized tailscale.tags. Kept here so ACL templates in
 // docs can refer to the same value the resolver emits.
 const bastionTailscaleDefaultTag = "tag:ocfp-bastion"
 
@@ -765,7 +765,7 @@ func (m *Manager) resolveBastionDNSServers(gatewayIP string) []string {
 // vault-path indirection ("path:key") is accepted; bloc>global precedence is
 // already applied by mergeTailscaleDefaults at load time. There is no
 // fallback to a legacy hard-coded vault path — operators who relied on the
-// old behaviour must migrate the value into tailscale.auth_key_vault_path.
+// old behavior must migrate the value into tailscale.auth_key_vault_path.
 //
 // Errors are soft: vault unreachable, path missing, or value empty all yield
 // "" and a warn-log, so bootstrap completes and the bastion boots without
@@ -1049,7 +1049,7 @@ func (m *Manager) bastionPublicKey() string {
 // bastionDefaultUsername returns the cloud-init default user the operator
 // expects on the bastion. Configurable via the bloc's bastion.user field so
 // each provider's image default ("ubuntu", "debian", "ec2-user", ...) can
-// be honoured without hardcoding.
+// be honored without hardcoding.
 func (m *Manager) bastionDefaultUsername() string {
 	if m.config.Bastion.SSHUser != "" {
 		return m.config.Bastion.SSHUser

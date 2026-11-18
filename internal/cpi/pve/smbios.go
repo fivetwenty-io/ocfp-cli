@@ -173,7 +173,7 @@ func BastionSMBIOSPayload(
 
 	sku, err := json.Marshal(skuMap)
 	if err != nil {
-		// Marshalling fixed-shape data shouldn't realistically fail; if it
+		// Marshaling fixed-shape data shouldn't realistically fail; if it
 		// does, fall back to a minimal payload so the bastion at least has
 		// the auth key and can join the tailnet manually.
 		return SMBIOSPayload{Serial: authKeyOf(ts), Family: smbiosFamilyBastion}

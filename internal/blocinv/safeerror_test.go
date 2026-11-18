@@ -83,7 +83,7 @@ func TestSafeMessage_ParseErrorsBecomeAFixedPhrase(t *testing.T) {
 	assert.Equal(t, "file cannot be parsed (file contents are not shown)", SafeMessage(yamlErr, ""))
 }
 
-func TestSafeMessage_UnrecognisedErrorsNeverRepeatTheirText(t *testing.T) {
+func TestSafeMessage_UnrecognizedErrorsNeverRepeatTheirText(t *testing.T) {
 	for name, err := range map[string]error{
 		"secret on the first line": errors.New(fakeToken + " is not a valid filesystem"),
 		"secret on a later line":   errors.New("first line\nsecond line holds " + fakeToken),

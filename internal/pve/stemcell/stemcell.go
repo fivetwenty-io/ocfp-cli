@@ -49,7 +49,7 @@ var DefaultHTTPClient = &http.Client{
 // present in the BOSH director's stemcell list.
 //
 // Inputs:
-//   - ctx: cancelled contexts propagate into RunBosh error handling.
+//   - ctx: canceled contexts propagate into RunBosh error handling.
 //   - runBosh: injected executor; called with ["stemcells", "--json"].
 //   - name: full stemcell name, e.g. "bosh-openstack-kvm-ubuntu-noble-go_agent".
 //   - version: exact version string to match, e.g. "1.584".

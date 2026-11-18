@@ -460,7 +460,7 @@ func TestCPIRoleNoOverrideWhenEnvEndpointUnset(t *testing.T) {
 	assert.NotContains(t, out.String(), "overrides")
 }
 
-func TestCPIRolePluralisesPrivileges(t *testing.T) {
+func TestCPIRolePluralizesPrivileges(t *testing.T) {
 	s := &pmxScript{handle: roleReads(rolePrivsJSON(without(cpiRolePrivileges, "Pool.Audit")))}
 	installPmxScript(t, s)
 

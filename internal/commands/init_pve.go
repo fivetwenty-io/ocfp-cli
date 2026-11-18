@@ -157,7 +157,7 @@ func runInitPVE(cmd *cobra.Command, cfg *config.Config, r *initRun) error {
 // per-bloc location identifier; for PVE this is the Proxmox datacenter/node,
 // e.g. "pve"). When no config is available (nil cfg or empty Region) it falls
 // back to deriving the segment from an "ocfp-pve-<dc>" bloc name, preserving
-// the prior behaviour for legacy datacenter-style bloc names.
+// the prior behavior for legacy datacenter-style bloc names.
 func resolvePVEDatacenter(bloc string, cfg *config.Config) string {
 	if cfg != nil {
 		if r := strings.TrimSpace(cfg.Region); r != "" {

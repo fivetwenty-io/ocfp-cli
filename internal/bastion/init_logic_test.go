@@ -21,7 +21,7 @@ func newMinimalManager(cfg *config.Config) *Manager {
 }
 
 // newBaseConfig returns a minimal *config.Config with all override maps
-// initialised so validateOverrides never panics on nil-map access.
+// initialized so validateOverrides never panics on nil-map access.
 func newBaseConfig(name, provider string) *config.Config {
 	return &config.Config{
 		Name:     name,

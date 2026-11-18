@@ -31,7 +31,7 @@ func initCmdWithConfig(t *testing.T, yaml string, args ...string) (*initFlags, *
 }
 
 // A config file that sets init.dry_run asks for a dry run, so init must
-// honour it. Ignoring it would make a real run of a run meant to change
+// honor it. Ignoring it would make a real run of a run meant to change
 // nothing.
 func TestInitDryRunComesFromTheConfigFile(t *testing.T) {
 	cases := []struct {

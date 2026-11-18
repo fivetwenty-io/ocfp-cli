@@ -231,7 +231,7 @@ func TestCloudTailscaleHonorsExplicitSSHFalse(t *testing.T) {
 	}
 }
 
-// A cloud bastion keeps cloud-init's own judgement of what a new instance is.
+// A cloud bastion keeps cloud-init's own judgment of what a new instance is.
 // A new instance-id on AWS or GCP means a new machine, such as one launched
 // from an image, so only PVE bastions trust the cached instance.
 func TestCloudGuestDoesNotTrustTheInstanceCache(t *testing.T) {

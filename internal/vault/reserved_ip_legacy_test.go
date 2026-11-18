@@ -164,7 +164,7 @@ func TestReservedIPGuardLegacyFixturesStillAddNewRoles(t *testing.T) {
 
 // TestReservedIPGuardLegacyFixturesWithholdSchemeStamp asserts these blocs
 // are reported as provisioned under an earlier scheme rather than being
-// relabelled as conforming to the current one.
+// relabeled as conforming to the current one.
 func TestReservedIPGuardLegacyFixturesWithholdSchemeStamp(t *testing.T) {
 	fixture := loadLegacyFixture(t, legacyFixturePVECPI)
 

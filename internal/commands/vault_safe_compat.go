@@ -114,7 +114,7 @@ func checkSafeCompatibilityWith(ctx context.Context, help *safeHelp) error {
 
 // parseSafeVersion reads the version from `safe --version` output. It
 // reports whether the version carries a pre-release suffix, and ok is false
-// for a development build or anything else it does not recognise.
+// for a development build or anything else it does not recognize.
 func parseSafeVersion(output string) ([3]int, bool, bool) {
 	var version [3]int
 

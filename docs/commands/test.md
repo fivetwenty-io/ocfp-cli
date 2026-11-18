@@ -8,7 +8,7 @@ The command resolves the API endpoint from the bloc config first. It takes `fqdn
 
 The run must find a logged-in session, because the command never logs in on our behalf. It then creates `<bloc>-test-org` and `<bloc>-test-space`, targets them, and reads the org's default domain, the internal domain, and any TCP domain from the foundation itself. Every app and service instance it creates carries a random per-run suffix, so two runs can overlap without colliding. When the suites finish it deletes the test org, which removes everything the run created, unless `--skip-cleanup` is set.
 
-Each check is named `<suite>/<check>` and ends as passed, failed, or skipped. A skipped check always carries a reason, and skips are counted as skips, never as passes. A check whose prerequisite did not pass is skipped rather than run, so one failed push produces one failure and a handful of clearly labelled skips instead of a cascade. Cleanup checks such as `delete_app` still run after a failure, and they are skipped only when the thing they clean up was never created. The command exits non-zero when any check fails.
+Each check is named `<suite>/<check>` and ends as passed, failed, or skipped. A skipped check always carries a reason, and skips are counted as skips, never as passes. A check whose prerequisite did not pass is skipped rather than run, so one failed push produces one failure and a handful of clearly labeled skips instead of a cascade. Cleanup checks such as `delete_app` still run after a failure, and they are skipped only when the thing they clean up was never created. The command exits non-zero when any check fails.
 
 ## Suites
 

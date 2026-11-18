@@ -393,13 +393,13 @@ func TestACancelReportsItsOutcome(t *testing.T) {
 		cancel := cancelRun(t, store, root)
 		cancel.opts.CancelOutcome = oc.report
 
-		cancelled := make(chan error, 1)
+		canceled := make(chan error, 1)
 
 		job := newRun(t, store, root, signedRequest(t, goodRequest()))
 		job.opts.start = w.start
 		job.clock.onWait = func(n int) {
 			if n == 1 {
-				go func() { cancelled <- cancel.run(t) }()
+				go func() { canceled <- cancel.run(t) }()
 
 				waitFor(t, func() bool {
 					_, ok, _ := s.readCancel()
@@ -414,10 +414,10 @@ func TestACancelReportsItsOutcome(t *testing.T) {
 		}
 
 		if err := job.run(t); err == nil {
-			t.Fatal("the cancelled job reported success")
+			t.Fatal("the canceled job reported success")
 		}
 
-		if err := <-cancelled; err == nil {
+		if err := <-canceled; err == nil {
 			t.Fatal("the cancel of a job that stopped reported success")
 		}
 

@@ -248,7 +248,7 @@ func (cfm *CFPluginManager) addPluginExistenceCheck(lines *[]string, plugin CFPl
 	// `cf plugins` lists a plugin under the name it advertises, which is not
 	// always the key we track it by -- `targets` reports itself as
 	// `cf-targets`. Accept either spelling so an installed plugin is
-	// recognised instead of being reinstalled on every run.
+	// recognized instead of being reinstalled on every run.
 	*lines = append(*lines,
 		fmt.Sprintf("if cf plugins 2>/dev/null | grep -qE '^(cf-)?%s[[:space:]]'; then", plugin.Name),
 		fmt.Sprintf("    log_info 'CF plugin %s already installed'", plugin.Name),

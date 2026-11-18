@@ -374,7 +374,7 @@ func TestReleaseLeavesLockFile(t *testing.T) {
 	}
 }
 
-func TestReleaseHonoursContext(t *testing.T) {
+func TestReleaseHonorsContext(t *testing.T) {
 	t.Parallel()
 
 	s, path := releaseStore(t)
@@ -390,6 +390,6 @@ func TestReleaseHonoursContext(t *testing.T) {
 	}
 
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("the record is gone after a cancelled release: %v", err)
+		t.Fatalf("the record is gone after a canceled release: %v", err)
 	}
 }

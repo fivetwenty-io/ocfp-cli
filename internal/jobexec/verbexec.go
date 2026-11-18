@@ -102,7 +102,7 @@ func (r reexec) start(verbStart) (*verbProc, error) {
 // the group, so one kill ends them all.
 //
 // A Unix process group id can belong to another group once the leader has
-// been reaped. So the group is signalled only while the wrapper holds the
+// been reaped. So the group is signaled only while the wrapper holds the
 // leader unreaped, and the mutex makes that so: a kill signals only before
 // the reap, and the reap sweeps the group one last time before it reaps.
 type groupProc struct {

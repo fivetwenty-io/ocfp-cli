@@ -262,7 +262,7 @@ func TestCatalog_BastionVariantsRequireSeedUnits(t *testing.T) {
 }
 
 // TestCatalog_ResoluteEntriesUseTheirOwnImage guards the specific mistake the
-// trap test generalises: a Resolute entry that kept the Noble stored filename.
+// trap test generalizes: a Resolute entry that kept the Noble stored filename.
 func TestCatalog_ResoluteEntriesUseTheirOwnImage(t *testing.T) {
 	t.Parallel()
 

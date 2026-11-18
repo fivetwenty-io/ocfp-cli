@@ -30,7 +30,7 @@ import (
 //   - name is empty: returns ErrEmptyName immediately (no exec).
 //   - executable not found: exec.CommandContext returns the error from os/exec.
 //   - non-zero exit: error wraps the combined output for diagnosis.
-//   - context cancelled/timed out: error reflects the context state.
+//   - context canceled/timed out: error reflects the context state.
 func RunWithEnv(ctx context.Context, extraEnv map[string]string, name string, args ...string) ([]byte, error) {
 	if ctx == nil {
 		return nil, ErrNilContext

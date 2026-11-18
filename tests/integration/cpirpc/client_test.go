@@ -107,7 +107,7 @@ func TestCall_Roundtrip(t *testing.T) {
 		t.Errorf("expected log %q, got %q", "some log", resp.Log)
 	}
 
-	// Result is unmarshalled as interface{}; BOSH CPI returns strings as stemcell CIDs.
+	// Result is unmarshaled as interface{}; BOSH CPI returns strings as stemcell CIDs.
 	resultStr, ok := resp.Result.(string)
 	if !ok {
 		t.Fatalf("expected string result, got %T: %v", resp.Result, resp.Result)
@@ -225,7 +225,7 @@ func TestClose_RemovesTmpConfig(t *testing.T) {
 	}
 }
 
-// T70 TestNew_ConfigSerializesToJSON: verify that the Config map serialises to
+// T70 TestNew_ConfigSerializesToJSON: verify that the Config map serializes to
 // valid JSON and round-trips correctly (New stores config; Call writes it).
 func TestNew_ConfigSerializesToJSON(t *testing.T) {
 	t.Parallel()
@@ -300,12 +300,12 @@ func TestCall_ContextCancellation(t *testing.T) {
 	req := cpirpc.Request{Method: "info"}
 	_, err := client.Call(ctx, req)
 	if err == nil {
-		t.Fatal("expected error for cancelled context, got nil")
+		t.Fatal("expected error for canceled context, got nil")
 	}
 }
 
 // TestCall_DefaultArgumentsAndContext verifies that nil Arguments and Context
-// are normalised to empty slices/maps (not marshalled as JSON null).
+// are normalized to empty slices/maps (not marshaled as JSON null).
 func TestCall_DefaultArgumentsAndContext(t *testing.T) {
 	t.Parallel()
 

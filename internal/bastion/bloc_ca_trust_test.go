@@ -487,7 +487,7 @@ var knownRemoteOnlyPhaseNames = map[string]string{
 	"local_vault_teardown": "acts on the operator workstation",
 	// Not a deliberate exclusion. Custom scripts silently do not run in local
 	// mode, which is its own bug, but adding execution of operator-defined
-	// scripts to a mode that never ran them is a behaviour change rather than
+	// scripts to a mode that never ran them is a behavior change rather than
 	// a fix. Tracked separately; listed here so parity does not mask it.
 	"custom_scripts": "known gap, see comment",
 }

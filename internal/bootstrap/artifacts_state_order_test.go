@@ -137,7 +137,7 @@ func reopenState(t *testing.T, stateDir string) *state.Manager {
 // recorded anything. A process killed in that wait left a running VM that the
 // bloc state did not know about, so `ocfp teardown` could not see it.
 //
-// The context is cancelled as the data volume attaches, so everything after
+// The context is canceled as the data volume attaches, so everything after
 // that point sees an interrupted run. The state file on disk must already hold
 // the VM and its data volume, and the error must say so.
 func TestCreateArtifacts_RecordsAndSavesStateBeforeReadinessWait(t *testing.T) {
@@ -265,7 +265,7 @@ func TestCreateArtifacts_StateSaveFailureIsFatalAndKeepsVM(t *testing.T) {
 
 	// Make the state directory unwritable once the data volume has attached,
 	// so the save that follows the record is the one that fails. The context
-	// is cancelled as well, so a build that skips the early save ends in the
+	// is canceled as well, so a build that skips the early save ends in the
 	// interrupted-wait error rather than polling for the full readiness
 	// timeout.
 	st.cancel = func() {

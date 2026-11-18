@@ -73,7 +73,7 @@ type Tracker struct {
 	resources []Resource
 }
 
-// New returns an initialised, empty Tracker.
+// New returns an initialized, empty Tracker.
 func New() *Tracker {
 	return &Tracker{}
 }

@@ -41,7 +41,7 @@ var (
 
 // streamHandshakeTimeout bounds the TCP connect and, separately, the ssh
 // handshake. The caller's context ends either one sooner when it is
-// cancelled or its deadline comes first.
+// canceled or its deadline comes first.
 const streamHandshakeTimeout = mediumTimeout
 
 // certAlgoSuffix marks a host certificate algorithm name.
@@ -86,7 +86,7 @@ const certAlgoSuffix = "-cert-v01@openssh.com"
 //
 // A non-zero exit status is not an error, so Stream returns it with a nil
 // error. It returns -1 with an error when the command did not run to an exit
-// status. Cancelling ctx closes the connection without sending a signal, so a
+// status. Canceling ctx closes the connection without sending a signal, so a
 // caller can leave a remote job running, and what the job does after its
 // connection drops is up to the server. Stream then returns -1 with an error
 // wrapping ctx.Err(), unless the exit status had already arrived, in which
@@ -149,7 +149,7 @@ func (c *Client) dialStrict(ctx context.Context) (*ssh.Client, error) {
 }
 
 // handshake dials address and runs the ssh handshake, closing the socket if
-// ctx is cancelled before the handshake finishes.
+// ctx is canceled before the handshake finishes.
 func handshake(ctx context.Context, dialer net.Dialer, address string, config *ssh.ClientConfig, verdict *hostKeyVerdict) (*ssh.Client, error) {
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -182,7 +182,7 @@ func handshake(ctx context.Context, dialer net.Dialer, address string, config *s
 		return nil, fmt.Errorf("ssh handshake with %s: %w", address, err)
 	}
 
-	// The handshake can finish just as ctx is cancelled, after the cancel
+	// The handshake can finish just as ctx is canceled, after the cancel
 	// has already closed the socket under it. The connection is then dead,
 	// so report the cancel rather than hand back a broken client.
 	if !stopped {
@@ -241,7 +241,7 @@ func runStreamSession(ctx context.Context, client *ssh.Client, cmd string, stdin
 	go copier.run()
 
 	waitErr := session.Wait()
-	notCancelled := stop()
+	notCanceled := stop()
 
 	// Every byte of output has been delivered by now. Closing the client
 	// fails any write the copier has in flight, so stopping it cannot hang.
@@ -254,7 +254,7 @@ func runStreamSession(ctx context.Context, client *ssh.Client, cmd string, stdin
 	}
 
 	code, err := exitResult(waitErr)
-	if err != nil && !notCancelled {
+	if err != nil && !notCanceled {
 		return -1, fmt.Errorf("stream: %w", ctx.Err())
 	}
 
@@ -595,7 +595,7 @@ func (v *hostKeyVerdict) get() error {
 // @cert-authority lines, so a host that presents a listed authority's own
 // public key is accepted, where OpenSSH would refuse it. Presenting that key
 // needs the authority's private key, which could sign a valid certificate
-// anyway, so Stream leaves that behaviour alone.
+// anyway, so Stream leaves that behavior alone.
 func strictHostKeyCallback(file *knownHostsFile, entries hostEntries, verdict *hostKeyVerdict) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := file.check(hostname, remote, key)

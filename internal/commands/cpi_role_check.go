@@ -27,7 +27,7 @@ var (
 
 // pmxEndpointEnv is the variable that makes pmx talk to a different endpoint
 // than the context names. `pmx context show` ignores it and role get and
-// role set honour it.
+// role set honor it.
 const pmxEndpointEnv = "PMX_API_ENDPOINT"
 
 // pmxArgs prefixes args with -c <context> when a context was named.
@@ -72,7 +72,7 @@ func describePmxContext(ctx context.Context, pmxContext string) (name, endpoint 
 	name, endpoint = describeStoredContext(ctx, pmxContext)
 
 	// pmx context show reports the stored context only, but the later calls
-	// honour PMX_API_ENDPOINT, so name the endpoint they will really use.
+	// honor PMX_API_ENDPOINT, so name the endpoint they will really use.
 	if override := os.Getenv(pmxEndpointEnv); override != "" {
 		endpoint = override + " (" + pmxEndpointEnv + " overrides the context's endpoint)"
 	}

@@ -33,7 +33,7 @@ func isolateXDGEnv(t *testing.T) (home string) {
 	return home
 }
 
-// skipIfRoot skips a test that proves behaviour on an unreadable file. Root
+// skipIfRoot skips a test that proves behavior on an unreadable file. Root
 // bypasses the permission bits entirely, so on CI (which runs the suite inside
 // a container as root) the read succeeds and the test proves nothing.
 func skipIfRoot(t *testing.T) {

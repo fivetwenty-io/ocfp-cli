@@ -5,7 +5,7 @@ package pve
 // TemplateSpec.DisableInitrdNetwork for the failure this prevents.
 
 // initrdNoNetworkConfPath is the dracut drop-in the seed writes. It stays in
-// the template, so every clone's later initramfs rebuilds honour it.
+// the template, so every clone's later initramfs rebuilds honor it.
 const initrdNoNetworkConfPath = "/etc/dracut.conf.d/90-ocfp-no-network.conf"
 
 // initrdNoNetworkConf leaves dracut's network modules out of the initramfs.

@@ -42,8 +42,8 @@ var (
 	validDNSPattern      = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-.])*[a-zA-Z0-9]$`)
 	validUserPattern     = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_])*[a-zA-Z0-9]$`)
 
-	// ErrInitCancelled indicates the user cancelled the initialization process.
-	ErrInitCancelled = errors.New("initialization cancelled by user")
+	// ErrInitCanceled indicates the user canceled the initialization process.
+	ErrInitCanceled = errors.New("initialization canceled by user")
 
 	// ErrInitNeedsConfirmation indicates init would have prompted for
 	// confirmation, but stdin is not a terminal that can answer.
@@ -354,9 +354,9 @@ func (f *initFlags) confirmInitializationIfNeeded(component string) error {
 	_, _ = fmt.Scanln(&response)
 
 	if !strings.HasPrefix(strings.ToLower(response), "y") {
-		logger.Get().Info("Initialization cancelled by user")
+		logger.Get().Info("Initialization canceled by user")
 
-		return ErrInitCancelled
+		return ErrInitCanceled
 	}
 
 	return nil

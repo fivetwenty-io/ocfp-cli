@@ -75,9 +75,9 @@ func excludePatterns(argv []string) []string {
 	return patterns
 }
 
-// TestRSyncPassesUnmodelledFlagThrough proves that a flag ocfp does not model
+// TestRSyncPassesUnmodeledFlagThrough proves that a flag ocfp does not model
 // reaches the rsync argv when it is written after the -- separator.
-func TestRSyncPassesUnmodelledFlagThrough(t *testing.T) {
+func TestRSyncPassesUnmodeledFlagThrough(t *testing.T) {
 	argv := parseRSyncLine(t, []string{
 		"--dry-run",
 		"/local/dir/", "bastion:/remote/dir/",
@@ -116,9 +116,9 @@ func TestRSyncPassesUnknownFlagThroughWithItsValue(t *testing.T) {
 	assert.Contains(t, argv, "--chmod=D2775,F664")
 }
 
-// TestRSyncItemizeChangesIsModelled proves --itemize-changes is accepted as an
+// TestRSyncItemizeChangesIsModeled proves --itemize-changes is accepted as an
 // ocfp flag in its own right, without a separator, and reaches the rsync argv.
-func TestRSyncItemizeChangesIsModelled(t *testing.T) {
+func TestRSyncItemizeChangesIsModeled(t *testing.T) {
 	argv := parseRSyncLine(t, []string{
 		"--dry-run", "--itemize-changes",
 		"/local/dir/", "bastion:/remote/dir/",
