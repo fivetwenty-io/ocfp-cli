@@ -163,6 +163,8 @@ linters:
       - os.OpenFile
       - os.Chmod
       - os.MkdirAll
+    misspell:
+      locale: US # flag British spellings as well as typos
 
   # Exclude paths from linting
   exclusions:
