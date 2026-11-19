@@ -15,29 +15,30 @@ import (
 // would read the offset table, with available/reserved (the two range-spec
 // pseudo-roles) processed last.
 var assignmentPriority = map[string]int{ //nolint:gochecknoglobals // static ordering table, read-only
-	"bastion":      1,
-	"bosh":         2,  //nolint:mnd
-	"vault":        3,  //nolint:mnd
-	"jumpbox":      4,  //nolint:mnd
-	"concourse":    5,  //nolint:mnd
-	"prometheus":   6,  //nolint:mnd
-	"shield":       7,  //nolint:mnd
-	"blacksmith":   8,  //nolint:mnd
-	"artifacts":    9,  //nolint:mnd
-	"wireguard":    10, //nolint:mnd
-	"ovpn":         11, //nolint:mnd
-	"rustfs":       12, //nolint:mnd
-	"rustfs_smoke": 13, //nolint:mnd
-	"proxycache":   14, //nolint:mnd
-	"nfs":          15, //nolint:mnd
-	"ocfp_ui":      16, //nolint:mnd
-	"doomsday":     17, //nolint:mnd
-	"shout":        18, //nolint:mnd
-	"garage":       19, //nolint:mnd
-	"garage_smoke": 20, //nolint:mnd
-	"haproxy":      21, //nolint:mnd
-	"available":    22, //nolint:mnd
-	"reserved":     23, //nolint:mnd
+	"bastion":       1,
+	"bosh":          2,  //nolint:mnd
+	"vault":         3,  //nolint:mnd
+	"jumpbox":       4,  //nolint:mnd
+	"concourse":     5,  //nolint:mnd
+	"prometheus":    6,  //nolint:mnd
+	"shield":        7,  //nolint:mnd
+	"blacksmith":    8,  //nolint:mnd
+	"artifacts":     9,  //nolint:mnd
+	"wireguard":     10, //nolint:mnd
+	"ovpn":          11, //nolint:mnd
+	"rustfs":        12, //nolint:mnd
+	"rustfs_smoke":  13, //nolint:mnd
+	"proxycache":    14, //nolint:mnd
+	"nfs":           15, //nolint:mnd
+	"ocfp_ui":       16, //nolint:mnd
+	"doomsday":      17, //nolint:mnd
+	"shout":         18, //nolint:mnd
+	"garage":        19, //nolint:mnd
+	"garage_smoke":  20, //nolint:mnd
+	"control_plane": 21, //nolint:mnd
+	"haproxy":       22, //nolint:mnd
+	"available":     23, //nolint:mnd
+	"reserved":      24, //nolint:mnd
 }
 
 // resolveLayout resolves cfg's reserved-ip layout strategy to a
@@ -199,6 +200,20 @@ func reservedIPsForSubnetWithLayout(
 		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: strategy %q: validate subnet: %w",
 			envType, subnetNum, layout.Name(), err)
 	}
+
+	// Static overrides apply to both tiers' records. The ocf tier carries
+	// no control-plane key, but a bad override still fails both tiers'
+	// writes for every subnet that places the static, so the operator sees
+	// it before either director reads a record. A subnet that does not
+	// place the static fails only on a malformed override, never on its
+	// own size or statics.
+	overridden, err := netCfg.ApplyStaticOverrides(layout, subnetCIDR, subnetNum)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate reserved IPs for %s subnet %d: strategy %q: %w",
+			envType, subnetNum, layout.Name(), err)
+	}
+
+	layout = overridden
 
 	table, err := layout.WorkloadTable(subnetCIDR)
 	if err != nil {

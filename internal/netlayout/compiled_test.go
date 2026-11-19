@@ -23,26 +23,27 @@ func wideDefinitionLiteral() Definition {
 		Tiers: map[Tier]TierDef{
 			TierMgmt: {
 				Statics: map[string]StaticPlacement{
-					"bastion":      {Offset: 3},
-					"bosh":         {Offset: 4},
-					"vault":        {Offset: 5},
-					"jumpbox":      {Offset: 6},
-					"concourse":    {Offset: 7},
-					"prometheus":   {Offset: 8},
-					"shield":       {Offset: 9},
-					"blacksmith":   {Offset: 10},
-					"artifacts":    {Offset: 11},
-					"wireguard":    {Offset: 12},
-					"ovpn":         {Offset: 13},
-					"rustfs":       {Offset: 14},
-					"proxycache":   {Offset: 15},
-					"nfs":          {Offset: 16},
-					"ocfp_ui":      {Offset: 17},
-					"doomsday":     {Offset: 18},
-					"shout":        {Offset: 19},
-					"garage":       {Offset: 20},
-					"rustfs_smoke": {Offset: 21, IPKey: "rustfs_ip_smoke"},
-					"garage_smoke": {Offset: 22, IPKey: "garage_ip_smoke"},
+					"bastion":       {Offset: 3},
+					"bosh":          {Offset: 4},
+					"vault":         {Offset: 5},
+					"jumpbox":       {Offset: 6},
+					"concourse":     {Offset: 7},
+					"prometheus":    {Offset: 8},
+					"shield":        {Offset: 9},
+					"blacksmith":    {Offset: 10},
+					"artifacts":     {Offset: 11},
+					"wireguard":     {Offset: 12},
+					"ovpn":          {Offset: 13},
+					"rustfs":        {Offset: 14},
+					"proxycache":    {Offset: 15},
+					"nfs":           {Offset: 16},
+					"ocfp_ui":       {Offset: 17},
+					"doomsday":      {Offset: 18},
+					"shout":         {Offset: 19},
+					"garage":        {Offset: 20},
+					"rustfs_smoke":  {Offset: 21, IPKey: "rustfs_ip_smoke"},
+					"garage_smoke":  {Offset: 22, IPKey: "garage_ip_smoke"},
+					"control_plane": {Offset: 23},
 				},
 				Available: []BandPlacement{{Start: 32, End: 63}},
 			},
@@ -263,7 +264,7 @@ func TestLayerASlotsInfraIsFixed(t *testing.T) {
 }
 
 // TestLayerASlotsOCFPCompiledWide proves the ocfp role's LayerASlots for the
-// compiled wide definition names every one of wide's 20 mgmt statics
+// compiled wide definition names every one of wide's 21 mgmt statics
 // (wideDefinitionLiteral's mgmt tier is unpinned, so all apply to idx 0) and
 // derives ReservedB from the mgmt band's own start (32-1=31) rather than
 // reusing the infra role's ReservedB (10) — the historical
@@ -285,13 +286,13 @@ func TestLayerASlotsOCFPCompiledWide(t *testing.T) {
 			got.AvailableA, got.AvailableB, got.ReservedB, got.ReservedC)
 	}
 
-	if len(got.Named) != 20 {
-		t.Fatalf("LayerASlots(ocfp) Named has %d entries, want 20", len(got.Named))
+	if len(got.Named) != 21 {
+		t.Fatalf("LayerASlots(ocfp) Named has %d entries, want 21", len(got.Named))
 	}
 
 	wantKeys := []string{
 		"artifacts_ip", "bastion_ip", "blacksmith_ip", "bosh_ip", "concourse_ip",
-		"doomsday_ip", "garage_ip", "garage_ip_smoke", "jumpbox_ip", "nfs_ip",
+		"control_plane_ip", "doomsday_ip", "garage_ip", "garage_ip_smoke", "jumpbox_ip", "nfs_ip",
 		"ocfp_ui_ip", "ovpn_ip", "prometheus_ip", "proxycache_ip", "rustfs_ip",
 		"rustfs_ip_smoke", "shield_ip", "shout_ip", "vault_ip", "wireguard_ip",
 	}

@@ -333,6 +333,8 @@ func TestPinnedWorkloadIndex(t *testing.T) {
 		{name: "spanning ocfp_ui pinned to 2", layout: spanning, ipKey: "ocfp_ui_ip", wantIdx: 2, wantOK: true},
 		{name: "spanning bastion pinned to 0", layout: spanning, ipKey: "bastion_ip", wantIdx: 0, wantOK: true},
 		{name: "spanning vault unpinned", layout: spanning, ipKey: "vault_ip", wantOK: false},
+		{name: "spanning control_plane pinned to 0", layout: spanning, ipKey: "control_plane_ip", wantIdx: 0, wantOK: true},
+		{name: "wide control_plane unpinned", layout: wide, ipKey: "control_plane_ip", wantOK: false},
 		{name: "spanning custom ip_key", layout: spanning, ipKey: "rustfs_ip_smoke", wantOK: false},
 		{name: "spanning unknown key", layout: spanning, ipKey: "nosuch_ip", wantOK: false},
 		{name: "wide pins nothing", layout: wide, ipKey: "doomsday_ip", wantOK: false},

@@ -31,6 +31,9 @@ tiers:
       garage_smoke:
         offset: 22
         ip_key: garage_ip_smoke
+      # Offsets 24 and 25 stay free so control_plane can grow into a list
+      # of addresses at 23-25 without moving the first one.
+      control_plane: 23
     available:
       - start: 32
         end: 63

@@ -725,6 +725,13 @@ type NetworkConfig struct {
 	// base address, and each tier is named explicitly rather than assuming
 	// a single implicit tier.
 	Bands NetworkBands `json:"bands,omitempty" mapstructure:"bands" yaml:"bands,omitempty"`
+
+	// Statics carries per-tier overrides that move one of the selected
+	// Strategy's named statics to another offset, relative to each
+	// workload subnet's base address. An empty override means the static
+	// stays where the strategy puts it. Validated against the strategy and
+	// the subnet when reserved IPs are computed (see ApplyStaticOverrides).
+	Statics NetworkStatics `json:"statics,omitempty" mapstructure:"statics" yaml:"statics,omitempty"`
 }
 
 // Band is a start/end offset pair for a reserved-IP band override, relative
@@ -799,11 +806,12 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 		LegacyBandEnd     int `yaml:"availableBandEnd,omitempty"`
 		LegacyBandEndSC   int `yaml:"available_band_end,omitempty"`
 
-		Strategy        string       `yaml:"strategy,omitempty"`
-		StrategySC      string       `yaml:"network_strategy,omitempty"`
-		StrategyPaths   []string     `yaml:"strategyPaths,omitempty"`
-		StrategyPathsSC []string     `yaml:"strategy_paths,omitempty"`
-		Bands           NetworkBands `yaml:"bands,omitempty"`
+		Strategy        string         `yaml:"strategy,omitempty"`
+		StrategySC      string         `yaml:"network_strategy,omitempty"`
+		StrategyPaths   []string       `yaml:"strategyPaths,omitempty"`
+		StrategyPathsSC []string       `yaml:"strategy_paths,omitempty"`
+		Bands           NetworkBands   `yaml:"bands,omitempty"`
+		Statics         NetworkStatics `yaml:"statics,omitempty"`
 	}
 
 	var raw rawNetwork
@@ -853,6 +861,7 @@ func (n *NetworkConfig) UnmarshalYAML(data []byte) error {
 	}
 
 	n.Bands = raw.Bands
+	n.Statics = raw.Statics
 
 	return nil
 }

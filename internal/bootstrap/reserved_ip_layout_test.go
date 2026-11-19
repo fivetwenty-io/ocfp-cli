@@ -165,6 +165,8 @@ func TestPVEWorkloadStatics_ColocatedOnEveryIndex(t *testing.T) {
 		// ip_key statics keep their overridden output stem.
 		{key: "reserved_prod-ocfp-0_rustfs_ip_smoke", want: "10.64.68.21"},
 		{key: "reserved_prod-ocfp-0_garage_ip_smoke", want: "10.64.68.22"},
+		{key: "reserved_prod-ocfp-0_control_plane_ip", want: "10.64.68.23"},
+		{key: "reserved_prod-ocfp-1_control_plane_ip", want: "10.64.72.23"},
 	} {
 		if got := getOutputString(t, sm, tc.key); got != tc.want {
 			t.Errorf("%s = %q, want %q", tc.key, got, tc.want)
@@ -520,6 +522,7 @@ func TestStackitSingleSubnet_WideDefault_LocksNegativeIndexKeySet(t *testing.T) 
 		{key: "reserved_prod-subnet_garage_ip", want: "10.4.0.20"},
 		{key: "reserved_prod-subnet_rustfs_ip_smoke", want: "10.4.0.21"},
 		{key: "reserved_prod-subnet_garage_ip_smoke", want: "10.4.0.22"},
+		{key: "reserved_prod-subnet_control_plane_ip", want: "10.4.0.23"},
 		{key: "reserved_prod-subnet_available_a", want: "10.4.0.32"},
 		{key: "reserved_prod-subnet_available_b", want: "10.4.0.63"},
 		{key: "reserved_prod-subnet_reserved_b", want: "10.4.0.31"},
@@ -534,9 +537,9 @@ func TestStackitSingleSubnet_WideDefault_LocksNegativeIndexKeySet(t *testing.T) 
 // TestStackitSingleSubnet_SpanningDropsPinnedStatics traces the idx -1 slot
 // resolution a stackit-single bloc explicitly set to network.strategy:
 // spanning would get (Task 6 review, Concern 3): spanning's mgmt tier pins
-// 13 of its 20 statics (bastion/bosh/shield/blacksmith/wireguard/ovpn/
-// rustfs/proxycache/nfs/garage to subnet 0, ocfp_ui to subnet 2, doomsday/
-// shout to subnet 1); at idx -1 none of those pinned entries match (see
+// 14 of its 21 statics (bastion/bosh/shield/blacksmith/wireguard/ovpn/
+// rustfs/proxycache/nfs/garage/control_plane to subnet 0, ocfp_ui to subnet
+// 2, doomsday/shout to subnet 1); at idx -1 none of those pinned entries match (see
 // netlayout's TestLayerASlotsOCFPNegativeIndexDropsPinned), so they are
 // silently absent here rather than erroring. The mgmt tier's available band
 // (32-63) has no subnet pinning of its own, so bandFor still finds exactly
@@ -613,7 +616,7 @@ func TestStackitSingleSubnet_SpanningDropsPinnedStatics(t *testing.T) {
 		t.Errorf("ReservedC = %d, want 64", slots.ReservedC)
 	}
 
-	// The 13 subnet-pinned mgmt statics never occupy index -1's position,
+	// The 14 subnet-pinned mgmt statics never occupy index -1's position,
 	// so none of them appear.
 	for _, key := range []string{
 		"bastion_ip",
@@ -629,6 +632,7 @@ func TestStackitSingleSubnet_SpanningDropsPinnedStatics(t *testing.T) {
 		"doomsday_ip",
 		"shout_ip",
 		"garage_ip",
+		"control_plane_ip",
 	} {
 		if _, ok := namedSlotOffset(slots.Named, key); ok {
 			t.Errorf("Named contains pinned key %s, want absent (pinned to a subnet index -1 does not occupy)", key)

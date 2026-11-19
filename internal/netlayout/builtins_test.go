@@ -13,31 +13,34 @@ import (
 // c72be26:internal/netlayout/wide.go for the original). It is the byte-compat
 // contract for every bloc already deployed under scheme "2": the vault-layer
 // reserved-ips a redeploy computes must not move, so a change here is a
-// change to live infrastructure, never a test fixup. The one addition since
-// is the ocf prometheus static at 68, which only adds a role.
+// change to live infrastructure, never a test fixup. The additions since are
+// the ocf prometheus static at 68 and the mgmt control_plane static at 23,
+// both of which only add a role at an offset the reserved complement
+// already covered.
 func wideGoldenTable() reservedip.AssignmentTable {
 	return reservedip.AssignmentTable{
-		"bastion":      {"mgmt": {Offset: 3}},
-		"bosh":         {"mgmt": {Offset: 4}, "ocf": {Offset: 64}},
-		"vault":        {"mgmt": {Offset: 5}, "ocf": {Offset: 65}},
-		"jumpbox":      {"mgmt": {Offset: 6}, "ocf": {Offset: 66}},
-		"concourse":    {"mgmt": {Offset: 7}},
-		"prometheus":   {"mgmt": {Offset: 8}, "ocf": {Offset: 68}},
-		"shield":       {"mgmt": {Offset: 9}},
-		"blacksmith":   {"mgmt": {Offset: 10}, "ocf": {Offset: 67}},
-		"artifacts":    {"mgmt": {Offset: 11}},
-		"wireguard":    {"mgmt": {Offset: 12}},
-		"ovpn":         {"mgmt": {Offset: 13}},
-		"rustfs":       {"mgmt": {Offset: 14}},
-		"rustfs_smoke": {"mgmt": {Offset: 21, IPKey: "rustfs_ip_smoke"}},
-		"proxycache":   {"mgmt": {Offset: 15}},
-		"nfs":          {"mgmt": {Offset: 16}},
-		"ocfp_ui":      {"mgmt": {Offset: 17}},
-		"doomsday":     {"mgmt": {Offset: 18}},
-		"shout":        {"mgmt": {Offset: 19}},
-		"garage":       {"mgmt": {Offset: 20}},
-		"garage_smoke": {"mgmt": {Offset: 22, IPKey: "garage_ip_smoke"}},
-		"haproxy":      {"ocf": {Offset: 97}},
+		"bastion":       {"mgmt": {Offset: 3}},
+		"bosh":          {"mgmt": {Offset: 4}, "ocf": {Offset: 64}},
+		"vault":         {"mgmt": {Offset: 5}, "ocf": {Offset: 65}},
+		"jumpbox":       {"mgmt": {Offset: 6}, "ocf": {Offset: 66}},
+		"concourse":     {"mgmt": {Offset: 7}},
+		"prometheus":    {"mgmt": {Offset: 8}, "ocf": {Offset: 68}},
+		"shield":        {"mgmt": {Offset: 9}},
+		"blacksmith":    {"mgmt": {Offset: 10}, "ocf": {Offset: 67}},
+		"artifacts":     {"mgmt": {Offset: 11}},
+		"wireguard":     {"mgmt": {Offset: 12}},
+		"ovpn":          {"mgmt": {Offset: 13}},
+		"rustfs":        {"mgmt": {Offset: 14}},
+		"rustfs_smoke":  {"mgmt": {Offset: 21, IPKey: "rustfs_ip_smoke"}},
+		"proxycache":    {"mgmt": {Offset: 15}},
+		"nfs":           {"mgmt": {Offset: 16}},
+		"ocfp_ui":       {"mgmt": {Offset: 17}},
+		"doomsday":      {"mgmt": {Offset: 18}},
+		"shout":         {"mgmt": {Offset: 19}},
+		"garage":        {"mgmt": {Offset: 20}},
+		"garage_smoke":  {"mgmt": {Offset: 22, IPKey: "garage_ip_smoke"}},
+		"control_plane": {"mgmt": {Offset: 23}},
+		"haproxy":       {"ocf": {Offset: 97}},
 		"available": {
 			"mgmt": {RangeSpec: "32-63"},
 			"ocf":  {RangeSpec: "96->"},

@@ -174,6 +174,7 @@ Key reserved IP slots within each subnet:
 | .8 | Prometheus |
 | .9 | SHIELD / Doomsday / OCFP UI |
 | .10 | Blacksmith / Shout |
+| .23 | Control-plane core VM (`control_plane_ip`, `wide` and `spanning` only) |
 
 ### LB Target Token Syntax
 

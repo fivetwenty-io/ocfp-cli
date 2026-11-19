@@ -14,7 +14,7 @@ flowchart TD
     NET --> PIP["Labeled Public IPs\n(STACKIT IAAS SDK)"]
     PIP --> LB["STACKIT Load Balancer\n(SDK-backed)"]
 
-    VS0 -.->|"reserved IPs"| RES["pinned to ocfp-0:\nbastion, bosh, shield,\nblacksmith, wireguard, ovpn,\nrustfs, proxycache, nfs, garage"]
+    VS0 -.->|"reserved IPs"| RES["pinned to ocfp-0:\nbastion, bosh, shield,\nblacksmith, wireguard, ovpn,\nrustfs, proxycache, nfs, garage,\ncontrol_plane"]
     VS1 -.->|"reserved IPs"| RES2["pinned to ocfp-1:\ndoomsday, shout"]
     VS2 -.->|"reserved IPs"| RES3["pinned to ocfp-2:\nocfp_ui"]
     VS0 -.-> RESA["on every subnet:\nvault, jumpbox, concourse,\nprometheus, artifacts,\nrustfs_smoke, garage_smoke"]

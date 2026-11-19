@@ -156,6 +156,22 @@ All sentinels below live in `internal/netlayout` and are matched with `errors.Is
 | `ErrBandOverrideCollidesStatic` | mgmt/ocf override range contains a named static (either tier, any index) | `netlayout: band override collides with a named static: [30,50] collides with tier "mgmt" static "shield" at offset 9` |
 | `ErrBandOverrideCrossTier` | mgmt/ocf override range intersects the OTHER tier's own band (any index) | `netlayout: band override intersects the other tier's available band: tier "mgmt" override [50,120] intersects tier "ocf" band [96,1022]` |
 
+### Static-OVERRIDE validation (`Layout.WithStaticOverride`, config-supplied, not part of a definition)
+
+`network.statics.mgmt.controlPlane` moves the mgmt `control_plane` static on a bloc. Both layers run the role and count checks on every workload subnet. They run the address, band, and static checks only on the subnets that place the role, against each one's own CIDR, before any record is written. Every error names the config key, and setting both `controlPlane` and its `control_plane` alias fails at config load. The band checks use the bloc's `network.bands.mgmt` override when one is set, and the strategy's own band otherwise.
+
+| Sentinel | Trigger | Example message |
+| --- | --- | --- |
+| `ErrStaticOverrideUnknownRole` | the strategy places no static of that role in that tier, as under `compact` | `netlayout: static override names a role the strategy does not place: strategy "compact" places no "control_plane" static in tier "mgmt"` |
+| `ErrStaticOverrideCount` | the list is empty or holds more than one offset | `netlayout: static override must list exactly one offset: role "control_plane" got 2` |
+| `ErrStaticOverrideOutsideSubnet` | the offset is negative or past the broadcast address | `netlayout: static override offset is outside the subnet: role "control_plane" offset 1024 is outside 10.64.64.0/22 (offsets 0-1023)` |
+| `ErrStaticOverrideNetworkAddress` | the offset is 0 | `netlayout: static override offset is the subnet's network address: role "control_plane" offset 0 is 10.64.64.0 in 10.64.64.0/22` |
+| `ErrStaticOverrideBroadcastAddress` | the offset is the broadcast address | `...: role "control_plane" offset 1023 is 10.64.67.255 in 10.64.64.0/22` |
+| `ErrStaticOverrideGateway` | the offset is 1 | `...: role "control_plane" offset 1 is 10.64.64.1 in 10.64.64.0/22` |
+| `ErrStaticOverrideBelowFloor` | the offset is 2 | `netlayout: static override offset is below the static floor: role "control_plane" offset 2 is below 3` |
+| `ErrStaticOverrideInBand` | the offset falls in either tier's effective band on a subnet that places the role | `netlayout: static override offset is inside an available band: role "control_plane" offset 40 on subnet index 0 is inside tier "mgmt" band [32,63]` |
+| `ErrStaticOverrideCollidesStatic` | another static of either tier holds the offset on a subnet that places the role | `netlayout: static override offset collides with another static: role "control_plane" offset 4 on subnet index 0 is held by tier "mgmt" static "bosh"` |
+
 ### Catalog-build-time (`network.strategyPaths` loading)
 
 | Sentinel | Trigger | Example message |

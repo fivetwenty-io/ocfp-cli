@@ -28,6 +28,9 @@ tiers:
       garage:       { offset: 20, subnets: [0] }
       rustfs_smoke: { offset: 21, ip_key: rustfs_ip_smoke }
       garage_smoke: { offset: 22, ip_key: garage_ip_smoke }
+      # Offsets 24 and 25 stay free on every index so control_plane can grow
+      # into a list of addresses at 23-25 without moving the first one.
+      control_plane: { offset: 23, subnets: [0] }
     available: { start: 32, end: 63 }
   ocf:
     statics:

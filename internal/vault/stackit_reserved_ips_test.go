@@ -176,7 +176,7 @@ func TestStackitReservedIPs_SingleSubnetWideDefault(t *testing.T) {
 		"prometheus_ip", "shield_ip", "blacksmith_ip", "artifacts_ip",
 		"wireguard_ip", "ovpn_ip", "rustfs_ip", "proxycache_ip", "nfs_ip",
 		"ocfp_ui_ip", "doomsday_ip", "shout_ip", "garage_ip",
-		"rustfs_ip_smoke", "garage_ip_smoke",
+		"rustfs_ip_smoke", "garage_ip_smoke", "control_plane_ip",
 	}
 
 	for _, key := range wantNamedKeys {
@@ -198,5 +198,5 @@ func TestStackitReservedIPs_SingleSubnetWideDefault(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, len(wantNamedKeys), namedCount, "no extra/missing named statics beyond wide's 20")
+	assert.Equal(t, len(wantNamedKeys), namedCount, "no extra/missing named statics beyond wide's 21")
 }

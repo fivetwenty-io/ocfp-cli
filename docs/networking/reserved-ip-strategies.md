@@ -75,8 +75,9 @@ Spanning's per-index pinning generalizes a pattern this document's earlier revis
 | garage | 20 |
 | rustfs_smoke | 21 |
 | garage_smoke | 22 |
+| control_plane | 23 |
 
-Offsets 3–22 are fully used; 23–31 are spare for future growth within the mgmt static zone.
+Offsets 3–23 are in use. Offset 23 holds `control_plane`, the fixed address of the single control-plane core VM. Offsets 24 and 25 are held back so the role can later grow into a list of addresses at 23–25 without moving the first one, and nothing else may claim them. Offsets 26–31 are spare for future growth within the mgmt static zone.
 
 **ocf tier named statics:**
 
@@ -90,6 +91,8 @@ Offsets 3–22 are fully used; 23–31 are spare for future growth within the mg
 | haproxy | 97 |
 
 The `ocf` prometheus static at offset 68 is new to `wide` and `spanning`, so a bloc that already sets a `network.bands.mgmt` override reaching offset 68 now fails validation with `ErrBandOverrideCollidesStatic`, and its band has to be moved clear of 68 before the next run.
+
+The mgmt `control_plane` static at offset 23 follows the same rule. A bloc whose `network.bands.mgmt` override reaches offset 23 now fails with `ErrBandOverrideCollidesStatic` and names `control_plane`. The failure is loud and moves no address. The operator either moves the band clear of 23, or moves `control_plane` clear of the band with `network.statics.mgmt.controlPlane` (see section 9).
 
 **Available bands:**
 
@@ -113,7 +116,7 @@ mgmt's complement wraps around its own available band on both sides — it exclu
 
 ```mermaid
 flowchart LR
-    A["0-2\nnetwork + gateway"] --> B["3-31\nmgmt statics\n(3-22 named, 23-31 spare)"]
+    A["0-2\nnetwork + gateway"] --> B["3-31\nmgmt statics\n(3-23 named, 24-25 held\nfor control_plane, 26-31 spare)"]
     B --> C["32-63\nmgmt available band"]
     C --> D["64-95\nocf statics\n(64-68 named, 69-95 spare)"]
     D --> E["96-...\nocf available band\n(haproxy static at 97)"]
@@ -126,6 +129,7 @@ flowchart LR
 | gateway | 1 | 10.64.64.1 |
 | bastion | 3 | 10.64.64.3 |
 | mgmt vault | 5 | 10.64.64.5 |
+| control_plane | 23 | 10.64.64.23 |
 | mgmt available band | 32–63 | 10.64.64.32 – 10.64.64.63 |
 | ocf bosh | 64 | 10.64.64.64 |
 | ocf prometheus | 68 | 10.64.64.68 |
@@ -137,7 +141,9 @@ flowchart LR
 
 `compact` (scheme identity `"3-compact"`) is a `/26`-capable, `colocated` layout derived from `wide` by compressing the `ocf` tier's statics and both tiers' available bands. It requires a workload subnet of at least `/26`; its highest fixed offset is `37` (the `ocf` tier's haproxy static).
 
-The mgmt tier's statics are numerically identical to `wide`'s (offsets 3–22, same role table above) — compact only compresses the `ocf` tier and the available bands.
+The mgmt tier's statics are numerically identical to `wide`'s offsets 3–22 — compact only compresses the `ocf` tier and the available bands.
+
+`compact` places no `control_plane` static. Every offset from 3 to 62 on a `/26` is already a named static or inside a band, so the role could only fit by shrinking a band. That would change the `available_*` and `reserved_*` keys an existing compact bloc already holds, and it could hand out an address the band has already given to a running VM. A compact bloc therefore has no `control_plane_ip` key, and setting `network.statics.mgmt.controlPlane` on one fails with `ErrStaticOverrideUnknownRole`.
 
 **ocf tier named statics:**
 
@@ -219,6 +225,9 @@ This is the default strategy for AWS (whose three VPC subnets are always separat
 | garage | 20 | subnet 0 |
 | rustfs_smoke | 21 | every subnet |
 | garage_smoke | 22 | every subnet |
+| control_plane | 23 | subnet 0 |
+
+Offsets 24 and 25 are held back on every subnet, as they are under `wide`, so `control_plane` can later grow into a list of addresses at 23–25.
 
 **ocf tier statics:**
 
@@ -239,7 +248,7 @@ A "pinned to subnet N" static's `<role>_ip` key is written ONLY into that one su
 
 | Index 0 (`ocfp-0`) mgmt | Index 1 (`ocfp-1`) mgmt | Index 2 (`ocfp-2`) mgmt |
 | --- | --- | --- |
-| bastion 3, bosh 4, vault 5, jumpbox 6, concourse 7, prometheus 8, shield 9, blacksmith 10, artifacts 11, wireguard 12, ovpn 13, rustfs 14, proxycache 15, nfs 16, garage 20, rustfs_smoke 21, garage_smoke 22 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, doomsday 18, shout 19, rustfs_smoke 21, garage_smoke 22 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, ocfp_ui 17, rustfs_smoke 21, garage_smoke 22 |
+| bastion 3, bosh 4, vault 5, jumpbox 6, concourse 7, prometheus 8, shield 9, blacksmith 10, artifacts 11, wireguard 12, ovpn 13, rustfs 14, proxycache 15, nfs 16, garage 20, rustfs_smoke 21, garage_smoke 22, control_plane 23 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, doomsday 18, shout 19, rustfs_smoke 21, garage_smoke 22 | vault 5, jumpbox 6, concourse 7, prometheus 8, artifacts 11, ocfp_ui 17, rustfs_smoke 21, garage_smoke 22 |
 
 | Index 0 (`ocfp-0`) ocf | Index 1 (`ocfp-1`) ocf | Index 2 (`ocfp-2`) ocf |
 | --- | --- | --- |
@@ -249,7 +258,7 @@ A "pinned to subnet N" static's `<role>_ip` key is written ONLY into that one su
 flowchart TD
     subgraph IDX0["ocfp-0 (index 0)"]
         direction LR
-        A0["0-2\nnetwork+gw"] --> B0["3-31 mgmt statics\nbastion,bosh,shield,blacksmith,\nwireguard,ovpn,rustfs,proxycache,\nnfs,garage + every-subnet roles"]
+        A0["0-2\nnetwork+gw"] --> B0["3-31 mgmt statics\nbastion,bosh,shield,blacksmith,\nwireguard,ovpn,rustfs,proxycache,\nnfs,garage,control_plane\n+ every-subnet roles"]
         B0 --> C0["32-63\nmgmt available"]
         C0 --> D0["64-95 ocf statics\nbosh + every-subnet roles"]
         D0 --> E0["96-...\nocf available\n(haproxy at 97)"]
@@ -275,6 +284,7 @@ flowchart TD
 | Item | Index | Offset | Address |
 | --- | --- | --- | --- |
 | bastion | 0 | 3 | 10.4.4.3 |
+| control_plane | 0 | 23 | 10.4.4.23 |
 | mgmt vault (every subnet) | 0 / 1 / 2 | 5 | 10.4.4.5 / 10.4.8.5 / 10.4.12.5 |
 | mgmt available band | 0 / 1 / 2 | 32–63 | 10.4.4.32–63 / 10.4.8.32–63 / 10.4.12.32–63 |
 | doomsday | 1 | 18 | 10.4.8.18 |
@@ -318,7 +328,7 @@ This is identical across every subnet-carving path that records a virtual subnet
 
 A negative `idx` (the bootstrap call this package uses for the infra subnet and for single-subnet contexts that have no workload-subnet position) returns only the placements that apply to every index — for a `spanning`-style definition, that means only its unpinned statics and bands; every pinned static and band is omitted, since a negative index can never satisfy a pinned-index membership test.
 
-**Colocated strategies now write every mgmt static on every index, not a fixed subset.** Before this change, Layer A's `ocfp`-role writer emitted a hand-coded subset, branching on the subnet's index: `vault_ip`, `jumpbox_ip`, `concourse_ip`, `prometheus_ip`, and `artifacts_ip` on every index; `bastion_ip`, `bosh_ip`, `shield_ip`, and `blacksmith_ip` on index 0 only; `doomsday_ip`, `shout_ip`, and a second `blacksmith_ip` at its own separate offset on index 1 only; and `ocfp_ui_ip` on index 2 only. That hand-coded special case is gone. Now, for `wide` and `compact` (both `colocated`, so every static is unpinned), `LayerASlots("ocfp", ...)` returns the strategy's FULL mgmt-tier static set — all twenty roles, including `wireguard`, `ovpn`, `rustfs`, `proxycache`, `nfs`, `ocfp_ui`, `doomsday`, `shout`, `garage`, `rustfs_smoke`, and `garage_smoke` — on EVERY `ocfp-N` workload subnet, as `reserved_<bloc>-ocfp-N_<role>_ip` bootstrap-state outputs. For `spanning`, the same writer emits only the roles pinned to that particular index (section 6's per-index tables), plus the unpinned "every subnet" roles.
+**Colocated strategies now write every mgmt static on every index, not a fixed subset.** Before this change, Layer A's `ocfp`-role writer emitted a hand-coded subset, branching on the subnet's index: `vault_ip`, `jumpbox_ip`, `concourse_ip`, `prometheus_ip`, and `artifacts_ip` on every index; `bastion_ip`, `bosh_ip`, `shield_ip`, and `blacksmith_ip` on index 0 only; `doomsday_ip`, `shout_ip`, and a second `blacksmith_ip` at its own separate offset on index 1 only; and `ocfp_ui_ip` on index 2 only. That hand-coded special case is gone. Now, for `wide` and `compact` (both `colocated`, so every static is unpinned), `LayerASlots("ocfp", ...)` returns the strategy's FULL mgmt-tier static set — all twenty-one roles under `wide` and twenty under `compact`, including `wireguard`, `ovpn`, `rustfs`, `proxycache`, `nfs`, `ocfp_ui`, `doomsday`, `shout`, `garage`, `rustfs_smoke`, `garage_smoke`, and, under `wide`, `control_plane` — on EVERY `ocfp-N` workload subnet, as `reserved_<bloc>-ocfp-N_<role>_ip` bootstrap-state outputs. For `spanning`, the same writer emits only the roles pinned to that particular index (section 6's per-index tables), plus the unpinned "every subnet" roles.
 
 **Migration note.** Three changes affect a bloc's bootstrap-state outputs at its next apply. Layer B — the vault `reserved-ips` records Genesis' cloud-config actually reads — is byte-unchanged for `wide` and `compact`, so none of the three moves an address a running VM holds; `wide`'s scheme stamp stays `"2"` and `compact`'s stays `"3-compact"` (section 10).
 
@@ -377,6 +387,37 @@ Applying either override recomputes the reserved complement from the new band �
 
 `network.bands.ocf` is not shipped by either layer's config today — no per-strategy `ocf`-tier override exists yet.
 
+### Static overrides
+
+`network.statics.mgmt.controlPlane` moves the `control_plane` static to another offset. The snake_case alias `control_plane` is accepted too, but setting both keys is an error, whatever their values. The value is a list of offsets relative to each workload subnet's base address, and today it must hold exactly one entry:
+
+```yaml
+network:
+  statics:
+    mgmt:
+      controlPlane: [30]
+```
+
+The key is a list rather than a single number so that a later release can accept several control-plane addresses under the same key, with no change to the config's shape. A bare number such as `controlPlane: 30` is refused at config load with an error that asks for a list. Leaving the key unset keeps the role at the strategy's offset. An empty list is an error that says exactly one entry is required, so an empty list never means "no override".
+
+Both layers apply the override through one helper, so Layer A's `reserved_<bloc>-ocfp-N_control_plane_ip` output and Layer B's `control_plane_ip` key always agree. The override moves only the address. The role keeps its subnet pinning, so under `spanning` it still appears only on `ocfp-0`. Each rule below is checked only on the subnets that place the role, against that subnet's own CIDR, before any record is written. A subnet that does not place the role rejects only a malformed override, such as one with two entries or one on `compact`. Every failure names `network.statics.mgmt.controlPlane` and wraps one of these sentinels:
+
+| Sentinel | Rejected when |
+| --- | --- |
+| `ErrStaticOverrideUnknownRole` | the strategy places no `control_plane` static, which is the case for `compact` |
+| `ErrStaticOverrideCount` | the list is empty or holds more than one offset |
+| `ErrStaticOverrideOutsideSubnet` | the offset is negative or past the subnet's broadcast address |
+| `ErrStaticOverrideNetworkAddress` | the offset is 0 |
+| `ErrStaticOverrideBroadcastAddress` | the offset is the subnet's broadcast address |
+| `ErrStaticOverrideGateway` | the offset is 1, the gateway |
+| `ErrStaticOverrideBelowFloor` | the offset is 2, below the static floor of 3 |
+| `ErrStaticOverrideInBand` | the offset falls inside the available band of either tier on that subnet |
+| `ErrStaticOverrideCollidesStatic` | another static of either tier already holds the offset on that subnet |
+
+The band check uses the band the bloc actually runs. When `network.bands.mgmt` is set, the override is checked against that band rather than the strategy's default, and the band override is then checked against the moved static. For example, `bands.mgmt` of 23–63 together with `controlPlane: [80]` is valid on a `/22`, because offset 80 sits between the mgmt band and the ocf band. The ocf band is always the strategy's own, and its open end runs to the subnet's last usable address.
+
+Changing the override on a bloc that already recorded the address needs `ocfp vault reserved-ips migrate` or `ocfp vault populate --force-reallocate`. Until then the drift guard withholds the new address and reports it as drift, as it does for every other role, because moving the address recreates the VM that holds it.
+
 The removed legacy key, `network.availableBandStart`/`network.availableBandEnd` (and its snake_case alias, `available_band_start`/`available_band_end`), now hard-errors at config load. The error names both replacement keys — `network.bands.infra` for the bootstrap subnet layout, and `network.bands.mgmt` for the reserved-IP mgmt tier — so a config still carrying the old key fails loudly instead of silently losing its override.
 
 ## 10. Scheme stamping and drift guard
@@ -388,6 +429,8 @@ A populate drift guard sits in front of every write to a `reserved-ips` path (bo
 Moving a live reserved address recreates the VM that holds it, so the guard surfaces those withheld writes for deliberate review rather than applying them automatically. An operator reviews the report with `ocfp vault reserved-ips status`, then applies a chosen migration with `ocfp vault reserved-ips migrate`, or forces the derivation over the recorded addresses with `ocfp vault populate --force-reallocate`.
 
 The guard also reports the reverse case: keys a record still holds that the running build no longer derives at all. The drift check cannot see these, because it only compares the keys the derivation emits — a record carrying a retired band pair alongside the current one therefore reads as clean. They are not inert. Genesis' cloud-config IPAM unions every `reserved*`/`available*` pair it finds in a record, so a retired pair spanning the live band silently reserves it, and the director fails to generate a cloud-config with `Not enough available IPs in the subnet for the network 'compilation'`. `status` lists them under "obsolete reserved-IP keys" and `migrate` removes them; removing one moves nothing, so no VM needs recreating on that account.
+
+Adding the `control_plane` static to `wide` and `spanning` is purely additive under this guard. Offset 23 already sat inside both tiers' reserved complements, so no `available_*` or `reserved_*` value changes. The three new keys, `control_plane_ip`, `control_plane_a`, and `control_plane_b`, are not held by any existing record, so the guard forwards them and reports no drift and no obsolete key. The stamps stay `"2"` and `"4-spanning"`, and `compact`'s record does not change at all.
 
 Obsolete-key detection needs the whole derived record to compare against, so it applies only where a writer supplies one — the per-tier workload tables on PVE, AWS, and STACKIT. The PVE infra subnet's role-keyed record is assembled from whatever `reserved_*_ip` outputs bootstrap state happens to hold, so a key absent from one write is not evidence of retirement there, and that record is never purged.
 
@@ -425,7 +468,7 @@ When redrawing the OCFP networking diagram, verify each of the following against
 
 For `wide`:
 
-- mgmt static range: 3–31 (named 3–22, spare 23–31)
+- mgmt static range: 3–31 (named 3–23, with `control_plane` at 23, 24–25 held for a later control-plane list, and 26–31 spare)
 
 - mgmt available band: 32–63
 
@@ -437,7 +480,7 @@ For `wide`:
 
 For `compact`:
 
-- mgmt static range: 3–22 (identical to wide)
+- mgmt static range: 3–22 (identical to wide's 3–22, with no `control_plane` static)
 
 - mgmt available band: 28–35
 
@@ -449,9 +492,9 @@ For `compact`:
 
 For `spanning`:
 
-- offsets are numerically identical to `wide`'s (3–22 mgmt, 64–68/97 ocf, 32–63 mgmt available, 96+ ocf available) — only WHICH subnet index carries each role differs
+- offsets are numerically identical to `wide`'s (3–23 mgmt with 24–25 held, 64–68/97 ocf, 32–63 mgmt available, 96+ ocf available) — only WHICH subnet index carries each role differs
 
-- verify each subnet's own per-index table (section 6) before drawing it: `ocfp-0` carries every singleton mgmt/ocf role plus the unpinned roles; `ocfp-1` carries only doomsday, shout, ocf-tier blacksmith, plus the unpinned roles; `ocfp-2` carries only ocfp_ui plus the unpinned roles
+- verify each subnet's own per-index table (section 6) before drawing it: `ocfp-0` carries every singleton mgmt/ocf role, including `control_plane`, plus the unpinned roles; `ocfp-1` carries only doomsday, shout, ocf-tier blacksmith, plus the unpinned roles; `ocfp-2` carries only ocfp_ui plus the unpinned roles
 
 - a role's `<role>_ip` key is ABSENT (not reserved-but-blank) from a subnet's record at any index it is not pinned to
 

@@ -187,3 +187,84 @@ func schemeCollisionError(schemeVersion, name, existingName string) error {
 	return fmt.Errorf("%w: strategy %q's scheme_version %q already claimed by strategy %q",
 		ErrSchemeCollision, name, schemeVersion, existingName)
 }
+
+// Sentinel errors for WithStaticOverride's checks on an operator-supplied
+// static offset. Callers match with errors.Is; the wrapped message names
+// the role, the offending offset, and the address or range it hit.
+var (
+	// ErrStaticOverrideUnknownRole is returned when the strategy places no
+	// static of that role in that tier, so there is nothing to move.
+	ErrStaticOverrideUnknownRole = errors.New("netlayout: static override names a role the strategy does not place")
+	// ErrStaticOverrideCount is returned when the override does not carry
+	// exactly one offset. The override is list-shaped so it can later hold
+	// several addresses for one role, but only one is accepted today.
+	ErrStaticOverrideCount = errors.New("netlayout: static override must list exactly one offset")
+	// ErrStaticOverrideOutsideSubnet is returned when the offset falls
+	// before the subnet's network address or past its broadcast address.
+	ErrStaticOverrideOutsideSubnet = errors.New("netlayout: static override offset is outside the subnet")
+	// ErrStaticOverrideNetworkAddress is returned for offset 0.
+	ErrStaticOverrideNetworkAddress = errors.New("netlayout: static override offset is the subnet's network address")
+	// ErrStaticOverrideBroadcastAddress is returned for the subnet's last
+	// offset.
+	ErrStaticOverrideBroadcastAddress = errors.New("netlayout: static override offset is the subnet's broadcast address")
+	// ErrStaticOverrideGateway is returned for offset 1, the gateway every
+	// workload subnet routes through.
+	ErrStaticOverrideGateway = errors.New("netlayout: static override offset is the subnet's gateway address")
+	// ErrStaticOverrideBelowFloor is returned for any other offset below
+	// the lowest offset a static may claim.
+	ErrStaticOverrideBelowFloor = errors.New("netlayout: static override offset is below the static floor")
+	// ErrStaticOverrideInBand is returned when the offset falls inside the
+	// available band of either tier, where a director could hand the same
+	// address to a dynamic VM.
+	ErrStaticOverrideInBand = errors.New("netlayout: static override offset is inside an available band")
+	// ErrStaticOverrideCollidesStatic is returned when the offset is
+	// already held by another static of either tier.
+	ErrStaticOverrideCollidesStatic = errors.New("netlayout: static override offset collides with another static")
+)
+
+// staticOverrideUnknownRoleError wraps ErrStaticOverrideUnknownRole with
+// the strategy, tier, and role.
+func staticOverrideUnknownRoleError(strategy string, tier Tier, role string) error {
+	return fmt.Errorf("%w: strategy %q places no %q static in tier %q",
+		ErrStaticOverrideUnknownRole, strategy, role, tier)
+}
+
+// staticOverrideCountError wraps ErrStaticOverrideCount with the role and
+// the number of offsets given.
+func staticOverrideCountError(role string, got int) error {
+	return fmt.Errorf("%w: role %q got %d", ErrStaticOverrideCount, role, got)
+}
+
+// staticOverrideAddressError wraps sentinel with the role, the offset, the
+// address it resolves to, and cidr.
+func staticOverrideAddressError(sentinel error, role string, offset int, ip, cidr string) error {
+	return fmt.Errorf("%w: role %q offset %d is %s in %s", sentinel, role, offset, ip, cidr)
+}
+
+// staticOverrideOutsideSubnetError wraps ErrStaticOverrideOutsideSubnet
+// with the role, the offset, cidr, and the subnet's valid offset range.
+func staticOverrideOutsideSubnetError(role string, offset int, cidr string, broadcast int) error {
+	return fmt.Errorf("%w: role %q offset %d is outside %s (offsets 0-%d)",
+		ErrStaticOverrideOutsideSubnet, role, offset, cidr, broadcast)
+}
+
+// staticOverrideBelowFloorError wraps ErrStaticOverrideBelowFloor with the
+// role, the offset, and the floor.
+func staticOverrideBelowFloorError(role string, offset int) error {
+	return fmt.Errorf("%w: role %q offset %d is below %d",
+		ErrStaticOverrideBelowFloor, role, offset, minStaticOffset)
+}
+
+// staticOverrideInBandError wraps ErrStaticOverrideInBand with the role,
+// the offset, the subnet index, and the tier band it falls in.
+func staticOverrideInBandError(role string, offset, idx int, tier Tier, start, end int) error {
+	return fmt.Errorf("%w: role %q offset %d on subnet index %d is inside tier %q band [%d,%d]",
+		ErrStaticOverrideInBand, role, offset, idx, tier, start, end)
+}
+
+// staticOverrideCollidesStaticError wraps ErrStaticOverrideCollidesStatic
+// with the role, the offset, the subnet index, and the static holding it.
+func staticOverrideCollidesStaticError(role string, offset, idx int, tier Tier, other string) error {
+	return fmt.Errorf("%w: role %q offset %d on subnet index %d is held by tier %q static %q",
+		ErrStaticOverrideCollidesStatic, role, offset, idx, tier, other)
+}

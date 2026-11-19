@@ -879,7 +879,11 @@ func (m *Manager) validateWorkloadSubnetCount(strategyName string, workloadCIDRs
 // named-slot/available-band offsets for role on subnetCIDR at
 // workload-subnet index idx (-1 for the infra subnet and single-subnet
 // layouts, which have no workload position), then applies any config-level
-// available-band override (m.config.Network.Bands.Infra) on top of it.
+// available-band override (m.config.Network.Bands.Infra) on top of it. For
+// a workload subnet it first applies any static override
+// (m.config.Network.Statics, via config.NetworkConfig.ApplyStaticOverrides),
+// the same helper internal/vault applies, so both layers move a static to
+// the same address.
 // Every subnetStrategy shares this one resolution path — unlike the
 // pre-netlayout scheme, where pveSubnetStrategy alone widened the ocfp
 // role's band from its own CIDR, every strategy here reads the identical
@@ -892,6 +896,15 @@ func (m *Manager) resolveReservedIPLayout(role, subnetCIDR string, idx int) (net
 	if err != nil {
 		return netlayout.LayerASlots{}, fmt.Errorf("resolve reserved-ip layout strategy %q: %w",
 			m.config.Network.Strategy, err)
+	}
+
+	// Static overrides move workload-subnet statics only; the infra
+	// subnet's fixed layout never carries them.
+	if role == subnetRoleOCFP {
+		layout, err = m.config.Network.ApplyStaticOverrides(layout, subnetCIDR, idx)
+		if err != nil {
+			return netlayout.LayerASlots{}, fmt.Errorf("resolve reserved-ip slots for role %q: %w", role, err)
+		}
 	}
 
 	slots, err := layout.LayerASlots(role, subnetCIDR, idx)

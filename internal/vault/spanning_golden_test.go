@@ -58,6 +58,7 @@ func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
 		assert.NotContains(t, mgmt0, "doomsday_ip", "doomsday is pinned to subnet 1")
 		assert.NotContains(t, mgmt0, "shout_ip", "shout is pinned to subnet 1")
 		assert.NotContains(t, mgmt0, "ocfp_ui_ip", "ocfp_ui is pinned to subnet 2")
+		assert.Equal(t, "10.4.4.23", mgmt0["control_plane_ip"], "control_plane is pinned to subnet 0")
 	})
 
 	t.Run("Idx1Mgmt", func(t *testing.T) {
@@ -66,6 +67,7 @@ func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
 		assert.Equal(t, "10.4.8.5", mgmt1["vault_ip"], "vault is unpinned, present on every index")
 
 		assert.NotContains(t, mgmt1, "bastion_ip", "bastion is pinned to subnet 0")
+		assert.NotContains(t, mgmt1, "control_plane_ip", "control_plane is pinned to subnet 0")
 	})
 
 	t.Run("Idx2Mgmt", func(t *testing.T) {
@@ -74,6 +76,7 @@ func TestSpanningReservedIPs_PerSubnetIndex(t *testing.T) {
 
 		assert.NotContains(t, mgmt2, "bastion_ip", "bastion is pinned to subnet 0")
 		assert.NotContains(t, mgmt2, "doomsday_ip", "doomsday is pinned to subnet 1")
+		assert.NotContains(t, mgmt2, "control_plane_ip", "control_plane is pinned to subnet 0")
 	})
 
 	t.Run("Idx0OCF", func(t *testing.T) {

@@ -12,6 +12,7 @@ blacksmith     ocf   offset=0
 bosh           mgmt  offset=0
 bosh           ocf   offset=0
 concourse      mgmt  offset=7
+control_plane  mgmt  offset=0
 doomsday       mgmt  offset=0
 garage         mgmt  offset=0
 garage_smoke   mgmt  offset=22 key=garage_ip_smoke
@@ -52,6 +53,9 @@ bosh_ip                10.0.0.4
 concourse_a            10.0.0.6
 concourse_b            10.0.0.8
 concourse_ip           10.0.0.7
+control_plane_a        10.0.0.22
+control_plane_b        10.0.0.24
+control_plane_ip       10.0.0.23
 garage_a               10.0.0.19
 garage_b               10.0.0.21
 garage_ip              10.0.0.20

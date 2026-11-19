@@ -88,4 +88,14 @@ type Layout interface {
 	// unknown, the static is unpinned (present on every index), it is
 	// pinned to more than one index, or the strategy has no mgmt tier.
 	PinnedWorkloadIndex(ipKey string) (idx int, ok bool)
+
+	// WithStaticOverride returns a copy of the layout with the tier static
+	// named role moved to the single offset in offsets, keeping its subnet
+	// pinning and output key. cidr is the workload subnet at index idx (-1
+	// for a subnet with no workload position), and the offset is checked
+	// against it only when the strategy places role on idx. bands carries any band override the
+	// bloc applies, by tier, so the offset is checked against the band the
+	// bloc actually uses; a tier absent from bands is checked against the
+	// strategy's own band. The original layout is never modified.
+	WithStaticOverride(tier Tier, role, cidr string, idx int, offsets []int, bands map[Tier]BandRange) (Layout, error)
 }

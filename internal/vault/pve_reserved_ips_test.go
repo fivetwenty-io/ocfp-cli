@@ -59,7 +59,7 @@ func testPVEReservedIPsMgmtOcfDisjointWide(t *testing.T) {
 	// mgmt-only named statics must never appear in ocf's tree.
 	for _, key := range []string{"bastion_ip", "concourse_ip", "shield_ip", "artifacts_ip",
 		"wireguard_ip", "ovpn_ip", "rustfs_ip", "rustfs_ip_smoke", "proxycache_ip", "nfs_ip", "ocfp_ui_ip",
-		"doomsday_ip", "shout_ip", "garage_ip", "garage_ip_smoke"} {
+		"doomsday_ip", "shout_ip", "garage_ip", "garage_ip_smoke", "control_plane_ip"} {
 		assert.Contains(t, mgmt, key)
 		assert.NotContains(t, ocf, key)
 	}
@@ -162,26 +162,27 @@ func TestPVEReservedIPs_ExactOffsetTable(t *testing.T) {
 	require.NoError(t, err)
 
 	want := map[string]string{
-		"bastion_ip":      "10.64.68.3",
-		"bosh_ip":         "10.64.68.4",
-		"vault_ip":        "10.64.68.5",
-		"jumpbox_ip":      "10.64.68.6",
-		"concourse_ip":    "10.64.68.7",
-		"prometheus_ip":   "10.64.68.8",
-		"shield_ip":       "10.64.68.9",
-		"blacksmith_ip":   "10.64.68.10",
-		"artifacts_ip":    "10.64.68.11",
-		"wireguard_ip":    "10.64.68.12",
-		"ovpn_ip":         "10.64.68.13",
-		"rustfs_ip":       "10.64.68.14",
-		"proxycache_ip":   "10.64.68.15",
-		"nfs_ip":          "10.64.68.16",
-		"ocfp_ui_ip":      "10.64.68.17",
-		"doomsday_ip":     "10.64.68.18",
-		"shout_ip":        "10.64.68.19",
-		"garage_ip":       "10.64.68.20",
-		"rustfs_ip_smoke": "10.64.68.21",
-		"garage_ip_smoke": "10.64.68.22",
+		"bastion_ip":       "10.64.68.3",
+		"bosh_ip":          "10.64.68.4",
+		"vault_ip":         "10.64.68.5",
+		"jumpbox_ip":       "10.64.68.6",
+		"concourse_ip":     "10.64.68.7",
+		"prometheus_ip":    "10.64.68.8",
+		"shield_ip":        "10.64.68.9",
+		"blacksmith_ip":    "10.64.68.10",
+		"artifacts_ip":     "10.64.68.11",
+		"wireguard_ip":     "10.64.68.12",
+		"ovpn_ip":          "10.64.68.13",
+		"rustfs_ip":        "10.64.68.14",
+		"proxycache_ip":    "10.64.68.15",
+		"nfs_ip":           "10.64.68.16",
+		"ocfp_ui_ip":       "10.64.68.17",
+		"doomsday_ip":      "10.64.68.18",
+		"shout_ip":         "10.64.68.19",
+		"garage_ip":        "10.64.68.20",
+		"rustfs_ip_smoke":  "10.64.68.21",
+		"garage_ip_smoke":  "10.64.68.22",
+		"control_plane_ip": "10.64.68.23",
 	}
 
 	for key, ip := range want {
@@ -454,6 +455,12 @@ func (workloadTableErrLayout) ValidateBand(_ netlayout.Tier, _ string, _, _ int)
 }
 
 func (workloadTableErrLayout) PinnedWorkloadIndex(_ string) (int, bool) { return 0, false }
+
+func (workloadTableErrLayout) WithStaticOverride(
+	_ netlayout.Tier, _, _ string, _ int, _ []int, _ map[netlayout.Tier]netlayout.BandRange,
+) (netlayout.Layout, error) {
+	return nil, netlayout.ErrNotImplemented
+}
 
 // TestPVEReservedIPs_WorkloadTableErrorFailsLoudly locks the guard on the
 // WorkloadTable step itself: a layout that validates the subnet but cannot
