@@ -29,6 +29,10 @@ const (
 
 	// ActionCancel asks a running job to stop.
 	ActionCancel = "cancel"
+
+	// ActionWireContract asks which wire contract this host reads. Only job
+	// contract answers it, and job exec refuses it.
+	ActionWireContract = "wire-contract"
 )
 
 // Request is the payload of a job request.
@@ -36,15 +40,17 @@ type Request struct {
 	// WireContract is the version of the progress stream the requester reads.
 	WireContract int `json:"wireContract"`
 
-	// Action is ActionRun or ActionCancel. It sits inside the signed payload,
-	// so a signed run can never be replayed as a cancel, nor a cancel as a
-	// run. A cancel names no verb, env, or interactive.
+	// Action is ActionRun, ActionCancel, or ActionWireContract. It sits
+	// inside the signed payload, so a signed request can never be replayed
+	// as one of another action. A cancel and a wire contract query name no
+	// verb, env, or interactive.
 	Action string `json:"action"`
 
 	// JobID names the job and its spool directory.
 	JobID string `json:"jobId"`
 
-	// Verb names what the job does. A cancel leaves it empty.
+	// Verb names what the job does. A cancel and a wire contract query
+	// leave it empty.
 	Verb string `json:"verb"`
 
 	// InstallationID, InstanceID, and Epoch name the requester. They must

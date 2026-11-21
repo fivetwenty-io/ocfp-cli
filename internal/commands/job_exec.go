@@ -15,7 +15,8 @@ import (
 // ownerStoreFunc opens the owner record store in dir.
 type ownerStoreFunc func(dir string) *ownerrecord.DirStore
 
-// NewJobCmd creates the job command, which runs signed jobs on a bastion.
+// NewJobCmd creates the job command, which runs signed jobs on a bastion and
+// answers signed wire contract queries.
 func NewJobCmd() *cobra.Command {
 	return newJobCmd(ownerrecord.NewDirStore, ownerrecord.DefaultDir)
 }
@@ -30,10 +31,12 @@ func newJobCmd(newStore ownerStoreFunc, ownerDefault string) *cobra.Command {
 
 A job request is signed by the instance that the bastion's owner record
 names. The job command checks every request against that record before it
-runs anything.`,
+runs anything. Job exec runs a request, and job contract answers a signed
+query for the wire contract this host reads.`,
 	}
 
 	cmd.AddCommand(newJobExecCmd(newStore, ownerDefault))
+	cmd.AddCommand(newJobContractCmd(newStore, ownerDefault))
 	cmd.AddCommand(newJobVerbCmd())
 
 	return cmd
@@ -95,6 +98,9 @@ failed, says so in a warning before its stream ends. Once the stream ends,
 stderr names the outcome as stopped, killed, or already_finished, and the
 command exits as it does for any job: 0 when the job succeeded and 1
 otherwise, so 1 for a job that stopped or was killed.
+
+A request whose action is wire-contract is refused with
+JOB_REQUEST_INVALID, because only job contract answers it.
 
 A request that is not signed by the owner, that names an org or a bloc
 other than the ones the owner record names, or that the owner record cannot

@@ -54,7 +54,11 @@ var jobIDPattern = ownerrecord.NamePattern
 //   - a key that names no field, an issue time outside the window from ten
 //     minutes before the bastion's clock to one minute after it, a job id that
 //     does not match ^[a-z0-9][a-z0-9-]{0,63}$, and a format other than
-//     RequestFormatV1 (JOB_REQUEST_INVALID).
+//     RequestFormatV1 (JOB_REQUEST_INVALID);
+//   - an action that is missing or is not ActionRun or ActionCancel, which
+//     includes ActionWireContract, since only AnswerWireContract answers a
+//     query, and a cancel that names a verb, an env, or interactive
+//     (JOB_REQUEST_INVALID).
 //
 // A stored record that does not open for any other reason is refused with
 // OWNER_RECORD_INVALID, and the error also matches
@@ -71,6 +75,35 @@ func CheckOwner(ctx context.Context, sr SignedRequest, store ownerrecord.Store) 
 // checkOwner is CheckOwner with the clock that the issue time is checked
 // against.
 func checkOwner(ctx context.Context, sr SignedRequest, store ownerrecord.Store, clock progress.Clock) (Request, func() error, error) {
+	req, release, err := checkOwnerAs(ctx, sr, store, clock, execChecks)
+	if err != nil {
+		return Request{}, nil, err
+	}
+
+	return req, release, nil
+}
+
+// checks holds the two checks in which the requests that job exec runs and
+// the queries that job contract answers differ. Every other check, and the
+// order of all of them, is the same for both.
+type checks struct {
+	// contract refuses a wire contract the command does not take.
+	contract func(Request) error
+
+	// action refuses an action the command does not take, and any field
+	// that action does not take.
+	action func(Request) error
+}
+
+// execChecks are the checks of a request that job exec runs.
+var execChecks = checks{contract: checkContract, action: checkAction}
+
+// checkOwnerAs is checkOwner with the checks in which commands differ. On a
+// refusal it still returns the request as far as it decoded, which is the
+// zero Request until the signature has verified and the payload has decoded,
+// so that a caller can name the job in its answer. It never returns a
+// release with an error.
+func checkOwnerAs(ctx context.Context, sr SignedRequest, store ownerrecord.Store, clock progress.Clock, ch checks) (Request, func() error, error) {
 	if store == nil || clock == nil {
 		return Request{}, nil, errors.New("check owner: no owner record store or clock")
 	}
@@ -95,14 +128,14 @@ func checkOwner(ctx context.Context, sr SignedRequest, store ownerrecord.Store, 
 		}
 	}()
 
-	req, err := verify(ctx, sr, store, clock)
+	req, err := verify(ctx, sr, store, clock, ch)
 	if err != nil {
 		rerr := release()
 		if rerr != nil {
 			err = errors.Join(err, fmt.Errorf("release owner record lock: %w", rerr))
 		}
 
-		return Request{}, nil, err
+		return req, nil, err
 	}
 
 	kept = true
@@ -125,8 +158,10 @@ func releaseOnce(unlock func() error) func() error {
 	}
 }
 
-// verify runs the checks while the caller holds the shared lock.
-func verify(ctx context.Context, sr SignedRequest, store ownerrecord.Store, clock progress.Clock) (Request, error) {
+// verify runs the checks while the caller holds the shared lock. Once the
+// payload has decoded, it returns the request with every refusal, and before
+// that only the zero Request.
+func verify(ctx context.Context, sr SignedRequest, store ownerrecord.Store, clock progress.Clock, ch checks) (Request, error) {
 	rec, err := readRecord(ctx, store)
 	if err != nil {
 		return Request{}, err
@@ -149,26 +184,19 @@ func verify(ctx context.Context, sr SignedRequest, store ownerrecord.Store, cloc
 	}
 
 	err = checkOwnerFields(req, rec)
-	if err != nil {
-		return Request{}, err
+	if err == nil {
+		err = ch.contract(req)
 	}
 
-	err = checkContract(req)
-	if err != nil {
-		return Request{}, err
+	if err == nil {
+		err = checkOrgBloc(req, rec)
 	}
 
-	err = checkOrgBloc(req, rec)
-	if err != nil {
-		return Request{}, err
+	if err == nil {
+		err = checkRequest(req, unknown, sr.Format, clock.Now(), ch.action)
 	}
 
-	err = checkRequest(req, unknown, sr.Format, clock.Now())
-	if err != nil {
-		return Request{}, err
-	}
-
-	return req, nil
+	return req, err
 }
 
 // readRecord reads the owner record. A record that does not open is answered
@@ -256,7 +284,25 @@ func checkContract(req Request) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf("job request wire contract is %d, this CLI reads %d", req.WireContract, progress.WireContract)
+	return refuseContract(req, fmt.Sprintf("this CLI reads %d", progress.WireContract))
+}
+
+// checkContractFloor refuses a wire contract query of a contract older than
+// this CLI's, and takes this CLI's contract and every later one, because the
+// answer is what tells a caller of a later contract which one this CLI
+// reads. It runs where checkContract runs for a request to run or cancel.
+func checkContractFloor(req Request) error {
+	if req.WireContract >= progress.WireContract {
+		return nil
+	}
+
+	return refuseContract(req, fmt.Sprintf("this CLI answers %d or later", progress.WireContract))
+}
+
+// refuseContract refuses req's wire contract, saying what this CLI takes,
+// and for an older contract also what a request of it lacks.
+func refuseContract(req Request, takes string) error {
+	msg := fmt.Sprintf("job request wire contract is %d, %s", req.WireContract, takes)
 
 	switch {
 	case req.WireContract > 0 && req.WireContract < orgBlocWireContract:
@@ -296,8 +342,8 @@ func checkOrgBloc(req Request, rec ownerrecord.Record) error {
 }
 
 // checkRequest checks the request's own fields once its requester is known to
-// be the owner and to have asked this host.
-func checkRequest(req Request, unknown []string, format int, now time.Time) error {
+// be the owner and to have asked this host, and last its action with action.
+func checkRequest(req Request, unknown []string, format int, now time.Time, action func(Request) error) error {
 	if len(unknown) > 0 {
 		return invalid("job request holds the unknown field " + quote(unknown[0]))
 	}
@@ -315,7 +361,7 @@ func checkRequest(req Request, unknown []string, format int, now time.Time) erro
 		return invalid(fmt.Sprintf("unsupported job request format %d, want %d", format, RequestFormatV1))
 	}
 
-	return checkAction(req)
+	return action(req)
 }
 
 // checkIssueWindow refuses a request whose issue time is outside the window
@@ -331,25 +377,51 @@ func checkIssueWindow(req Request, now time.Time) error {
 }
 
 // checkAction refuses a request whose action is missing or not one of the
-// two, and a cancel that names a verb, an env, or interactive, so that a
-// cancel's meaning never depends on a field it ignores.
+// two that job exec takes, and a cancel that names a verb, an env, or
+// interactive, so that a cancel's meaning never depends on a field it
+// ignores. A wire contract query is refused, because only job contract
+// answers one.
 func checkAction(req Request) error {
 	switch req.Action {
 	case ActionRun:
 		return nil
 	case ActionCancel:
+		return takesNoJob(req, "cancel", "a cancel")
 	case "":
 		return invalid("job request names no action")
+	case ActionWireContract:
+		return invalid(fmt.Sprintf("job request action %q is a query that only job contract answers", ActionWireContract))
 	default:
 		return invalid(fmt.Sprintf("job request action %s is not %q or %q", quote(req.Action), ActionRun, ActionCancel))
 	}
+}
 
+// checkContractAction refuses a query whose action is missing or is not
+// ActionWireContract, and one that names a verb, an env, or interactive, so
+// that a signed run or cancel can never be read as a query, nor the other
+// way round.
+func checkContractAction(req Request) error {
+	switch req.Action {
+	case ActionWireContract:
+		return takesNoJob(req, "query the wire contract", "a wire contract query")
+	case "":
+		return invalid("job request names no action")
+	default:
+		return invalid(fmt.Sprintf("job request action %s is not %q, the only action job contract answers",
+			quote(req.Action), ActionWireContract))
+	}
+}
+
+// takesNoJob refuses a request to do what, an action that the noun names,
+// when it names a verb, an env, or interactive. An empty verb, no env, and
+// interactive false count as not named.
+func takesNoJob(req Request, what, noun string) error {
 	for _, f := range []struct {
 		name string
 		set  bool
 	}{{"verb", req.Verb != ""}, {"env", len(req.Env) > 0}, {"interactive", req.Interactive}} {
 		if f.set {
-			return invalid("job request to cancel names " + f.name + ", which a cancel does not take")
+			return invalid("job request to " + what + " names " + f.name + ", which " + noun + " does not take")
 		}
 	}
 

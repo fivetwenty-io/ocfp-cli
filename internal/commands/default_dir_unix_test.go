@@ -779,3 +779,31 @@ func TestDirFlagsRefuseWhenTheOwnerDirectoryFailsItsCheck(t *testing.T) {
 		wantUnchecked(t, res, h.def)
 	})
 }
+
+func TestJobContractRefusesAnOwnerDirThatReachesTheDefault(t *testing.T) {
+	t.Parallel()
+
+	h := newDefaultHost(t, true, true)
+	mustSymlink(t, h.data, filepath.Join(h.home, "scratch"))
+
+	for _, dir := range []string{
+		filepath.Join(h.home, "scratch", "ocfp-owner"),
+		filepath.Join(h.def, "sub"),
+	} {
+		res := runCmd(t, newJobCmd(ownerrecord.NewDirStore, h.def),
+			bytes.NewReader(contractRequestWith(t, "job-default", ownerrecordtest.TestKey(), nil)),
+			"contract", "--owner-dir", dir)
+		wantDefaultRefused(t, res, "--owner-dir")
+
+		if res.stdout != "" {
+			t.Fatalf("a refused flag wrote %q", res.stdout)
+		}
+	}
+
+	res := runCmd(t, newJobCmd(ownerrecord.NewDirStore, h.def),
+		bytes.NewReader(contractRequestWith(t, "job-default", ownerrecordtest.TestKey(), nil)),
+		"contract", "--owner-dir", h.def)
+	if res.code != 0 {
+		t.Fatalf("job contract with the default owner dir = %d, %v, stderr %q", res.code, res.err, res.stderr)
+	}
+}

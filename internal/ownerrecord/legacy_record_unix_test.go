@@ -487,3 +487,65 @@ func TestReplaceNamesTemporaryFilesAfterRecord(t *testing.T) {
 		t.Fatalf("temporary files %v, want one named .%s.tmp-<n>", temps, ownerrecord.RecordFile)
 	}
 }
+
+// A store from CurrentOnly reads the record only under RecordFile, so a
+// directory that holds only the old file holds no record for it, while the
+// store it came from still falls back.
+func TestCurrentOnlyNeverReadsLegacyRecord(t *testing.T) {
+	t.Parallel()
+
+	s, dir := legacyStore(t, liveAt(t, 7))
+	strict := s.CurrentOnly()
+
+	wantNoRecord(t, strict)
+
+	if got := readGeneration(t, s); got != 7 {
+		t.Fatalf("the store CurrentOnly came from read generation %d, want the legacy record at 7", got)
+	}
+
+	wantNoRecord(t, ownerrecord.NewDirStore(dir).CurrentOnly().CurrentOnly())
+}
+
+func TestCurrentOnlyReadsRecordFile(t *testing.T) {
+	t.Parallel()
+
+	s, dir, _ := createdStore(t)
+	writeLegacy(t, dir, liveAt(t, 3))
+
+	if got := readGeneration(t, s.CurrentOnly()); got != 7 {
+		t.Fatalf("Read returned generation %d, want 7 from %s", got, ownerrecord.RecordFile)
+	}
+
+	// The old file is still part of the store, so one that another user
+	// could change is refused here too.
+	chmod(t, legacyPath(dir), 0o646)
+
+	_, _, err := s.CurrentOnly().Read(t.Context())
+	wantUnsafe(t, "Read", err)
+}
+
+// A store from CurrentOnly locks the same file as the store it came from.
+func TestCurrentOnlySharesTheLock(t *testing.T) {
+	t.Parallel()
+
+	s, dir := legacyStore(t, liveAt(t, 7))
+
+	unlock, err := s.CurrentOnly().RLock(t.Context())
+	if err != nil {
+		t.Fatalf("RLock: %v", err)
+	}
+
+	lockPath := filepath.Join(dir, ownerrecord.LockFile)
+
+	if tryExclusive(t, lockPath) {
+		t.Fatal("an exclusive lock was granted under the shared lock")
+	}
+
+	if err := unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !tryExclusive(t, lockPath) {
+		t.Fatal("the exclusive lock was not granted after release")
+	}
+}

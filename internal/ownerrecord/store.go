@@ -135,6 +135,10 @@ type DirStore struct {
 
 	// removeFile, when set, removes a record file in place of os.Remove.
 	removeFile func(path string) error
+
+	// currentOnly makes Read read the record only as RecordFile. CurrentOnly
+	// sets it.
+	currentOnly bool
 }
 
 var _ Store = (*DirStore)(nil)
@@ -151,6 +155,19 @@ func NewDirStore(dir string) *DirStore {
 	return &DirStore{dir: filepath.Clean(dir)}
 }
 
+// CurrentOnly returns a store for the same directory whose Read reads the
+// record only as RecordFile and never falls back to LegacyRecordFile, so a
+// directory that holds only the old file holds no record for it and Read
+// returns ErrNoRecord. Everything else is as it is for s. RLock, Replace, and
+// Release lock the same file in the same way, and the old file must still
+// pass the same ownership and mode check. s itself is not changed.
+func (s *DirStore) CurrentOnly() *DirStore {
+	c := *s
+	c.currentOnly = true
+
+	return &c
+}
+
 type lockKind int
 
 const (
@@ -161,7 +178,8 @@ const (
 // Read takes the shared lock, reads the record, and verifies it with Open.
 // A stored record that is not a signed record, or that does not open, is
 // reported with ErrStoredRecordInvalid wrapping the refusal. A store that
-// another user could change is refused with ErrUnsafeStore.
+// another user could change is refused with ErrUnsafeStore. A store from
+// CurrentOnly reads only RecordFile.
 func (s *DirStore) Read(ctx context.Context) (Signed, Record, error) {
 	sf, err := s.readShared(ctx)
 	if err != nil {
@@ -189,6 +207,10 @@ func (s *DirStore) readShared(ctx context.Context) (sf Signed, err error) {
 			sf, err = Signed{}, rerr
 		}
 	}()
+
+	if s.currentOnly {
+		return s.readFile(dir, RecordFile)
+	}
 
 	return s.readSigned(dir)
 }
