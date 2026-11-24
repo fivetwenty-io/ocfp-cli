@@ -22,6 +22,22 @@ type reexec struct {
 	env []string
 }
 
+// passedEnv returns the entries of a job request's env that a verb process
+// gets, as NAME=value pairs in name order. Only the names that a verb reads
+// pass, so that a request cannot set PATH or anything else a process of ours
+// trusts.
+func passedEnv(env map[string]string) []string {
+	var out []string
+
+	for _, name := range []string{envGenesisEnv} {
+		if v, ok := env[name]; ok {
+			out = append(out, name+"="+v)
+		}
+	}
+
+	return out
+}
+
 // selfExecutable is the path of the binary that is running. On Linux it is
 // /proc/self/exe, which names the binary this process runs even when its
 // path has since been replaced or removed.
@@ -42,7 +58,7 @@ func selfExecutable() (string, error) {
 // only its three pipes: every file the wrapper holds, out and the owner
 // record's lock file among them, is opened close-on-exec and so stays with
 // the wrapper.
-func (r reexec) start(verbStart) (*verbProc, error) {
+func (r reexec) start(s verbStart) (*verbProc, error) {
 	path, err := selfExecutable()
 	if err != nil {
 		return nil, err
@@ -74,7 +90,8 @@ func (r reexec) start(verbStart) (*verbProc, error) {
 
 	cmd := exec.Command(path, "job", "verb") //nolint:gosec,noctx // this binary; the wrapper ends the process itself
 
-	cmd.Env = append(append(os.Environ(), r.env...), VerbChildEnv+"=1")
+	cmd.Env = append(append(os.Environ(), r.env...), passedEnv(s.env)...)
+	cmd.Env = append(cmd.Env, VerbChildEnv+"=1")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = child[0], child[1], child[2]
 
 	g, err := startGroup(cmd)

@@ -9,8 +9,8 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/version"
 )
 
-// verbNoop is the only verb this host runs. It does no work, and proves the
-// whole path from a signed request to a spooled stream.
+// verbNoop is the verb that does no work. It proves the whole path from a
+// signed request to a spooled stream.
 const verbNoop = "noop"
 
 // The outcomes the no-op verb's step can finish with.

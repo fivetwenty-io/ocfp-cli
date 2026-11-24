@@ -265,7 +265,7 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 			return refusalStream(o, req.JobID, err)
 		}
 
-		return runNew(o, s, req.JobID, v)
+		return runNew(o, s, req.JobID, v, req.Env)
 	}
 
 	// An attach acts on nothing the owner record guards.
@@ -461,7 +461,7 @@ func verbHeader(jobID string, v verb) progress.Header {
 }
 
 // runNew runs the job in the spool this run made.
-func runNew(o Options, s Spool, jobID string, v verb) (err error) {
+func runNew(o Options, s Spool, jobID string, v verb, env map[string]string) (err error) {
 	out, err := s.createOut()
 	if err != nil {
 		return err
@@ -506,7 +506,7 @@ func runNew(o Options, s Spool, jobID string, v verb) (err error) {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 
-	end, err := runVerb(o, enc, s, jobID, v)
+	end, err := runVerb(o, enc, s, jobID, v, env)
 	if err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}

@@ -26,7 +26,8 @@ type verb struct {
 
 // verbs is the table of verbs this host runs, filed by name.
 var verbs = map[string]verb{
-	verbNoop: {name: verbNoop, cancelBudget: 5 * time.Second, run: runNoop},
+	verbNoop:        {name: verbNoop, cancelBudget: 5 * time.Second, run: runNoop},
+	verbGenesisInfo: {name: verbGenesisInfo, cancelBudget: 10 * time.Second, run: runGenesisInfo},
 }
 
 // verbList quotes the table's verb names in order, for a message.

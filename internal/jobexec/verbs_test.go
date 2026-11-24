@@ -43,8 +43,11 @@ func TestTheHeaderReportsTheCancelBudget(t *testing.T) {
 
 			rc := newRun(t, storeWith(t, liveRecord()), spoolRoot(t), signedRequest(t, req))
 
+			// A verb that needs a host this test lacks, such as genesis.info
+			// without Genesis, ends with a failure, and still writes its
+			// header.
 			err := rc.run(t)
-			if err != nil {
+			if err != nil && name == verbNoop {
 				t.Fatalf("Run = %v", err)
 			}
 
@@ -69,7 +72,7 @@ func TestARefusedVerbHeaderNamesNoBudget(t *testing.T) {
 	rc := newRun(t, storeWith(t, liveRecord()), spoolRoot(t), signedRequest(t, req))
 
 	r := wantRefusal(t, rc.run(t), progress.CodeVerbNotAllowed)
-	if want := `this host runs only "noop"`; !strings.Contains(r.Message, want) {
+	if want := `this host runs only "genesis.info", "noop"`; !strings.Contains(r.Message, want) {
 		t.Errorf("message %q does not hold %q", r.Message, want)
 	}
 

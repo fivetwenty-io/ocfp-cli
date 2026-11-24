@@ -111,6 +111,10 @@ type verbStart struct {
 	// hostname is the host name function of the wrapper's options, for a
 	// verb that runs in the wrapper's own process.
 	hostname func() (string, error)
+
+	// env is the env of the job request. A starter passes on only the
+	// entries that a verb process may read, which passedEnv names.
+	env map[string]string
 }
 
 // verbProc is a verb that a starter has started.
@@ -793,7 +797,7 @@ type verbEnd struct {
 // group. The kill is repeated at each poll until the verb exits. The job was
 // killed unless the verb had written the stopped mark before then, and a
 // killed job names the work of the undo hooks that never ran.
-func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (verbEnd, error) {
+func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb, env map[string]string) (verbEnd, error) {
 	if s.canceled() {
 		return verbEnd{
 			code:    exitVerbFailed,
@@ -803,7 +807,7 @@ func runVerb(o Options, enc *progress.Encoder, s Spool, jobID string, v verb) (v
 		}, nil
 	}
 
-	proc, err := o.start(verbStart{jobID: jobID, verb: v, hostname: o.Hostname})
+	proc, err := o.start(verbStart{jobID: jobID, verb: v, hostname: o.Hostname, env: env})
 	if err != nil {
 		return verbEnd{}, fmt.Errorf("start verb %s: %w", v.name, err)
 	}
