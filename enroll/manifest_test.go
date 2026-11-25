@@ -472,3 +472,32 @@ func TestReadTrustRefusesABrokenDir(t *testing.T) {
 		t.Error("ReadTrust took a missing directory")
 	}
 }
+
+// TestManifestSetAgainstToday checks the 92-day window against this
+// machine's clock, so the check is proved on the date the tests run and
+// not only on the fixed dates of the golden vectors.
+func TestManifestSetAgainstToday(t *testing.T) {
+	t.Parallel()
+
+	today := time.Now().UTC().Truncate(time.Second)
+	roots := testRoots(t)
+
+	cases := []struct {
+		name     string
+		from, to time.Time
+		code     string
+	}{
+		{"a window of 92 days around today", today.Add(-46 * 24 * time.Hour), today.Add(46 * 24 * time.Hour), ""},
+		{"a window of 92 days and a second", today.Add(-46 * 24 * time.Hour), today.Add(46*24*time.Hour + time.Second), CodeSigningKeyWindowInvalid},
+		{"a window that ended two days ago", today.Add(-60 * 24 * time.Hour), today.Add(-48 * time.Hour), CodeSignatureExpired},
+		{"a window that begins in two days", today.Add(48 * time.Hour), today.Add(60 * 24 * time.Hour), CodeSignatureExpired},
+		{"a window that ended within the skew", today.Add(-60 * 24 * time.Hour), today.Add(-23 * time.Hour), ""},
+	}
+	for _, c := range cases {
+		set := buildSet(t, goldenManifest(), 1, c.from, c.to)
+
+		if _, err := VerifyManifestSet(roots, TrustState{}, set, time.Now()); CodeOf(err) != c.code {
+			t.Errorf("%s: VerifyManifestSet = %v, want %q", c.name, err, c.code)
+		}
+	}
+}
