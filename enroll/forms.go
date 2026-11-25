@@ -1,8 +1,10 @@
 package enroll
 
 import (
+	"bytes"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/json"
 	"regexp"
 )
 
@@ -98,4 +100,19 @@ func crcOK(raw []byte) bool {
 	}
 
 	return crc == binary.LittleEndian.Uint16(raw[n:])
+}
+
+// canonicalJSON encodes v as compact JSON with no HTML escaping and no
+// trailing newline.
+func canonicalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }

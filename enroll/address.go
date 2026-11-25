@@ -3,10 +3,8 @@ package enroll
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 )
@@ -115,16 +113,12 @@ func (a Address) payload() ([]byte, error) {
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-
-	if err := enc.Encode(a); err != nil {
+	b, err := canonicalJSON(a)
+	if err != nil {
 		return nil, refuse(CodeAddressInvalid, "the enrollment address does not encode")
 	}
 
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return b, nil
 }
 
 // ParseAddress reads an enrollment address. It takes surrounding white
@@ -177,16 +171,8 @@ func ParseAddress(s string) (Address, error) {
 
 func decodeAddressPayload(raw []byte) (Address, error) {
 	var a Address
-
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&a); err != nil {
+	if err := decodeStrict(raw, &a); err != nil {
 		return Address{}, errors.New("does not decode")
-	}
-
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return Address{}, errors.New("has data after its value")
 	}
 
 	return a, nil

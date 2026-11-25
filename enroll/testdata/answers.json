@@ -1,0 +1,7 @@
+{
+  "approved": "{\"state\":\"approved\",\"request\":\"78a094bf5edb0ae125b0838bbae94dd78c97864076b27223355e9926a9f860a7\",\"workerId\":\"w-0001\",\"credential\":\"eyJhbGciOiJlZDI1NTE5LW5rZXkifQ.eyJzdWIiOiJVIn0.c2lnbmF0dXJl\",\"expiresAt\":\"2026-11-25T00:15:00Z\"}",
+  "pending": "{\"state\":\"pending\",\"request\":\"78a094bf5edb0ae125b0838bbae94dd78c97864076b27223355e9926a9f860a7\",\"verdict\":\"match\"}",
+  "refused": "{\"state\":\"refused\",\"request\":\"78a094bf5edb0ae125b0838bbae94dd78c97864076b27223355e9926a9f860a7\",\"refusal\":{\"code\":\"WORKER_ALREADY_ENROLLED\"}}",
+  "rejected": "{\"state\":\"rejected\",\"request\":\"78a094bf5edb0ae125b0838bbae94dd78c97864076b27223355e9926a9f860a7\"}",
+  "removed": "{\"state\":\"removed\",\"request\":\"78a094bf5edb0ae125b0838bbae94dd78c97864076b27223355e9926a9f860a7\"}"
+}
