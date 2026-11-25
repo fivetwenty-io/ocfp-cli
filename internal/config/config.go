@@ -896,6 +896,9 @@ type Bastion struct {
 	Git     GitConfig         `json:"git,omitempty"     mapstructure:"git"     yaml:"git,omitempty"`
 	// OCFPCLI selects how the ocfp binary reaches the bastion. See OCFPCLIConfig.
 	OCFPCLI OCFPCLIConfig `json:"ocfpCli,omitempty" mapstructure:"ocfpCli" yaml:"ocfpCli,omitempty"`
+	// Worker names the worker bundle that the worker_service phase installs
+	// on the bastion. See BastionWorkerConfig.
+	Worker BastionWorkerConfig `json:"worker,omitempty" mapstructure:"worker" yaml:"worker,omitempty"`
 	// Optional overrides for tooling installation/selection
 	Tools     OverrideSets `json:"tools,omitempty"     mapstructure:"tools"     yaml:"tools,omitempty"`
 	CFPlugins OverrideSets `json:"cfPlugins,omitempty" mapstructure:"cfPlugins" yaml:"cfPlugins,omitempty"`
@@ -1093,6 +1096,47 @@ type OverrideSets struct {
 type OCFPCLIConfig struct {
 	Source  string `json:"source,omitempty"  mapstructure:"source"  yaml:"source,omitempty"`
 	Version string `json:"version,omitempty" mapstructure:"version" yaml:"version,omitempty"`
+}
+
+// EnvWorkerBundle names the environment variable that overrides
+// bastion.worker.bundle.
+const EnvWorkerBundle = "OCFP_WORKER_BUNDLE"
+
+// ErrWorkerBundleHome reports a bundle path that starts with ~ when no home
+// directory is known to expand it against.
+var ErrWorkerBundleHome = errors.New("bastion.worker.bundle starts with ~ but HOME is not set")
+
+// BastionWorkerConfig names the worker bundle for the bastion.
+//
+// The bundle is the archive the operator downloads from the bloc's workers
+// panel. It holds the join file and the worker binary, and the
+// worker_service phase installs both on the bastion and starts the worker
+// as a service. Bundle is a path on the machine that runs init, and a
+// leading ~/ is that user's home. The OCFP_WORKER_BUNDLE environment
+// variable overrides it. With neither set, the phase does nothing.
+type BastionWorkerConfig struct {
+	Bundle string `json:"bundle,omitempty" mapstructure:"bundle" yaml:"bundle,omitempty"`
+}
+
+// BundlePath returns the bundle path to install, or the empty string when
+// none is configured. The environment wins over the config, and a leading
+// ~/ expands against HOME as getenv reports it.
+func (w BastionWorkerConfig) BundlePath(getenv func(string) string) (string, error) {
+	path := strings.TrimSpace(getenv(EnvWorkerBundle))
+	if path == "" {
+		path = strings.TrimSpace(w.Bundle)
+	}
+
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+
+	home := getenv("HOME")
+	if home == "" {
+		return "", ErrWorkerBundleHome
+	}
+
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 // ToolOverride allows overriding advanced tool properties.
