@@ -28,9 +28,9 @@ import (
 const (
 	workerBloc = "ocfp-lab-drgao"
 
-	// workerSeed is shaped like the join key's seed. No command, log line,
-	// or error may ever repeat it.
-	workerSeed = "SAAGNWHW5QPDXQ2YAN3ZTJQ6IPSQ4FCRJC5CA5MGHFQOIQP7D6CEVJ37NQ"
+	// workerSeed is a well-formed account seed made from fixed bytes for
+	// these tests only. No command, log line, or error may ever repeat it.
+	workerSeed = "SAAAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJWJX4"
 
 	workerHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@bastion"
 )
@@ -47,10 +47,10 @@ func workerSum(b []byte) string {
 func workerJoinDoc() map[string]any {
 	return map[string]any{
 		"url":          "wss://manager.example.com:443",
-		"installation": "inst-1",
+		"installation": "inst-0123456789abcdef",
 		"org":          "acme",
 		"bloc":         workerBloc,
-		"joinAccount":  "ADKD4E6LQ5Z4T3SC3UTXHBLX4A2M6ZCG5JAK7P4W2ZTR2NTUFJUVXUUW",
+		"joinAccount":  "AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAXJQ",
 		"joinKey":      workerSeed,
 		"binary": map[string]any{
 			"version": "1.2.3",
@@ -440,7 +440,7 @@ func TestInstallWorker_RefusesAMismatchBeforeReachingTheBastion(t *testing.T) {
 	t.Parallel()
 
 	join := workerJoinDoc()
-	join["binary"] = map[string]any{"sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
+	join["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
 	bundle, _ := writeWorkerBundle(t, join, workerBinary)
 	h := newWorkerHarness(t, workerProbe("x86_64", "", ""), false)
 

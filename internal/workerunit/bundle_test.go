@@ -18,9 +18,19 @@ import (
 	"github.com/fivetwenty-io/ocfp-cli/internal/workerunit"
 )
 
-// testSeed is shaped like a join signing key's seed. No test output may
-// ever repeat it.
-const testSeed = "SAAGNWHW5QPDXQ2YAN3ZTJQ6IPSQ4FCRJC5CA5MGHFQOIQP7D6CEVJ37NQ"
+// testSeed is a well-formed account seed with a valid checksum, made from
+// fixed bytes for these tests only. No test output may ever repeat it.
+const testSeed = "SAAAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJWJX4"
+
+// The other keys the tests use. testAccount is an account public key, and
+// testUser and testUserSeed are a user's public key and seed, which a join
+// file may never carry in place of the account's.
+const (
+	testAccount      = "AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAXJQ"
+	testUser         = "UAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBT2P"
+	testUserSeed     = "SUAAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJR2OM"
+	testInstallation = "inst-0123456789abcdef"
+)
 
 var testBinary = []byte("\x7fELF pretend worker binary")
 
@@ -35,10 +45,10 @@ func sum(b []byte) string {
 func joinDoc() map[string]any {
 	return map[string]any{
 		"url":          "wss://manager.example.com:443",
-		"installation": "inst-1",
+		"installation": testInstallation,
 		"org":          "acme",
 		"bloc":         "ocfp-lab-drgao",
-		"joinAccount":  "ADKD4E6LQ5Z4T3SC3UTXHBLX4A2M6ZCG5JAK7P4W2ZTR2NTUFJUVXUUW",
+		"joinAccount":  testAccount,
 		"joinKey":      testSeed,
 		"binary": map[string]any{
 			"version": "1.2.3",
@@ -125,7 +135,7 @@ func TestExtractBundle_ReadsTheJoinFileAndBinary(t *testing.T) {
 
 	assert.Equal(t, "ocfp-lab-drgao", b.Join.Bloc)
 	assert.Equal(t, "acme", b.Join.Org)
-	assert.Equal(t, "inst-1", b.Join.Installation)
+	assert.Equal(t, testInstallation, b.Join.Installation)
 	assert.Equal(t, "1.2.3", b.Join.Binary.Version)
 	assert.Equal(t, sum(testBinary), b.BinarySHA256)
 
@@ -269,19 +279,19 @@ func TestExtractBundle_Refusals(t *testing.T) {
 		},
 		"a sum that is not hex": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{"amd64": "zz"}}
+				d["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"amd64": "zz"}}
 			}),
 			want: workerunit.ErrJoinFile,
 		},
 		"a platform-style key": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{"linux/amd64": sum(testBinary)}}
+				d["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"linux/amd64": sum(testBinary)}}
 			}),
 			want: workerunit.ErrBundleLayout,
 		},
 		"an unknown architecture key": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{
+				d["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{
 					"amd64": sum(testBinary), "riscv64": strings.Repeat("ab", 32),
 				}}
 			}),
@@ -289,7 +299,7 @@ func TestExtractBundle_Refusals(t *testing.T) {
 		},
 		"a binary no sum names": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
+				d["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
 			}),
 			want: workerunit.ErrBundleSum,
 		},

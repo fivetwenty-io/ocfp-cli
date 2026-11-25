@@ -5,15 +5,14 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"time"
 )
 
 // The worker bundle is the one archive the bloc's workers panel offers for
@@ -70,52 +69,30 @@ var (
 	ErrBundlePlatform = errors.New("the join file lists no worker binary for this platform")
 )
 
-var (
-	// blocForm is the form a bloc id takes.
-	blocForm = regexp.MustCompile(`^ocfp-[a-z0-9]+(-[a-z0-9]+)*$`)
-
-	// seedForm is the form of an nkey seed. The join key is the only
-	// secret in the join file, so it is checked for shape and never read
-	// further, logged, or repeated in an error.
-	seedForm = regexp.MustCompile(`^S[A-Z2-7]{57}$`)
-
-	// sumForm is a lowercase hex SHA256.
-	sumForm = regexp.MustCompile(`^[0-9a-f]{64}$`)
-)
-
-// JoinFile holds the fields of the join file that the bastion reads. The
-// join key, which is the only secret in the file, is deliberately absent,
-// so no copy of it is held, formatted, or logged on this side. The file
-// itself is installed on the bastion byte for byte.
+// JoinFile holds the join file's fields as the join contract defines them,
+// with the same names, types, and rules. The join key, which is the
+// file's only secret, is the one field it leaves out: DecodeJoinFile
+// requires it and checks its form, and then lets it go, so no copy of it is
+// held, formatted, or logged on this side. The file itself is installed on
+// the bastion byte for byte.
 type JoinFile struct {
-	URL          string      `json:"url"`
-	Installation string      `json:"installation"`
-	Org          string      `json:"org"`
-	Bloc         string      `json:"bloc"`
-	JoinAccount  string      `json:"joinAccount"`
-	Binary       BinarySums  `json:"binary"`
-	IssuedAt     string      `json:"issuedAt"`
-	CAPEM        string      `json:"caPEM,omitempty"`
-	joinKeyShape joinKeyForm `json:"-"`
+	URL          string    `json:"url"`
+	CAPEM        string    `json:"caPEM,omitempty"`
+	Installation string    `json:"installation"`
+	Org          string    `json:"org"`
+	Bloc         string    `json:"bloc"`
+	JoinAccount  string    `json:"joinAccount"`
+	Binary       Binary    `json:"binary"`
+	IssuedAt     time.Time `json:"issuedAt"`
 }
 
-// BinarySums is the join file's binary field. SHA256 maps a bare Linux
+// Binary is the worker binary a join file names. SHA256 maps a bare Linux
 // architecture, ArchAMD64 or ArchARM64, to the lowercase hex SHA256 of the
 // worker binary built for it. Any other key is refused.
-type BinarySums struct {
+type Binary struct {
 	Version string            `json:"version"`
 	SHA256  map[string]string `json:"sha256"`
 }
-
-// joinKeyForm records whether the join key is present and shaped like a
-// seed, and nothing else about it.
-type joinKeyForm int
-
-const (
-	joinKeyMissing joinKeyForm = iota
-	joinKeyMalformed
-	joinKeySeed
-)
 
 // Bundle is an extracted worker bundle.
 type Bundle struct {
@@ -300,85 +277,12 @@ func (b *Bundle) readJoinFile() error {
 		return fmt.Errorf("reading the extracted join file: %w", err)
 	}
 
-	join, err := parseJoinFile(body)
+	join, err := DecodeJoinFile(body)
 	if err != nil {
 		return err
 	}
 
 	b.Join = join
-
-	return nil
-}
-
-// parseJoinFile decodes body and holds it to the join file's rules. The
-// decoder's own text can quote the file, so a refusal names only the field
-// at fault.
-func parseJoinFile(body []byte) (JoinFile, error) {
-	var join JoinFile
-
-	err := json.Unmarshal(body, &join)
-	if err != nil {
-		return JoinFile{}, fmt.Errorf("%w: it is not a JSON join file", ErrJoinFile)
-	}
-
-	// The seed is decoded into a value that goes out of scope here, and
-	// only its shape is kept.
-	var secret struct {
-		JoinKey *string `json:"joinKey"`
-	}
-
-	err = json.Unmarshal(body, &secret)
-	if err != nil {
-		return JoinFile{}, fmt.Errorf("%w: it is not a JSON join file", ErrJoinFile)
-	}
-
-	switch {
-	case secret.JoinKey == nil || *secret.JoinKey == "":
-		join.joinKeyShape = joinKeyMissing
-	case seedForm.MatchString(*secret.JoinKey):
-		join.joinKeyShape = joinKeySeed
-	default:
-		join.joinKeyShape = joinKeyMalformed
-	}
-
-	return join, join.validate()
-}
-
-// validate holds the join file to the fields the bastion needs.
-func (j JoinFile) validate() error {
-	refuse := func(field, rule string) error {
-		return fmt.Errorf("%w: %s %s", ErrJoinFile, field, rule)
-	}
-
-	switch {
-	case !blocForm.MatchString(j.Bloc):
-		return refuse("bloc", "must be a bloc id such as ocfp-lab-1")
-	case strings.TrimSpace(j.URL) == "":
-		return refuse("url", "must name the manager URL")
-	case strings.TrimSpace(j.Installation) == "":
-		return refuse("installation", "must be set")
-	case strings.TrimSpace(j.Org) == "":
-		return refuse("org", "must be set")
-	case strings.TrimSpace(j.JoinAccount) == "":
-		return refuse("joinAccount", "must be set")
-	case j.joinKeyShape == joinKeyMissing:
-		return refuse("joinKey", "must be set")
-	case j.joinKeyShape != joinKeySeed:
-		return refuse("joinKey", "must be a signing key seed")
-	case len(j.Binary.SHA256) == 0:
-		return refuse("binary.sha256", "must list the worker binary's SHA256 for at least one platform")
-	}
-
-	for arch, sha := range j.Binary.SHA256 {
-		if arch != ArchAMD64 && arch != ArchARM64 {
-			return fmt.Errorf("%w: the join file's binary.sha256 has the key %q, and only %s and %s are allowed",
-				ErrBundleLayout, arch, ArchAMD64, ArchARM64)
-		}
-
-		if !sumForm.MatchString(sha) {
-			return refuse("binary.sha256", "for "+arch+" must be a lowercase hex SHA256")
-		}
-	}
 
 	return nil
 }
