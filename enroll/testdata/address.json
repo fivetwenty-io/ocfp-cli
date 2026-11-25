@@ -1,0 +1,14 @@
+{
+  "address": "https://console.example.com/#/enroll/v1/eyJ2ZXJzaW9uIjoxLCJidXNVcmwiOiJ3c3M6Ly9idXMuZXhhbXBsZS5jb206NDQzIiwiaW5zdGFsbGF0aW9uIjoiaW5zdC0wMTIzNDU2Nzg5YWJjZGVmIiwib3JnIjoiYWNtZSIsImFkbWlzc2lvbkFjY291bnQiOiJBRDZGRFRNT01JTUtESTROVVI3TkFBUlE2Qk1BUUZYTkNPNURHQTVNTFhWWkNGS0lTQ0FDS1lVTyIsInJlcXVlc3RSb290IjoiZXhhbXBsZS5hY21lLnN2Yy5qb2luLnYxIiwiaW5ib3hSb290IjoiZXhhbXBsZS5hY21lLnN2Yy5qb2luLmluYm94IiwicmVsZWFzZVJlcXVlc3RSb290IjoiZXhhbXBsZS5hY21lLnN2Yy5yZWxlYXNlLnYxIiwicmVsZWFzZUFuc3dlclJvb3QiOiJleGFtcGxlLmFjbWUuc3ZjLnJlbGVhc2UuaW5ib3giLCJjYVBpbiI6IjZkYjVlOWI4YTFiYWNlMWNkZDlhN2M2YWRiOWU5Mzk2YWNjNTA3MzQ2NWQ5ZmU4ZTNhMGVmNmQ5YzYwZDZkNGYifQ",
+  "payload": "{\"version\":1,\"busUrl\":\"wss://bus.example.com:443\",\"installation\":\"inst-0123456789abcdef\",\"org\":\"acme\",\"admissionAccount\":\"AD6FDTMOMIMKDI4NUR7NAARQ6BMAQFXNCO5DGA5MLXVZCFKISCACKYUO\",\"requestRoot\":\"example.acme.svc.join.v1\",\"inboxRoot\":\"example.acme.svc.join.inbox\",\"releaseRequestRoot\":\"example.acme.svc.release.v1\",\"releaseAnswerRoot\":\"example.acme.svc.release.inbox\",\"caPin\":\"6db5e9b8a1bace1cdd9a7c6adb9e9396acc5073465d9fe8e3a0ef6d9c60d6d4f\"}",
+  "workerKey": "UDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRUVAL",
+  "requestSubject": "example.acme.svc.join.v1.ocfp-acme-prod.UDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRUVAL",
+  "inboxPrefix": "example.acme.svc.join.inbox.UDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRUVAL",
+  "releaseInbox": "example.acme.svc.release.inbox.ocfp-acme-prod.w-0001.rel",
+  "release": {
+    "chunk": "example.acme.svc.release.v1.ocfp-acme-prod.w-0001.chunk",
+    "manifest": "example.acme.svc.release.v1.ocfp-acme-prod.w-0001.manifest",
+    "status": "example.acme.svc.release.v1.ocfp-acme-prod.w-0001.status"
+  },
+  "approvalLink": "https://console.example.com/#/blocs/ocfp-acme-prod/workers?expect=SHA256%3AbbXpuKG6zhzdmnxq256TlqzFBzRl2f6OOg722cYNbU8"
+}

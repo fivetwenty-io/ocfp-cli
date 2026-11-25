@@ -95,3 +95,56 @@ func checkGoldenJSON(t *testing.T, name string, v any) {
 
 	checkGolden(t, name, append(b, '\n'))
 }
+
+// nkeyPublic encodes an Ed25519 public key as an nkeys public key with
+// the prefix byte, the way the nkeys library does: base32 of the prefix,
+// the key, and its little-endian CRC16, with no padding.
+func nkeyPublic(t testing.TB, prefix byte, n int) string {
+	t.Helper()
+
+	raw := append([]byte{prefix}, rfcKey(t, n).Public().(ed25519.PublicKey)...)
+
+	var crc uint16
+
+	for _, c := range raw {
+		crc ^= uint16(c) << 8
+		for range 8 {
+			if crc&0x8000 != 0 {
+				crc = crc<<1 ^ 0x1021
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+
+	raw = append(raw, byte(crc), byte(crc>>8))
+
+	return nkeyEncoding.EncodeToString(raw)
+}
+
+// The golden names. None names the managing system; the roots are
+// whatever the address carries.
+const (
+	goldenInstallation = "inst-0123456789abcdef"
+	goldenOrg          = "acme"
+	goldenBloc         = "ocfp-acme-prod"
+	goldenWorker       = "w-0001"
+)
+
+func goldenAddress(t testing.TB) Address {
+	t.Helper()
+
+	return Address{
+		UIHost:             "console.example.com",
+		Version:            AddressVersion,
+		BusURL:             "wss://bus.example.com:443",
+		Installation:       goldenInstallation,
+		Org:                goldenOrg,
+		AdmissionAccount:   nkeyPublic(t, nkeyAccount, 2),
+		RequestRoot:        "example.acme.svc.join.v1",
+		InboxRoot:          "example.acme.svc.join.inbox",
+		ReleaseRequestRoot: "example.acme.svc.release.v1",
+		ReleaseAnswerRoot:  "example.acme.svc.release.inbox",
+		CAPin:              "6db5e9b8a1bace1cdd9a7c6adb9e9396acc5073465d9fe8e3a0ef6d9c60d6d4f",
+	}
+}
