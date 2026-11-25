@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -114,38 +115,36 @@ func DecodeJoinFile(body []byte) (JoinFile, error) {
 	return join, join.validate()
 }
 
-// checkVersion reads the file's version before the strict decode, because
-// a newer file may hold fields this ocfp does not know, and it should hear
-// that this ocfp is too old rather than that a field is unknown. A missing
-// or malformed version is left for the strict decode and validate to
-// refuse.
+// checkVersion reads only the file's version, before the strict decode,
+// because a newer file may hold fields this ocfp does not know, and it
+// should hear that this ocfp is too old rather than that a field is
+// unknown. It refuses a file with no version, and one whose version is
+// not a whole number above zero, as malformed.
 func checkVersion(body []byte) error {
 	var head struct {
-		Version json.Number `json:"version"`
+		Version json.RawMessage `json:"version"`
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
-
-	v, ok := newerVersion(dec.Decode(&head), head.Version)
-	if !ok {
-		return nil
+	if json.Unmarshal(body, &head) != nil {
+		return fmt.Errorf("%w: it does not decode as the join contract's JSON", ErrJoinFile)
 	}
 
-	return fmt.Errorf("%w: the join file has version %d, and this ocfp reads only version %d, "+
-		"so this ocfp is too old; upgrade ocfp and run it again", ErrJoinFileTooNew, v, JoinFileVersion)
-}
-
-// newerVersion reports the version when the lenient decode read one that
-// is a whole number above JoinFileVersion.
-func newerVersion(decodeErr error, version json.Number) (int64, bool) {
-	if decodeErr != nil {
-		return 0, false
+	raw := strings.TrimSpace(string(head.Version))
+	if raw == "" || raw == "null" {
+		return fmt.Errorf("%w: it names no version", ErrJoinFile)
 	}
 
-	v, err := version.Int64()
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return fmt.Errorf("%w: its version is not a whole number above zero", ErrJoinFile)
+	}
 
-	return v, err == nil && v > JoinFileVersion
+	if v != JoinFileVersion {
+		return fmt.Errorf("%w: the join file has version %d, and this ocfp reads only version %d, "+
+			"so this ocfp is too old; upgrade ocfp and run it again", ErrJoinFileTooNew, v, JoinFileVersion)
+	}
+
+	return nil
 }
 
 // validate holds the join file's fields, all but the join key, to the join

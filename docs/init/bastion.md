@@ -493,6 +493,8 @@ The `worker_service` phase installs the bloc's worker on the bastion and starts 
 
 The worker bundle is the archive you download from the bloc's workers panel. It holds the join file and the worker binary, and you name it in the bloc config or in the environment. The environment wins when both are set, and a leading `~/` expands to your home directory.
 
+The phase holds the bundle to the layout the workers panel writes. It's a gzip-compressed tar that holds exactly two regular files at its top level, `bloc-worker` first with mode 0755 and then `join.json` with mode 0600. The binary may hold up to 128 MiB and the join file up to 64 KiB. The archive, and the tar it decompresses to, may each hold those two summed plus 1 MiB. The phase refuses a bundle with any other member, a directory, a link, a device, a member named twice, the members out of order, an empty member, a name that could leave its directory, or anything but zero bytes after the tar's end. It never applies the archive's modes, and it installs the binary at 0755 and the join file at 0600 itself. Any archive you didn't download from the panel, including one you rebuild with `tar`, is likely to be refused, so download a fresh bundle instead.
+
 ```yaml
 bastion:
   worker:

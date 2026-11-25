@@ -77,15 +77,19 @@ func writeWorkerBundle(t *testing.T, join map[string]any, binary []byte) (string
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 
-	for name, body := range map[string][]byte{
-		workerunit.BundleJoinFile: joinBody,
-		workerunit.BundleBinary:   binary,
+	for _, m := range []struct {
+		name string
+		mode int64
+		body []byte
+	}{
+		{workerunit.BundleBinary, 0o755, binary},
+		{workerunit.BundleJoinFile, 0o600, joinBody},
 	} {
 		require.NoError(t, tw.WriteHeader(&tar.Header{
-			Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg,
+			Name: m.name, Mode: m.mode, Size: int64(len(m.body)), Typeflag: tar.TypeReg,
 		}))
 
-		_, err := tw.Write(body)
+		_, err := tw.Write(m.body)
 		require.NoError(t, err)
 	}
 
@@ -439,7 +443,8 @@ func TestInstallWorker_RefusesABinaryForAnotherPlatform(t *testing.T) {
 	h := newWorkerHarness(t, workerProbe("aarch64", "", ""), false)
 
 	err := h.m.installWorkerFrom(context.Background(), bundleEnv(bundle))
-	require.ErrorIs(t, err, workerunit.ErrBundlePlatform)
+	require.ErrorIs(t, err, workerunit.ErrBundleSum)
+	assert.Contains(t, err.Error(), "lists no binary for arm64")
 	assert.Equal(t, []string{"probe"}, h.mock.steps, "nothing is uploaded or changed")
 	assertNoSeed(t, h, err)
 }
