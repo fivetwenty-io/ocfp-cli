@@ -26,6 +26,8 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hashicorp/vault/api/auth/approle v0.12.0
 	github.com/hashicorp/vault/api/auth/userpass v0.12.0
+	github.com/nats-io/jwt/v2 v2.8.3
+	github.com/nats-io/nkeys v0.4.17
 	github.com/olekukonko/tablewriter v1.1.5
 	github.com/pkg/sftp v1.13.11
 	github.com/spf13/cobra v1.10.2
