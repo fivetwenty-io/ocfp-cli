@@ -93,3 +93,33 @@ var RefusalCodes = []string{
 	CodeAttestationInvalid, CodeHostKeyUnsupported, CodeWorkerKeyInUse, CodePendingFull,
 	CodeRateLimited, CodeAlreadyEnrolled, CodeUnavailable,
 }
+
+// The codes a release read's answer may refuse with.
+const (
+	// CodeReleaseSignatureExpired refuses a manifest request when the
+	// managing system's newest signature set for its version has lapsed
+	// by its own clock. The answer names the version and the end date.
+	CodeReleaseSignatureExpired = "RELEASE_SIGNATURE_EXPIRED"
+	// CodeReleaseVersionUnavailable refuses a request for a version other
+	// than the one the answering copy runs.
+	CodeReleaseVersionUnavailable = "RELEASE_VERSION_UNAVAILABLE"
+	// CodeReleaseRateLimited refuses a request over a rate limit.
+	CodeReleaseRateLimited = "RELEASE_RATE_LIMITED"
+	// CodeReleaseRequestInvalid refuses a malformed request.
+	CodeReleaseRequestInvalid = "RELEASE_REQUEST_INVALID"
+	// CodeWorkerRevoked refuses a worker a person removed. It is the only
+	// code that stops a fetch.
+	CodeWorkerRevoked = "WORKER_REVOKED"
+)
+
+// ReleaseCodes are the codes a refused release answer may carry.
+var ReleaseCodes = []string{
+	CodeReleaseSignatureExpired, CodeReleaseVersionUnavailable, CodeReleaseRateLimited,
+	CodeReleaseRequestInvalid, CodeWorkerRevoked, CodeUnavailable,
+}
+
+// StopsFetch reports whether err ends a worker fetch for good. Only
+// CodeWorkerRevoked does. Every other error, coded or not, including a
+// lapsed signature and a closed connection, is retried after the
+// backoff, from a fresh manifest.
+func StopsFetch(err error) bool { return CodeOf(err) == CodeWorkerRevoked }
