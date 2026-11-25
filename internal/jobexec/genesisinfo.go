@@ -22,6 +22,9 @@ import (
 // environments on this host. It only reads.
 const verbGenesisInfo = "genesis.info"
 
+// The genesis.info verb registers itself in the verb table.
+var _ = registerVerb(verbs, &verbErrs, verb{name: verbGenesisInfo, cancelBudget: 10 * time.Second, run: runGenesisInfo})
+
 // envGenesisEnv is the one job request env entry that the wrapper passes on
 // to the genesis.info verb. It names the environment to report on. The
 // wrapper passes on no other entry, so a request cannot change how the verb

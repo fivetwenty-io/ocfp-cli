@@ -203,13 +203,17 @@ type verbConfig struct {
 	// verbs is the table that a start line's verb is looked up in.
 	verbs map[string]verb
 
+	// broken is the error of a table that refused a registration, and nil
+	// for a whole one. A process with a broken table runs no verb.
+	broken error
+
 	// hostname is the host name function the verb gets.
 	hostname func() (string, error)
 }
 
 // verbProcessConfig is the configuration of a verb process.
 func verbProcessConfig() verbConfig {
-	return verbConfig{version: version.Get().Version, verbs: verbs, hostname: os.Hostname}
+	return verbConfig{version: version.Get().Version, verbs: verbs, broken: verbTableErr(verbErrs), hostname: os.Hostname}
 }
 
 // serveVerbProcess is serveVerb for a process of its own. A wrapper that goes
@@ -252,6 +256,10 @@ func serveVerb(ctx context.Context, cfg verbConfig, stdin io.Reader, stdout, std
 // readStart reads and checks the start line, and returns the verb it names
 // and its cancel budget.
 func readStart(br *bufio.Reader, cfg verbConfig) (verb, time.Duration, error) {
+	if cfg.broken != nil {
+		return verb{}, 0, cfg.broken
+	}
+
 	line, err := readControl(br)
 	if err != nil {
 		return verb{}, 0, fmt.Errorf("read the start line: %w", err)

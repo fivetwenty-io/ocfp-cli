@@ -240,6 +240,11 @@ func runVerified(ctx context.Context, o Options, req Request, release func() err
 		})
 	}
 
+	err = verbTableErr(verbErrs)
+	if err != nil {
+		return err
+	}
+
 	v, ok := verbs[req.Verb]
 	if !ok {
 		return refusalStream(o, req.JobID, refuse(progress.CodeVerbNotAllowed,

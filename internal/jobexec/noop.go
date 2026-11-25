@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/progress"
 	"github.com/fivetwenty-io/ocfp-cli/internal/version"
@@ -12,6 +13,9 @@ import (
 // verbNoop is the verb that does no work. It proves the whole path from a
 // signed request to a spooled stream.
 const verbNoop = "noop"
+
+// The no-op verb registers itself in the verb table.
+var _ = registerVerb(verbs, &verbErrs, verb{name: verbNoop, cancelBudget: 5 * time.Second, run: runNoop})
 
 // The outcomes the no-op verb's step can finish with.
 const (
