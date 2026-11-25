@@ -57,7 +57,7 @@ func readTestdata(t testing.TB, name string) []byte {
 }
 
 // TestSignMatchesSSHKeygen pins Sign to the bytes ssh-keygen -Y sign
-// wrote for the same key, namespace, and message, and Verify to reading
+// wrote for the same key, namespace, and message, and VerifySignature to reading
 // them.
 func TestSignMatchesSSHKeygen(t *testing.T) {
 	t.Parallel()
@@ -83,8 +83,8 @@ func TestSignMatchesSSHKeygen(t *testing.T) {
 		t.Errorf("Sign wrote\n%s\nssh-keygen wrote\n%s", got, want)
 	}
 
-	if err := Verify(pub, "sigchain-test-v1", msg, want); err != nil {
-		t.Errorf("Verify refused the ssh-keygen signature: %v", err)
+	if err := VerifySignature(pub, "sigchain-test-v1", msg, want); err != nil {
+		t.Errorf("VerifySignature refused the ssh-keygen signature: %v", err)
 	}
 }
 
@@ -122,9 +122,9 @@ func TestVerifyRefuses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := Verify(c.pub, c.ns, c.msg, c.sig)
+			err := VerifySignature(c.pub, c.ns, c.msg, c.sig)
 			if !errors.Is(err, ErrSignature) {
-				t.Errorf("Verify = %v, want an error that wraps ErrSignature", err)
+				t.Errorf("VerifySignature = %v, want an error that wraps ErrSignature", err)
 			}
 		})
 	}
@@ -153,8 +153,8 @@ func TestVerifyAcceptsSHA256(t *testing.T) {
 	writeString(&blob, []byte(hashSHA256))
 	writeString(&blob, inner.Bytes())
 
-	if err := Verify(sshPub(t, k), "ns-v1", msg, armor(blob.Bytes())); err != nil {
-		t.Errorf("Verify refused a sha256 signature: %v", err)
+	if err := VerifySignature(sshPub(t, k), "ns-v1", msg, armor(blob.Bytes())); err != nil {
+		t.Errorf("VerifySignature refused a sha256 signature: %v", err)
 	}
 }
 

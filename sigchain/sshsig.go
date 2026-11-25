@@ -16,7 +16,7 @@ import (
 )
 
 // The SSHSIG format, as OpenSSH's PROTOCOL.sshsig lays it out. Sign
-// writes what ssh-keygen -Y sign writes, and Verify reads what it
+// writes what ssh-keygen -Y sign writes, and VerifySignature reads what it
 // writes.
 const (
 	sigMagic   = "SSHSIG"
@@ -73,10 +73,10 @@ func Sign(key ed25519.PrivateKey, namespace string, msg []byte) ([]byte, error) 
 	return armor(blob.Bytes()), nil
 }
 
-// Verify checks that armored is an SSHSIG of msg under namespace, made
+// VerifySignature checks that armored is an SSHSIG of msg under namespace, made
 // by pub. It accepts the sha512 and sha256 hashes, as ssh-keygen does,
 // and only an Ed25519 key. Every refusal wraps ErrSignature.
-func Verify(pub ssh.PublicKey, namespace string, msg, armored []byte) error {
+func VerifySignature(pub ssh.PublicKey, namespace string, msg, armored []byte) error {
 	if pub == nil || pub.Type() != ssh.KeyAlgoED25519 {
 		return fmt.Errorf("%w: the key is not an Ed25519 key", ErrSignature)
 	}
@@ -230,12 +230,14 @@ func readString(b []byte) (s, rest []byte, err error) {
 		return nil, nil, errors.New("short")
 	}
 
-	n := binary.BigEndian.Uint32(b)
-	if uint64(n) > uint64(len(b)-lenLen) {
+	n := int64(binary.BigEndian.Uint32(b))
+	if n > int64(len(b)-lenLen) {
 		return nil, nil, errors.New("short")
 	}
 
-	return b[lenLen : lenLen+int(n)], b[lenLen+int(n):], nil
+	end := lenLen + int(n)
+
+	return b[lenLen:end], b[end:], nil
 }
 
 func armor(blob []byte) []byte {
