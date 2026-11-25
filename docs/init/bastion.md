@@ -31,7 +31,7 @@ ocfp --bloc <bloc-name> init bastion [flags]
 | `--reboot` | Reboots the bastion after a full init succeeds. |
 | `--skip-checks` | Skips the prerequisite checks. |
 | `--secrets-backend` | Chooses `openbao`, the default, or `vault` for the genesis secrets deployment. |
-| `--genesis`, `--ocfp`, `--config`, `--vault-boot-unit` | Each one runs a single narrow mode, as the next section describes. |
+| `--genesis`, `--ocfp`, `--config`, `--vault-boot-unit`, `--worker` | Each one runs a single narrow mode, as the next section describes. |
 
 ### Narrow modes
 
@@ -53,11 +53,15 @@ Each narrow flag runs one piece of init instead of the full phase list, and init
 
   Runs only the `vault_boot_unit` phase, which installs and enables the systemd unit that brings the inception vault back after a reboot. It's the mode for a bastion that init provisioned before the unit existed, and it doesn't start or restart the vault. With `--dry-run` it logs the unit it would install and changes nothing, and `--force` only skips the confirmation prompt, because the install is the same on every run.
 
+- `--worker`
+
+  Runs only the `worker_service` phase, which installs and starts the bloc worker from the worker bundle that `bastion.worker.bundle` or `OCFP_WORKER_BUNDLE` names. It's the mode for a bastion that init provisioned before it had a worker bundle, and it leaves the provisioned marker alone. It makes the same checks as the phase, so it reads the bundle and its join file on our workstation, refuses a bundle issued for another bloc, and checks the binary against the bastion's platform before it uploads anything. The full phase list skips the worker when no bundle is named, but this mode is asked for by name, so it refuses instead and names the setting. With `--dry-run` it checks the bundle, logs what it would install, and sends nothing to the bastion.
+
 ### Where the modes apply
 
-The four mode flags belong to the bastion component. `ocfp init all`, `aws`, `pve`, `pg`, `cf`, and `bosh` refuse them before they load the config or ask anything, and the error names `ocfp init bastion --<mode>` as the command to run instead.
+The five mode flags belong to the bastion component. `ocfp init all`, `aws`, `pve`, `pg`, `cf`, and `bosh` refuse them before they load the config or ask anything, and the error names `ocfp init bastion --<mode>` as the command to run instead.
 
-`ocfp bastion init` runs the same code and takes three of the four mode flags, `--genesis`, `--ocfp`, and `--vault-boot-unit`, with the same rule that only one may be set. It does not take `--config` as a mode, because `--config <path>` on every `ocfp bastion` action is the global flag that names the configuration file, and it works there as it always has. The config-only mode is on `ocfp init bastion --config`. It differs from `ocfp init bastion` in several ways. It never asks for confirmation, so `--force` has no prompt to skip and keeps its one meaning there, which is to reinstall the ocfp CLI. It does not run the prerequisite connectivity check. It does read `dry_run: true` under `init:` in our config file, as `ocfp init bastion` does, so a config that asks for dry runs gets one from either command, and an explicit `--dry-run=false` wins over it. It also reads the top-level `dry-run` key in our config file, as it always has, but that key can only ask for a dry run. Setting it to `false` doesn't turn off the dry run that `init.dry_run` asks for. It has no `--parallel`, `--resume`, `--verbose`, `--reboot`, or `--skip-checks`, so those always stay off. `ocfp bastion provision` and `ocfp bastion recycle` refuse the mode flags.
+`ocfp bastion init` runs the same code and takes four of the five mode flags, `--genesis`, `--ocfp`, `--vault-boot-unit`, and `--worker`, with the same rule that only one may be set. It does not take `--config` as a mode, because `--config <path>` on every `ocfp bastion` action is the global flag that names the configuration file, and it works there as it always has. The config-only mode is on `ocfp init bastion --config`. It differs from `ocfp init bastion` in several ways. It never asks for confirmation, so `--force` has no prompt to skip and keeps its one meaning there, which is to reinstall the ocfp CLI. It does not run the prerequisite connectivity check. It does read `dry_run: true` under `init:` in our config file, as `ocfp init bastion` does, so a config that asks for dry runs gets one from either command, and an explicit `--dry-run=false` wins over it. It also reads the top-level `dry-run` key in our config file, as it always has, but that key can only ask for a dry run. Setting it to `false` doesn't turn off the dry run that `init.dry_run` asks for. It has no `--parallel`, `--resume`, `--verbose`, `--reboot`, or `--skip-checks`, so those always stay off. `ocfp bastion provision` and `ocfp bastion recycle` refuse the mode flags.
 
 ## Installation Phases
 
@@ -519,7 +523,7 @@ The loopback key lets the worker reach its own bastion's sshd and nothing else. 
 
 When a step changes something, the phase restarts the worker, and otherwise it only starts the worker, which leaves a running worker as it is. At the end it prints the bastion's host key fingerprint and its last 12 characters. When the workers panel has no host key on record for the bloc, you approve the request by typing those 12 characters. A dry run reads and checks the bundle and does nothing on the bastion.
 
-A full `init bastion` from a workstation skips a bastion that has the provisioned marker, and `--force` does not change that. To add the worker to a bastion that init already provisioned, remove `~/.ocfp/provisioned` on the bastion and run init again.
+A full `init bastion` from a workstation skips a bastion that has the provisioned marker, and `--force` does not change that. To add the worker to a bastion that init already provisioned, you name the bundle and run `ocfp init bastion --worker`, either from the workstation or on the bastion itself. It runs this phase and nothing else, and it leaves the marker in place.
 
 ### Operator helper scripts
 

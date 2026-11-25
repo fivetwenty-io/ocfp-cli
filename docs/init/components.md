@@ -8,7 +8,7 @@ This page covers the `ocfp init` components other than the bastion, which are `a
 ocfp --bloc <bloc-name> init <component> [flags]
 ```
 
-The mode flags `--genesis`, `--ocfp`, `--config`, and `--vault-boot-unit` belong to the bastion, so init refuses them on every component on this page, `all` included.
+The mode flags `--genesis`, `--ocfp`, `--config`, `--vault-boot-unit`, and `--worker` belong to the bastion, so init refuses them on every component on this page, `all` included.
 
 ## What Each Component Does
 

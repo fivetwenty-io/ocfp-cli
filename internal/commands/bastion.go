@@ -25,7 +25,7 @@ func NewBastionCmd() *cobra.Command {
 		Short: "Bastion host management",
 		Long: `Manage bastion host operations and configuration.
 
-"bastion init" runs the same code as "ocfp init bastion", including three of its four modes (--genesis, --ocfp, and --vault-boot-unit, at most one) and its check for whether it runs on the bastion itself. It asks no confirmation, and --force means reinstall the ocfp CLI. Like "ocfp init bastion", it makes a dry run when the config file sets init.dry_run, and an explicit --dry-run=false wins over that. The config file's top-level dry-run key can only ask for a dry run, never turn off the one init.dry_run asks for. The mode flags apply only to "bastion init".
+"bastion init" runs the same code as "ocfp init bastion", including four of its five modes (--genesis, --ocfp, --vault-boot-unit, and --worker, at most one) and its check for whether it runs on the bastion itself. It asks no confirmation, and --force means reinstall the ocfp CLI. Like "ocfp init bastion", it makes a dry run when the config file sets init.dry_run, and an explicit --dry-run=false wins over that. The config file's top-level dry-run key can only ask for a dry run, never turn off the one init.dry_run asks for. The mode flags apply only to "bastion init".
 
 The config-only mode is not offered here, because --config is the global flag that names the configuration file for every command, and "bastion init", "bastion provision", and "bastion recycle" all read it. To copy the workstation's configuration files to the bastion, run "ocfp init bastion --config".`,
 		Aliases:                []string{},
@@ -97,6 +97,7 @@ The config-only mode is not offered here, because --config is the global flag th
 	cmd.Flags().Bool("genesis", false, "init: only install/update Genesis and related components")
 	cmd.Flags().Bool("ocfp", false, "init: only install/update the ocfp CLI binary")
 	cmd.Flags().Bool("vault-boot-unit", false, "init: only install and enable the inception vault boot unit")
+	cmd.Flags().Bool("worker", false, "init: only install and start the bloc worker from the worker bundle")
 
 	return cmd
 }
@@ -125,12 +126,15 @@ func runBastionCmd(cmd *cobra.Command, args []string) error {
 // bastionModeFlagValues reads the mode flags "bastion init" offers. The
 // config-only mode is not among them, because --config is the root flag that
 // names the configuration file.
-func bastionModeFlagValues(cmd *cobra.Command) (genesis, ocfp, configOnly, vaultBootUnit bool) {
-	genesis, _ = cmd.Flags().GetBool("genesis")
-	ocfp, _ = cmd.Flags().GetBool("ocfp")
-	vaultBootUnit, _ = cmd.Flags().GetBool("vault-boot-unit")
+func bastionModeFlagValues(cmd *cobra.Command) bastionModeFlags {
+	var flags bastionModeFlags
 
-	return genesis, ocfp, false, vaultBootUnit
+	flags.genesis, _ = cmd.Flags().GetBool("genesis")
+	flags.ocfp, _ = cmd.Flags().GetBool("ocfp")
+	flags.vaultBootUnit, _ = cmd.Flags().GetBool("vault-boot-unit")
+	flags.worker, _ = cmd.Flags().GetBool("worker")
+
+	return flags
 }
 
 // bastionModeFromFlags selects the mode the command's flags ask for.

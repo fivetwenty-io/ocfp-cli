@@ -18,6 +18,9 @@ var (
 	// errWorkerBinaryPlatform reports a worker binary that is not the one
 	// the join file lists for the bastion's platform.
 	errWorkerBinaryPlatform = errors.New("the worker bundle's binary is not the one the join file lists for the bastion's platform")
+
+	// ErrWorkerModeNoBundle reports --worker with no worker bundle named.
+	ErrWorkerModeNoBundle = errors.New("--worker installs the bloc worker from the worker bundle, and none is named")
 )
 
 // installWorkerService installs the bloc's worker on the bastion from the
@@ -25,6 +28,33 @@ var (
 // and starts it as a service. With no bundle named it does nothing.
 func (m *Manager) installWorkerService(ctx context.Context) error {
 	return m.installWorkerFrom(ctx, os.Getenv)
+}
+
+// runWorkerOnlyMode installs and starts the bloc worker and does nothing
+// else, for a bastion that a full init provisioned before it had a worker
+// bundle. The full phase list skips the worker when no bundle is named,
+// but this mode is asked for by name, so it refuses instead.
+func (m *Manager) runWorkerOnlyMode(ctx context.Context) error {
+	m.log.Info("Worker mode: installing the bloc worker only")
+
+	bundlePath, err := m.config.Bastion.Worker.BundlePath(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("installing the bloc worker: %w", err)
+	}
+
+	if bundlePath == "" {
+		return fmt.Errorf("%w: set bastion.worker.bundle in the bloc's config, or %s, to the bundle's path",
+			ErrWorkerModeNoBundle, config.EnvWorkerBundle)
+	}
+
+	err = m.installWorkerService(ctx)
+	if err != nil {
+		return fmt.Errorf("bloc worker install failed: %w", err)
+	}
+
+	m.logFinished("Bloc worker installed and started", "bloc", m.config.Name)
+
+	return nil
 }
 
 // installWorkerFrom is installWorkerService with the environment lookup

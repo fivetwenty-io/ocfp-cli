@@ -91,6 +91,7 @@ type initFlags struct {
 	configOnly     bool
 	genesisOnly    bool
 	vaultBootUnit  bool
+	worker         bool
 	reboot         bool
 	secretsBackend string
 
@@ -119,6 +120,8 @@ func (f *initFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.genesisOnly, "genesis", false, "only install/update Genesis and related components (for bastion init)")
 	cmd.Flags().BoolVar(&f.vaultBootUnit, "vault-boot-unit", false,
 		"only install and enable the inception vault boot unit (for bastion init, also on a provisioned bastion)")
+	cmd.Flags().BoolVar(&f.worker, "worker", false,
+		"only install and start the bloc worker from the worker bundle (for bastion init, also on a provisioned bastion)")
 	cmd.Flags().BoolVar(&f.reboot, "reboot", false, "reboot bastion after successful initialization (applies updates)")
 	cmd.Flags().StringVar(&f.secretsBackend, "secrets-backend", "", "genesis secrets deployment backend: openbao (default) or vault")
 }
@@ -137,6 +140,7 @@ func (f *initFlags) bindViperFlags(cmd *cobra.Command) {
 		"init.config_only":          "config",
 		"init.genesis_only":         "genesis",
 		"init.vault_boot_unit_only": "vault-boot-unit",
+		"init.worker_only":          "worker",
 		"init.reboot":               "reboot",
 		"secrets_backend":           "secrets-backend",
 	})
@@ -223,20 +227,38 @@ var ErrModeFlagOutsideBastion = errors.New("mode flag applies only to bastion in
 
 // activeModeFlags returns the names of the bastion init mode flags that are set.
 func (f *initFlags) activeModeFlags() []string {
-	return activeModeNames(f.genesisOnly, f.ocfpOnly, f.configOnly, f.vaultBootUnit)
+	return activeModeNames(f.modeFlags())
+}
+
+// modeFlags gathers the init command's mode flags.
+func (f *initFlags) modeFlags() bastionModeFlags {
+	return bastionModeFlags{
+		genesis:       f.genesisOnly,
+		ocfp:          f.ocfpOnly,
+		configOnly:    f.configOnly,
+		vaultBootUnit: f.vaultBootUnit,
+		worker:        f.worker,
+	}
+}
+
+// bastionModeFlags holds the bastion init mode flags, of which a run may
+// set at most one.
+type bastionModeFlags struct {
+	genesis, ocfp, configOnly, vaultBootUnit, worker bool
 }
 
 // activeModeNames returns the names of the mode flags that are set, in a
 // fixed order.
-func activeModeNames(genesis, ocfp, configOnly, vaultBootUnit bool) []string {
+func activeModeNames(flags bastionModeFlags) []string {
 	modeFlags := []struct {
 		name  string
 		value bool
 	}{
-		{"genesis", genesis},
-		{"ocfp", ocfp},
-		{"config", configOnly},
-		{"vault-boot-unit", vaultBootUnit},
+		{"genesis", flags.genesis},
+		{"ocfp", flags.ocfp},
+		{"config", flags.configOnly},
+		{"vault-boot-unit", flags.vaultBootUnit},
+		{"worker", flags.worker},
 	}
 
 	var activeModes []string
@@ -430,7 +452,7 @@ func runComponent(ctx context.Context, cmd *cobra.Command, cfg *config.Config, c
 
 // initializeBastionFromFlags runs bastion init in the mode the flags select.
 func (f *initFlags) initializeBastionFromFlags(ctx context.Context, cfg *config.Config) error {
-	mode, err := selectBastionMode(f.genesisOnly, f.ocfpOnly, f.configOnly, f.vaultBootUnit)
+	mode, err := selectBastionMode(f.modeFlags())
 	if err != nil {
 		return err
 	}
@@ -524,11 +546,14 @@ Bastion Initialization Modes (at most one, and only with the bastion component):
   --vault-boot-unit
              - Install and enable only the inception vault's boot unit
                (ocfp-vault@<bloc>.service), without starting it
+  --worker   - Install and start only the bloc worker from the worker
+               bundle that bastion.worker.bundle or OCFP_WORKER_BUNDLE
+               names, and refuse when neither names one
   (default)  - Full bastion initialization with all components
 
 Init refuses a mode flag on any other component, including all, before it
 asks anything, and the error names the bastion command to run instead.
-"ocfp bastion init" takes the --genesis, --ocfp, and --vault-boot-unit modes
+"ocfp bastion init" takes the --genesis, --ocfp, --vault-boot-unit, and --worker modes
 and does the same work. The config-only mode is on "ocfp init bastion" alone.
 
 A mode runs on an already provisioned bastion too, and every mode except
@@ -580,6 +605,9 @@ func getInitExamples() string {
 
   # Install the inception vault boot unit on an already provisioned bastion
   ocfp init bastion --vault-boot-unit
+
+  # Install the bloc worker on an already provisioned bastion
+  ocfp init bastion --worker
 
   # Force initialization, skipping confirmation
   ocfp init all --force
@@ -1316,6 +1344,7 @@ const (
 	bastionModeOCFP
 	bastionModeConfig
 	bastionModeVaultBootUnit
+	bastionModeWorker
 )
 
 // bastionRunParams holds the settings every bastion init mode shares.
@@ -1324,21 +1353,23 @@ type bastionRunParams struct {
 }
 
 // selectBastionMode turns the mode flags into one mode, and refuses two at once.
-func selectBastionMode(genesis, ocfp, configOnly, vaultBootUnit bool) (bastionInitMode, error) {
-	active := activeModeNames(genesis, ocfp, configOnly, vaultBootUnit)
+func selectBastionMode(flags bastionModeFlags) (bastionInitMode, error) {
+	active := activeModeNames(flags)
 	if len(active) > 1 {
 		return bastionModeFull, fmt.Errorf("%w: --%s and --%s", ErrMutuallyExclusiveFlags, active[0], active[1])
 	}
 
 	switch {
-	case genesis:
+	case flags.genesis:
 		return bastionModeGenesis, nil
-	case ocfp:
+	case flags.ocfp:
 		return bastionModeOCFP, nil
-	case configOnly:
+	case flags.configOnly:
 		return bastionModeConfig, nil
-	case vaultBootUnit:
+	case flags.vaultBootUnit:
 		return bastionModeVaultBootUnit, nil
+	case flags.worker:
+		return bastionModeWorker, nil
 	default:
 		return bastionModeFull, nil
 	}
@@ -1371,6 +1402,11 @@ func buildBastionOptions(mode bastionInitMode, params bastionRunParams) *bastion
 		options.Parallel = false
 		options.Resume = false
 		options.RebootAfterInit = false
+	case bastionModeWorker:
+		options.WorkerOnly = true
+		options.Parallel = false
+		options.Resume = false
+		options.RebootAfterInit = false
 	case bastionModeFull:
 	}
 
@@ -1396,6 +1432,9 @@ func (m bastionInitMode) text() bastionModeText {
 	case bastionModeVaultBootUnit:
 		return bastionModeText{"\n🔧 Installing the inception vault boot unit...\n",
 			"vault boot unit install", "Vault boot unit installed and enabled"}
+	case bastionModeWorker:
+		return bastionModeText{"\n🔧 Installing the bloc worker...\n",
+			"bloc worker install", "Bloc worker installed and started"}
 	case bastionModeFull:
 		fallthrough
 	default:
@@ -1435,6 +1474,8 @@ func (m bastionInitMode) String() string {
 		return "config"
 	case bastionModeVaultBootUnit:
 		return "vault-boot-unit"
+	case bastionModeWorker:
+		return "worker"
 	case bastionModeFull:
 		fallthrough
 	default:

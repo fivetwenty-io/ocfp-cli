@@ -107,6 +107,7 @@ func TestBastionInitDoneLine(t *testing.T) {
 
 	for _, mode := range []bastionInitMode{
 		bastionModeFull, bastionModeGenesis, bastionModeOCFP, bastionModeConfig, bastionModeVaultBootUnit,
+		bastionModeWorker,
 	} {
 		text := mode.text()
 		assert.Equal(t, text.done, text.doneLine(false), mode.String())

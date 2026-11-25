@@ -285,6 +285,7 @@ const (
 	narrowModeConfig        = "config"
 	narrowModeGenesis       = "genesis"
 	narrowModeVaultBootUnit = "vault-boot-unit"
+	narrowModeWorker        = "worker"
 )
 
 // ErrConfigModeOnBastion reports --config on a run that is already on the
@@ -317,6 +318,8 @@ func (m *Manager) narrowMode(onBastion bool) (string, func(context.Context) erro
 		return narrowModeGenesis, m.runGenesisOnlyMode
 	case m.options.VaultBootUnitOnly:
 		return narrowModeVaultBootUnit, m.runVaultBootUnitOnlyMode
+	case m.options.WorkerOnly:
+		return narrowModeWorker, m.runWorkerOnlyMode
 	default:
 		return "", nil
 	}

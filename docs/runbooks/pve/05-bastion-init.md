@@ -33,6 +33,7 @@ ocfp init bastion --bloc ocfp-lab-wayne --genesis   # Genesis + kits only
 ocfp init bastion --bloc ocfp-lab-wayne --ocfp      # OCFP CLI binary only
 ocfp init bastion --bloc ocfp-lab-wayne --config    # sync config files only
 ocfp init bastion --bloc ocfp-lab-wayne --vault-boot-unit   # inception vault boot unit only
+ocfp init bastion --bloc ocfp-lab-wayne --worker    # bloc worker only, from the worker bundle
 ```
 
 **Verify**: we log in and check the bench:

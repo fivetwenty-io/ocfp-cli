@@ -54,3 +54,48 @@ func TestValidateModeFlags_VaultBootUnitIsExclusive(t *testing.T) {
 		})
 	}
 }
+
+// --worker installs the bloc worker and nothing else, also on a bastion a
+// full init has already provisioned, so init bastion must offer it.
+func TestInitCmd_HasWorkerFlag(t *testing.T) { //nolint:paralleltest // NewInitCmd binds flags into the global viper
+	cmd := NewInitCmd()
+
+	flag := cmd.Flags().Lookup("worker")
+	require.NotNil(t, flag, "init must offer --worker")
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Contains(t, cmd.Long, "--worker", "the command help must describe the mode")
+	assert.Contains(t, cmd.Example, "ocfp init bastion --worker")
+}
+
+func TestValidateModeFlags_WorkerIsExclusive(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		flags initFlags
+		ok    bool
+	}{
+		{"alone", initFlags{worker: true}, true},
+		{"with --genesis", initFlags{worker: true, genesisOnly: true}, false},
+		{"with --ocfp", initFlags{worker: true, ocfpOnly: true}, false},
+		{"with --config", initFlags{worker: true, configOnly: true}, false},
+		{"with --vault-boot-unit", initFlags{worker: true, vaultBootUnit: true}, false},
+		{"with --dry-run", initFlags{worker: true, dryRun: true}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.flags.validateModeFlags()
+			if tc.ok {
+				assert.NoError(t, err)
+
+				return
+			}
+
+			require.ErrorIs(t, err, ErrMutuallyExclusiveFlags)
+			assert.Contains(t, err.Error(), "--worker")
+		})
+	}
+}

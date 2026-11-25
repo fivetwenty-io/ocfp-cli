@@ -25,7 +25,7 @@ func runInitArgs(t *testing.T, args ...string) error {
 // A mode flag asks for one piece of bastion init, so every other component
 // refuses it and names the command that does what was asked.
 func TestRunInit_ModeFlagsAreRefusedOutsideBastion(t *testing.T) {
-	flags := []string{"--genesis", "--ocfp", "--config", "--vault-boot-unit"}
+	flags := []string{"--genesis", "--ocfp", "--config", "--vault-boot-unit", "--worker"}
 	components := []string{"all", "aws", "pve", "pg", "cf", "bosh"}
 
 	for _, component := range components {

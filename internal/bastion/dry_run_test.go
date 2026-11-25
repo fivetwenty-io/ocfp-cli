@@ -320,6 +320,12 @@ func TestDryRunNarrowModesNeverReachTheBastion(t *testing.T) {
 			opts: ProvisioningOptions{VaultBootUnitOnly: true},
 			want: []string{"DRY RUN: Would install and enable the inception vault boot unit"},
 		},
+		{
+			name:  "--worker",
+			opts:  ProvisioningOptions{WorkerOnly: true},
+			setup: func(t *testing.T, cfg *config.Config, _ string) { t.Helper(); nameDryRunWorkerBundle(t, cfg) },
+			want:  []string{"DRY RUN: Would install and start the bloc worker"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -659,6 +665,7 @@ func TestDryRunNeverClaimsTheWorkIsDone(t *testing.T) {
 		{name: "--genesis", opts: ProvisioningOptions{GenesisOnly: true}},
 		{name: "--config", opts: ProvisioningOptions{ConfigOnly: true}},
 		{name: "--vault-boot-unit", opts: ProvisioningOptions{VaultBootUnitOnly: true}},
+		{name: "--worker", opts: ProvisioningOptions{WorkerOnly: true}},
 		{name: "the full list", opts: ProvisioningOptions{}},
 	}
 
@@ -666,6 +673,10 @@ func TestDryRunNeverClaimsTheWorkIsDone(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := dryRunBloc(t)
 			dryRunWorkstation(t, cfg)
+
+			if tc.opts.WorkerOnly {
+				nameDryRunWorkerBundle(t, cfg)
+			}
 
 			opts := tc.opts
 			opts.DryRun = true
@@ -791,4 +802,16 @@ func TestRealRunFinalSummaryIsUnchanged(t *testing.T) {
 	for _, key := range []string{"dry_run", "changed", "message", "previewed_phases"} {
 		assert.NotContains(t, event, key, "a real run's summary has no %s field", key)
 	}
+}
+
+// nameDryRunWorkerBundle writes a worker bundle and names it in cfg, which
+// --worker needs before it does anything. A join file names its bloc in
+// the bloc id form, which dryRunBloc's name is not, so the bloc takes one.
+func nameDryRunWorkerBundle(t *testing.T, cfg *config.Config) {
+	t.Helper()
+
+	cfg.Name = workerBloc
+	join := workerJoinDoc()
+	bundle, _ := writeWorkerBundle(t, join, workerBinary)
+	cfg.Bastion.Worker.Bundle = bundle
 }

@@ -14,24 +14,26 @@ func TestSelectBastionMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                         string
-		genesis, ocfp, cfg, bootUnit bool
-		want                         bastionInitMode
-		wantErr                      bool
+		name    string
+		flags   bastionModeFlags
+		want    bastionInitMode
+		wantErr bool
 	}{
 		{name: "none", want: bastionModeFull},
-		{name: "genesis", genesis: true, want: bastionModeGenesis},
-		{name: "ocfp", ocfp: true, want: bastionModeOCFP},
-		{name: "config", cfg: true, want: bastionModeConfig},
-		{name: "boot unit", bootUnit: true, want: bastionModeVaultBootUnit},
-		{name: "two", genesis: true, bootUnit: true, wantErr: true},
+		{name: "genesis", flags: bastionModeFlags{genesis: true}, want: bastionModeGenesis},
+		{name: "ocfp", flags: bastionModeFlags{ocfp: true}, want: bastionModeOCFP},
+		{name: "config", flags: bastionModeFlags{configOnly: true}, want: bastionModeConfig},
+		{name: "boot unit", flags: bastionModeFlags{vaultBootUnit: true}, want: bastionModeVaultBootUnit},
+		{name: "worker", flags: bastionModeFlags{worker: true}, want: bastionModeWorker},
+		{name: "two", flags: bastionModeFlags{genesis: true, vaultBootUnit: true}, wantErr: true},
+		{name: "worker and boot unit", flags: bastionModeFlags{worker: true, vaultBootUnit: true}, wantErr: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := selectBastionMode(tc.genesis, tc.ocfp, tc.cfg, tc.bootUnit)
+			got, err := selectBastionMode(tc.flags)
 			if tc.wantErr {
 				require.ErrorIs(t, err, ErrMutuallyExclusiveFlags)
 
@@ -51,7 +53,7 @@ func TestBuildBastionOptions(t *testing.T) {
 
 	full := buildBastionOptions(bastionModeFull, params)
 	assert.True(t, full.Force && full.Parallel && full.DryRun && full.Resume && full.Verbose && full.RebootAfterInit)
-	assert.False(t, full.GenesisOnly || full.OCFPOnly || full.ConfigOnly || full.VaultBootUnitOnly)
+	assert.False(t, full.GenesisOnly || full.OCFPOnly || full.ConfigOnly || full.VaultBootUnitOnly || full.WorkerOnly)
 
 	assert.True(t, buildBastionOptions(bastionModeGenesis, params).GenesisOnly)
 	assert.True(t, buildBastionOptions(bastionModeOCFP, params).OCFPOnly)
@@ -61,12 +63,18 @@ func TestBuildBastionOptions(t *testing.T) {
 	assert.True(t, unit.VaultBootUnitOnly)
 	assert.True(t, unit.Force && unit.DryRun && unit.Verbose)
 	assert.False(t, unit.Parallel || unit.Resume || unit.RebootAfterInit, "the boot unit mode ignores these")
+
+	worker := buildBastionOptions(bastionModeWorker, params)
+	assert.True(t, worker.WorkerOnly)
+	assert.False(t, worker.VaultBootUnitOnly)
+	assert.True(t, worker.Force && worker.DryRun && worker.Verbose)
+	assert.False(t, worker.Parallel || worker.Resume || worker.RebootAfterInit, "the worker mode ignores these")
 }
 
 func TestBastionCmd_HasTheModeFlags(t *testing.T) { //nolint:paralleltest // NewBastionCmd binds flags into the global viper
 	cmd := NewBastionCmd()
 
-	for _, name := range []string{"genesis", "ocfp", "vault-boot-unit"} {
+	for _, name := range []string{"genesis", "ocfp", "vault-boot-unit", "worker"} {
 		flag := cmd.Flags().Lookup(name)
 		require.NotNil(t, flag, "bastion must offer --%s", name)
 		assert.Equal(t, "false", flag.DefValue)

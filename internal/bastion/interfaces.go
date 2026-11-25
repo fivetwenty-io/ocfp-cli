@@ -181,5 +181,6 @@ type ProvisioningOptions struct {
 	ConfigOnly        bool
 	GenesisOnly       bool // Install/update only Genesis and related components
 	VaultBootUnitOnly bool // Install and enable only the inception vault boot unit
+	WorkerOnly        bool // Install and start only the bloc worker, from the worker bundle
 	RebootAfterInit   bool // Reboot bastion after successful initialization to apply updates
 }
