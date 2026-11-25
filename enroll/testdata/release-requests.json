@@ -1,0 +1,7 @@
+{
+  "chunk": "{\"version\":\"1.4.0\",\"arch\":\"amd64\",\"index\":3}",
+  "chunk-first": "{\"version\":\"1.4.0\",\"arch\":\"arm64\",\"index\":0}",
+  "manifest": "{}",
+  "status": "{\"code\":\"WORKER_SIGNATURE_EXPIRED\",\"clock\":\"2026-11-25T12:00:00Z\"}",
+  "status-no-code": "{\"clock\":\"2026-11-25T12:00:00Z\"}"
+}
