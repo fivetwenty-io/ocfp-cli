@@ -853,6 +853,10 @@ func (m *Manager) getInitializationPhases() []struct {
 		{"bloc_ca_trust", m.installBlocCATrust},
 		{"ocfp_configure", m.runOCFPConfigure},
 		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
+		// worker_service installs the bloc's worker from the worker bundle
+		// and starts it. It runs once ocfp is configured, because the worker
+		// runs ocfp on this bastion, and it is a no-op with no bundle named.
+		{"worker_service", m.installWorkerService},
 
 		// Phase 9: Custom scripts and verification
 		{"custom_scripts", m.runCustomScripts},
@@ -962,6 +966,8 @@ func (m *Manager) parallelPostPhaseList() []struct {
 		{"bloc_ca_trust", m.installBlocCATrust},
 		{"ocfp_configure", m.runOCFPConfigure},
 		{"genesis_secrets_providers", m.setupGenesisSecretsProviders},
+		// worker_service: see the sequential list's comment above.
+		{"worker_service", m.installWorkerService},
 		{"custom_scripts", m.runCustomScripts},
 		{"verification", m.verifyInstallation},
 		{"health_check", m.runHealthCheck},
@@ -1074,15 +1080,17 @@ func (m *Manager) previewStep(ctx context.Context, name string) error {
 // name, or nil for a step it only logs. The steps it returns check our own
 // files before they reach the bastion, and every change they make checks
 // skipForDryRun first, so a dry run can run them for their checks alone.
-// config_files reads and filters our ocfp config, and ocfp_cli_setup
+// config_files reads and filters our ocfp config, ocfp_cli_setup
 // settles where the ocfp CLI comes from and finds a local build when it
-// is asked for one.
+// is asked for one, and worker_service reads and checks the worker bundle.
 func (m *Manager) dryRunStep(name string) func(context.Context) error {
 	switch name {
 	case "config_files":
 		return m.copyConfigFiles
 	case "ocfp_cli_setup":
 		return m.setupOCFPCLI
+	case "worker_service":
+		return m.installWorkerService
 	default:
 		return nil
 	}

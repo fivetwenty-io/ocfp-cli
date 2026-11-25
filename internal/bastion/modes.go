@@ -333,6 +333,7 @@ func (le *LocalExecutor) getLocalPhases(manager *Manager) []struct {
 		{"bloc_ca_trust", manager.installBlocCATrust},
 		{"ocfp_configure", manager.runOCFPConfigure},
 		{"genesis_secrets_providers", manager.setupGenesisSecretsProviders},
+		{"worker_service", manager.installWorkerService},
 		{"verification", manager.verifyInstallation},
 		{"health_check", manager.runHealthCheck},
 	}
