@@ -77,7 +77,8 @@ The bastion initialization proceeds through these phases:
 12. **cf_plugins**: Install CloudFoundry CLI plugins
 13. **advanced_tools**: Install additional development tools
 14. **environment**: Configure shell and system environment
-15. **verification**: Verify all installations
+15. **worker_service**: Install and start the bloc's worker when a worker bundle is named (see [The bloc worker](#the-bloc-worker))
+16. **verification**: Verify all installations
 
 ## Installed Components
 
@@ -481,6 +482,44 @@ bastion:
 | `OCFP_BINARY_PATH` | Path to a linux binary to upload. When the file exists it implies `local` unless `OCFP_CLI_SOURCE` says otherwise. A path that does not exist is ignored. |
 
 The local source exists for developing `ocfp` itself. It looks for `OCFP_BINARY_PATH`, then `./build/ocfp-linux-amd64` from `make build-linux`, then the same file next to the running binary, and finally the usual developer checkout under `~/w/fivetwenty/studios/ocfp`. In a full `init bastion` a failed install is logged and the run continues only when the bastion already has an `ocfp` at `/usr/local/bin/ocfp`. When nothing is installed the phase fails, because the later vault and configure steps would otherwise skip silently. With `--ocfp` any install failure is fatal, since installing the binary is the whole job. Both `ocfp init bastion --force` and `ocfp bastion init --force` reinstall even when the wanted version is already present.
+
+### The bloc worker
+
+The `worker_service` phase installs the bloc's worker on the bastion and starts it as a service. The worker asks to join the bloc when it first starts, and it begins work once an operator approves the request in the bloc's workers panel. The phase does nothing until you name a worker bundle, so a bastion without one finishes init as before.
+
+The worker bundle is the archive you download from the bloc's workers panel. It holds the join file and the worker binary, and you name it in the bloc config or in the environment. The environment wins when both are set, and a leading `~/` expands to your home directory.
+
+```yaml
+bastion:
+  worker:
+    bundle: ~/Downloads/bloc-worker-bundle.tar.gz
+```
+
+| Variable | Effect |
+|----------|--------|
+| `OCFP_WORKER_BUNDLE` | Path to the worker bundle on the machine that runs init. It overrides `bastion.worker.bundle`. |
+
+The phase checks the bundle on your machine before it reaches the bastion. It refuses a bundle whose join file was issued for another bloc, and it refuses a binary whose SHA256 the join file does not list. It then asks the bastion for its platform and refuses the binary when it was built for a different one, all before it uploads anything. The join file holds the bloc's join key, so the phase never logs it, never prints it, and never puts it in a command line.
+
+The phase installs these files on the bastion.
+
+- `/usr/local/bin/bloc-worker`
+
+  The worker binary, owned by root with mode 0755. A rerun with the same SHA256 leaves it alone, and a different one replaces it and restarts the worker.
+
+- `/data/bloc-worker/<bloc>/`
+
+  The worker's directory, owned by the operator with mode 0700. It holds the join file, the worker's own key and credential, the signed join request, the bastion record, and a loopback SSH key.
+
+- `bloc-worker@.service` and its `operator.conf` drop-in
+
+  The systemd unit, installed in `/etc/systemd/system`. Each bloc runs as the instance `bloc-worker@<bloc>.service`, as the same operator user the inception vault's unit runs as.
+
+The loopback key lets the worker reach its own bastion's sshd and nothing else. The phase adds it to the operator's `~/.ssh/authorized_keys` with `from="127.0.0.1,::1"`, so the key is useless from any other address. The worker writes its join request, and the phase signs it under sudo with the bastion's ed25519 host key, which the long-running worker never holds. A bastion with no ed25519 host key at `/etc/ssh/ssh_host_ed25519_key` is refused.
+
+When a step changes something, the phase restarts the worker, and otherwise it only starts the worker, which leaves a running worker as it is. At the end it prints the bastion's host key fingerprint and its last 12 characters. When the workers panel has no host key on record for the bloc, you approve the request by typing those 12 characters. A dry run reads and checks the bundle and does nothing on the bastion.
+
+A full `init bastion` from a workstation skips a bastion that has the provisioned marker, and `--force` does not change that. To add the worker to a bastion that init already provisioned, remove `~/.ocfp/provisioned` on the bastion and run init again.
 
 ### Operator helper scripts
 
