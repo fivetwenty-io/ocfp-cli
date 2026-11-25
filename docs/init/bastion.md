@@ -503,7 +503,7 @@ bastion:
 |----------|--------|
 | `OCFP_WORKER_BUNDLE` | Path to the worker bundle on the machine that runs init. It overrides `bastion.worker.bundle`. |
 
-The phase checks the bundle on your machine before it reaches the bastion. It refuses a bundle whose join file was issued for another bloc, and it refuses a binary whose SHA256 the join file does not list. It then asks the bastion for its platform and refuses the binary when it was built for a different one, all before it uploads anything. The join file holds the bloc's join key, so the phase never logs it, never prints it, and never puts it in a command line.
+The phase checks the bundle on your machine before it reaches the bastion. It refuses a bundle whose join file was issued for another bloc, and it refuses a binary whose SHA256 the join file does not list. It then asks the bastion for its platform and refuses the binary when it was built for a different one, all before it uploads anything. The join file holds the bloc's join key, so the phase never logs it, never prints it, and never puts it in a command line. It sends the join file over SFTP or SCP only, and when both fail it stops with an error instead of falling back to the methods that write a file through a command.
 
 The phase installs these files on the bastion.
 

@@ -185,7 +185,7 @@ func (m *Manager) installWorkerFiles(
 
 	if probe.JoinSHA256 != bundle.JoinSHA256 {
 		upload, err := m.uploadWorkerFile(ctx, bloc, bundle.JoinPath, workerunit.JoinUploadPath,
-			workerunit.JoinFileCommand, bundle.JoinSHA256, "the join file")
+			workerunit.JoinFileCommand, bundle.JoinSHA256, "the join file", true)
 		if err != nil {
 			return false, err
 		}
@@ -195,7 +195,7 @@ func (m *Manager) installWorkerFiles(
 
 	if probe.BinarySHA256 != bundle.BinarySHA256 {
 		upload, err := m.uploadWorkerFile(ctx, bloc, bundle.BinaryPath, workerunit.BinaryUploadPath,
-			workerunit.BinaryCommand, bundle.BinarySHA256, "the worker binary")
+			workerunit.BinaryCommand, bundle.BinarySHA256, "the worker binary", false)
 		if err != nil {
 			return false, err
 		}
@@ -236,13 +236,15 @@ func (m *Manager) installWorkerFiles(
 
 // uploadWorkerFile sends local to its upload path in the worker's
 // directory and runs the command that checks it against sha and moves it
-// into place.
+// into place. A secret file, which the join file is because it holds the
+// join key, travels only over SFTP or SCP and never in a command line.
 func (m *Manager) uploadWorkerFile(
 	ctx context.Context,
 	bloc, local string,
 	uploadPath func(string) (string, error),
 	install func(string, string) (string, error),
 	sha, what string,
+	secret bool,
 ) (bool, error) {
 	remote, err := uploadPath(bloc)
 	if err != nil {
@@ -254,7 +256,7 @@ func (m *Manager) uploadWorkerFile(
 		return false, fmt.Errorf("uploading %s: %w", what, err)
 	}
 
-	err = m.sshClient.TransferFile(ctx, local, remote, ssh.TransferOptions{Verify: true})
+	err = m.sshClient.TransferFile(ctx, local, remote, ssh.TransferOptions{Verify: true, Secret: secret})
 	if err != nil {
 		return false, fmt.Errorf("uploading %s to %s: %w", what, remote, err)
 	}

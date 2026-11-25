@@ -23,6 +23,68 @@ type TransferManager struct {
 	client  *Client
 	options TransferOptions
 	log     logger.Logger
+
+	// execute, viaSFTP, and viaSCP replace the remote shell and the two
+	// transports when they are set, so a test can see where a file's
+	// bytes go. They are nil in every real transfer.
+	execute func(context.Context, string) (*CommandResult, error)
+	viaSFTP uploadFunc
+	viaSCP  uploadFunc
+}
+
+// uploadFunc sends one local file to a remote path.
+type uploadFunc func(ctx context.Context, local, remote string, localStat os.FileInfo) error
+
+// uploadMethod is one way to send a file. A method is secretSafe when the
+// file's contents never pass through a command line.
+type uploadMethod struct {
+	name       string
+	secretSafe bool
+	fn         uploadFunc
+}
+
+// run executes cmd in the remote shell.
+func (tm *TransferManager) run(ctx context.Context, cmd string) (*CommandResult, error) {
+	if tm.execute != nil {
+		return tm.execute(ctx, cmd)
+	}
+
+	return tm.client.ExecuteCommand(ctx, cmd)
+}
+
+// uploadMethods returns the upload methods in order of preference. A file
+// marked Secret gets only the methods that keep its contents out of a
+// command line.
+func (tm *TransferManager) uploadMethods() []uploadMethod {
+	sftpUpload, scpUpload := tm.viaSFTP, tm.viaSCP
+	if sftpUpload == nil {
+		sftpUpload = tm.uploadViaSFTP
+	}
+
+	if scpUpload == nil {
+		scpUpload = tm.uploadViaSCP
+	}
+
+	all := []uploadMethod{
+		{name: "SFTP", secretSafe: true, fn: sftpUpload},
+		{name: "SCP", secretSafe: true, fn: scpUpload},
+		{name: "TarPipe", secretSafe: false, fn: tm.uploadViaTarPipe},
+		{name: "Base64", secretSafe: false, fn: tm.uploadViaBase64},
+	}
+
+	if !tm.options.Secret {
+		return all
+	}
+
+	var safe []uploadMethod
+
+	for _, method := range all {
+		if method.secretSafe {
+			safe = append(safe, method)
+		}
+	}
+
+	return safe
 }
 
 // NewTransferManager creates a new transfer manager.
@@ -62,20 +124,9 @@ func (tm *TransferManager) upload(ctx context.Context, localPath, remotePath str
 		return fmt.Errorf("local file not found: %w", err)
 	}
 
-	// Try transfer methods in order of preference
-	methods := []struct {
-		name string
-		fn   func(context.Context, string, string, os.FileInfo) error
-	}{
-		{"SFTP", tm.uploadViaSFTP},
-		{"SCP", tm.uploadViaSCP},
-		{"TarPipe", tm.uploadViaTarPipe},
-		{"Base64", tm.uploadViaBase64},
-	}
-
 	var lastErr error
 
-	for _, method := range methods {
+	for _, method := range tm.uploadMethods() {
 		tm.log.Debugw("Attempting upload method", "method", method.name)
 
 		err := method.fn(ctx, localPath, remotePath, localStat)
@@ -103,6 +154,10 @@ func (tm *TransferManager) upload(ctx context.Context, localPath, remotePath str
 		}
 
 		return nil
+	}
+
+	if tm.options.Secret {
+		return fmt.Errorf("%w: last error: %w", ErrSecretTransferRefused, lastErr)
 	}
 
 	return fmt.Errorf("all upload methods failed, last error: %w", lastErr)
@@ -226,7 +281,7 @@ func (tm *TransferManager) uploadViaTarPipe(ctx context.Context, _local, remote 
 
 	// Ensure remote directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", remoteDir)
-	stdout, err := tm.client.ExecuteCommand(ctx, mkdirCmd)
+	stdout, err := tm.run(ctx, mkdirCmd)
 	_ = stdout // ignore stdout
 
 	if err != nil {
@@ -265,7 +320,7 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 
 	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", remoteDir)
 
-	_, err = tm.client.ExecuteCommand(ctx, mkdirCmd)
+	_, err = tm.run(ctx, mkdirCmd)
 	if err != nil {
 		tm.log.Warn("Failed to create remote directory", "error", err.Error())
 	}
@@ -273,7 +328,7 @@ func (tm *TransferManager) uploadViaBase64(ctx context.Context, local, remote st
 	// Write via base64 decode
 	writeCmd := fmt.Sprintf("echo '%s' | base64 -d > '%s'", encoded, remote)
 
-	_, err = tm.client.ExecuteCommand(ctx, writeCmd)
+	_, err = tm.run(ctx, writeCmd)
 
 	return err
 }
@@ -349,7 +404,7 @@ func (tm *TransferManager) downloadViaCat(ctx context.Context, remote, local str
 	// Execute cat command to get file content
 	catCmd := fmt.Sprintf("cat '%s'", remote)
 
-	result, err := tm.client.ExecuteCommand(ctx, catCmd)
+	result, err := tm.run(ctx, catCmd)
 	if err != nil {
 		return fmt.Errorf("failed to cat remote file: %w", err)
 	}
@@ -430,7 +485,7 @@ func (tm *TransferManager) verifyUpload(ctx context.Context, localPath, remotePa
 	// Calculate remote file checksum
 	hashCmd := fmt.Sprintf("sha256sum '%s' | cut -d' ' -f1", remotePath)
 
-	result, err := tm.client.ExecuteCommand(ctx, hashCmd)
+	result, err := tm.run(ctx, hashCmd)
 	if err != nil {
 		return fmt.Errorf("failed to calculate remote file hash: %w", err)
 	}

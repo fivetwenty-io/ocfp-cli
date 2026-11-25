@@ -65,6 +65,10 @@ type TransferOptions struct {
 	ChunkSize    int64
 	Verify       bool
 	BackupRemote bool
+	// Secret marks a file that holds a secret, such as a key's seed. It
+	// travels only over SFTP or SCP, and the upload refuses rather than
+	// fall back to a method that puts the file's contents in a command.
+	Secret bool
 }
 
 // ProvisioningOptions configures bastion provisioning behavior.

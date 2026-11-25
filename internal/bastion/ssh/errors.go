@@ -55,6 +55,14 @@ var (
 	ErrTarPipeNotImplemented    = errors.New("tar pipe not fully implemented")
 	ErrFileTooLargeForBase64    = errors.New("file too large for base64 transfer")
 	ErrExternalSCPNotAvailable  = errors.New("external SCP command not available")
+
+	// ErrSecretTransferRefused reports an upload of a file that holds a
+	// secret when neither SFTP nor SCP could send it. The other methods
+	// write the file through a command line, which a secret must never
+	// reach, so the upload stops instead of falling back to them.
+	ErrSecretTransferRefused = errors.New(
+		"refusing to upload a file that holds a secret: SFTP and SCP both failed, " +
+			"and the other methods would put its contents in a command line")
 )
 
 // ErrFileIntegrityCheckFailed returns an error when local and remote file hashes do not match.

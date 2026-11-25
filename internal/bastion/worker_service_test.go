@@ -100,6 +100,7 @@ func writeWorkerBundle(t *testing.T, join map[string]any, binary []byte) (string
 type workerTransfer struct {
 	remote string
 	body   []byte
+	opts   ssh.TransferOptions
 }
 
 // workerMockSSHClient answers the worker phase's commands by name. The
@@ -161,11 +162,11 @@ func newWorkerMock(t *testing.T, probe string) *workerMockSSHClient {
 
 func (c *workerMockSSHClient) Connect(_ context.Context) error { return nil }
 
-func (c *workerMockSSHClient) TransferFile(_ context.Context, local, remote string, _ ssh.TransferOptions) error {
+func (c *workerMockSSHClient) TransferFile(_ context.Context, local, remote string, opts ssh.TransferOptions) error {
 	body, err := os.ReadFile(local)
 	require.NoError(c.t, err)
 
-	c.transfers = append(c.transfers, workerTransfer{remote: remote, body: body})
+	c.transfers = append(c.transfers, workerTransfer{remote: remote, body: body, opts: opts})
 	c.steps = append(c.steps, "transfer "+filepath.Base(remote))
 
 	return nil
@@ -346,6 +347,9 @@ func TestInstallWorker_FreshBastion(t *testing.T) {
 	require.Len(t, h.mock.transfers, 2)
 	assert.Equal(t, "/data/bloc-worker/ocfp-lab-drgao/.join.json.upload", h.mock.transfers[0].remote)
 	assert.Equal(t, joinBody, h.mock.transfers[0].body, "the join file is installed byte for byte")
+	assert.True(t, h.mock.transfers[0].opts.Secret,
+		"the join file holds the join key, so it never falls back to a command line")
+	assert.False(t, h.mock.transfers[1].opts.Secret, "the binary holds no secret")
 	assert.Equal(t, "/data/bloc-worker/ocfp-lab-drgao/.bloc-worker.upload", h.mock.transfers[1].remote)
 	assert.Equal(t, workerBinary, h.mock.transfers[1].body)
 
