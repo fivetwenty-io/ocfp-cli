@@ -45,6 +45,11 @@ const (
 
 	// privateFileMode is the mode the extracted files are written with.
 	privateFileMode = 0o600
+
+	// ArchAMD64 and ArchARM64 are the only keys the join file's
+	// binary.sha256 map may use, as the join contract defines them.
+	ArchAMD64 = "amd64"
+	ArchARM64 = "arm64"
 )
 
 var (
@@ -94,9 +99,9 @@ type JoinFile struct {
 	joinKeyShape joinKeyForm `json:"-"`
 }
 
-// BinarySums is the join file's binary field. SHA256 maps a platform, such
-// as "linux/amd64", to the lowercase hex SHA256 of the worker binary built
-// for it.
+// BinarySums is the join file's binary field. SHA256 maps a bare Linux
+// architecture, ArchAMD64 or ArchARM64, to the lowercase hex SHA256 of the
+// worker binary built for it. Any other key is refused.
 type BinarySums struct {
 	Version string            `json:"version"`
 	SHA256  map[string]string `json:"sha256"`
@@ -126,24 +131,25 @@ type Bundle struct {
 	BinarySHA256 string
 }
 
-// SumFor returns the SHA256 the join file lists for platform.
-func (j JoinFile) SumFor(platform string) (string, error) {
-	sha, ok := j.Binary.SHA256[platform]
+// SumFor returns the SHA256 the join file lists for arch, a bare
+// architecture key such as ArchAMD64 that Platform returns.
+func (j JoinFile) SumFor(arch string) (string, error) {
+	sha, ok := j.Binary.SHA256[arch]
 	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrBundlePlatform, platform)
+		return "", fmt.Errorf("%w: %s", ErrBundlePlatform, arch)
 	}
 
 	return sha, nil
 }
 
-// Platform maps the machine name uname -m prints to the platform the join
-// file lists its sums under.
+// Platform maps the machine name uname -m prints to the architecture key
+// the join file lists its sums under.
 func Platform(machine string) (string, error) {
 	switch strings.TrimSpace(machine) {
-	case "x86_64", "amd64":
-		return "linux/amd64", nil
-	case "aarch64", "arm64":
-		return "linux/arm64", nil
+	case "x86_64", ArchAMD64:
+		return ArchAMD64, nil
+	case "aarch64", ArchARM64:
+		return ArchARM64, nil
 	default:
 		return "", fmt.Errorf("%w: machine %q", ErrBundlePlatform, machine)
 	}
@@ -363,9 +369,14 @@ func (j JoinFile) validate() error {
 		return refuse("binary.sha256", "must list the worker binary's SHA256 for at least one platform")
 	}
 
-	for platform, sha := range j.Binary.SHA256 {
+	for arch, sha := range j.Binary.SHA256 {
+		if arch != ArchAMD64 && arch != ArchARM64 {
+			return fmt.Errorf("%w: the join file's binary.sha256 has the key %q, and only %s and %s are allowed",
+				ErrBundleLayout, arch, ArchAMD64, ArchARM64)
+		}
+
 		if !sumForm.MatchString(sha) {
-			return refuse("binary.sha256", "for "+platform+" must be a lowercase hex SHA256")
+			return refuse("binary.sha256", "for "+arch+" must be a lowercase hex SHA256")
 		}
 	}
 

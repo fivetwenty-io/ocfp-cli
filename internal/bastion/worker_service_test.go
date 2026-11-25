@@ -55,8 +55,8 @@ func workerJoinDoc() map[string]any {
 		"binary": map[string]any{
 			"version": "1.2.3",
 			"sha256": map[string]string{
-				"linux/amd64": workerSum(workerBinary),
-				"linux/arm64": strings.Repeat("ab", 32),
+				"amd64": workerSum(workerBinary),
+				"arm64": strings.Repeat("ab", 32),
 			},
 		},
 		"issuedAt": "2026-11-24T20:00:00Z",
@@ -440,7 +440,7 @@ func TestInstallWorker_RefusesAMismatchBeforeReachingTheBastion(t *testing.T) {
 	t.Parallel()
 
 	join := workerJoinDoc()
-	join["binary"] = map[string]any{"sha256": map[string]string{"linux/amd64": strings.Repeat("cd", 32)}}
+	join["binary"] = map[string]any{"sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
 	bundle, _ := writeWorkerBundle(t, join, workerBinary)
 	h := newWorkerHarness(t, workerProbe("x86_64", "", ""), false)
 

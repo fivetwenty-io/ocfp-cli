@@ -43,8 +43,8 @@ func joinDoc() map[string]any {
 		"binary": map[string]any{
 			"version": "1.2.3",
 			"sha256": map[string]string{
-				"linux/amd64": sum(testBinary),
-				"linux/arm64": strings.Repeat("ab", 32),
+				"amd64": sum(testBinary),
+				"arm64": strings.Repeat("ab", 32),
 			},
 		},
 		"issuedAt": "2026-11-24T20:00:00Z",
@@ -166,11 +166,11 @@ func TestExtractBundle_SumFor(t *testing.T) {
 	b, err := workerunit.ExtractBundle(goodArchive(t), t.TempDir())
 	require.NoError(t, err)
 
-	got, err := b.Join.SumFor("linux/amd64")
+	got, err := b.Join.SumFor("amd64")
 	require.NoError(t, err)
 	assert.Equal(t, sum(testBinary), got)
 
-	_, err = b.Join.SumFor("linux/riscv64")
+	_, err = b.Join.SumFor("riscv64")
 	require.ErrorIs(t, err, workerunit.ErrBundlePlatform)
 }
 
@@ -269,13 +269,27 @@ func TestExtractBundle_Refusals(t *testing.T) {
 		},
 		"a sum that is not hex": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{"linux/amd64": "zz"}}
+				d["binary"] = map[string]any{"sha256": map[string]string{"amd64": "zz"}}
 			}),
 			want: workerunit.ErrJoinFile,
 		},
+		"a platform-style key": {
+			entries: withJoin(func(d map[string]any) {
+				d["binary"] = map[string]any{"sha256": map[string]string{"linux/amd64": sum(testBinary)}}
+			}),
+			want: workerunit.ErrBundleLayout,
+		},
+		"an unknown architecture key": {
+			entries: withJoin(func(d map[string]any) {
+				d["binary"] = map[string]any{"sha256": map[string]string{
+					"amd64": sum(testBinary), "riscv64": strings.Repeat("ab", 32),
+				}}
+			}),
+			want: workerunit.ErrBundleLayout,
+		},
 		"a binary no sum names": {
 			entries: withJoin(func(d map[string]any) {
-				d["binary"] = map[string]any{"sha256": map[string]string{"linux/amd64": strings.Repeat("cd", 32)}}
+				d["binary"] = map[string]any{"sha256": map[string]string{"amd64": strings.Repeat("cd", 32)}}
 			}),
 			want: workerunit.ErrBundleSum,
 		},
@@ -313,10 +327,10 @@ func TestPlatform(t *testing.T) {
 	t.Parallel()
 
 	for machine, want := range map[string]string{
-		"x86_64":  "linux/amd64",
-		"amd64":   "linux/amd64",
-		"aarch64": "linux/arm64",
-		"arm64":   "linux/arm64",
+		"x86_64":  "amd64",
+		"amd64":   "amd64",
+		"aarch64": "arm64",
+		"arm64":   "arm64",
 	} {
 		got, err := workerunit.Platform(machine)
 		require.NoError(t, err, machine)
