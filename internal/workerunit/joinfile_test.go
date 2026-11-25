@@ -27,6 +27,7 @@ func contractJoinFile(t *testing.T) []byte {
 	require.NoError(t, err)
 
 	return fmt.Appendf(nil, `{
+  "version": 1,
   "url": "wss://manager.example.com:443/nats",
   "caPEM": %s,
   "installation": %q,
@@ -53,6 +54,7 @@ func TestDecodeJoinFile_ReadsTheContractShape(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, workerunit.JoinFile{
+		Version:      1,
 		URL:          "wss://manager.example.com:443/nats",
 		CAPEM:        testCA,
 		Installation: testInstallation,
@@ -187,6 +189,29 @@ func TestDecodeJoinFile_HoldsToTheContract(t *testing.T) {
 			body: change(func(d map[string]any) { d["caPEM"] = strings.Repeat(testCA, 64<<10/len(testCA)+1) }),
 			want: workerunit.ErrJoinFile,
 		},
+		"no version": {
+			body: change(func(d map[string]any) { delete(d, "version") }),
+			want: workerunit.ErrJoinFile,
+		},
+		"version zero": {
+			body: change(func(d map[string]any) { d["version"] = 0 }),
+			want: workerunit.ErrJoinFile,
+		},
+		"a version that is not a number": {
+			body: change(func(d map[string]any) { d["version"] = "1" }),
+			want: workerunit.ErrJoinFile,
+		},
+		"a newer version": {
+			body: change(func(d map[string]any) { d["version"] = 2 }),
+			want: workerunit.ErrJoinFileTooNew,
+		},
+		"a newer version with fields this side does not know": {
+			body: change(func(d map[string]any) {
+				d["version"] = 2
+				d["relay"] = "wss://relay.example.com"
+			}),
+			want: workerunit.ErrJoinFileTooNew,
+		},
 		"an architecture the contract does not name": {
 			body: change(func(d map[string]any) {
 				d["binary"].(map[string]any)["sha256"] = map[string]string{"linux/amd64": sum(testBinary)}
@@ -217,4 +242,21 @@ func TestDecodeJoinFile_AcceptsNoCA(t *testing.T) {
 	join, err := workerunit.DecodeJoinFile(encode(t, doc))
 	require.NoError(t, err)
 	assert.Empty(t, join.CAPEM)
+}
+
+// A join file newer than this ocfp reads is refused with a message that
+// says this ocfp is too old, and the refusal is still a join file refusal.
+func TestDecodeJoinFile_ANewerVersionSaysUpgrade(t *testing.T) {
+	t.Parallel()
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(contractJoinFile(t), &doc))
+	doc["version"] = 3
+
+	_, err := workerunit.DecodeJoinFile(encode(t, doc))
+	require.ErrorIs(t, err, workerunit.ErrJoinFileTooNew)
+	require.ErrorIs(t, err, workerunit.ErrJoinFile)
+	assert.Contains(t, err.Error(), "version 3")
+	assert.Contains(t, err.Error(), "this ocfp is too old")
+	assert.NotContains(t, err.Error(), testSeed)
 }

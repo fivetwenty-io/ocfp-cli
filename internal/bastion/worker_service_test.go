@@ -46,6 +46,7 @@ func workerSum(b []byte) string {
 // workerJoinDoc is a join file whose amd64 sum names workerBinary.
 func workerJoinDoc() map[string]any {
 	return map[string]any{
+		"version":      1,
 		"url":          "wss://manager.example.com:443",
 		"installation": "inst-0123456789abcdef",
 		"org":          "acme",

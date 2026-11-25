@@ -44,6 +44,7 @@ func sum(b []byte) string {
 // caller can change before it is encoded.
 func joinDoc() map[string]any {
 	return map[string]any{
+		"version":      1,
 		"url":          "wss://manager.example.com:443",
 		"installation": testInstallation,
 		"org":          "acme",

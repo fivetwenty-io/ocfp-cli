@@ -60,6 +60,10 @@ var (
 	// needs, or holds one in the wrong form.
 	ErrJoinFile = errors.New("the worker bundle's join file is refused")
 
+	// ErrJoinFileTooNew reports a join file whose version is newer than
+	// the one this ocfp reads. It also matches ErrJoinFile.
+	ErrJoinFileTooNew = fmt.Errorf("%w: its version is newer than this ocfp reads", ErrJoinFile)
+
 	// ErrBundleSum reports a worker binary whose SHA256 is not one the join
 	// file lists.
 	ErrBundleSum = errors.New("the worker binary's SHA256 is not one the join file lists")
@@ -76,6 +80,7 @@ var (
 // held, formatted, or logged on this side. The file itself is installed on
 // the bastion byte for byte.
 type JoinFile struct {
+	Version      int       `json:"version"`
 	URL          string    `json:"url"`
 	CAPEM        string    `json:"caPEM,omitempty"`
 	Installation string    `json:"installation"`

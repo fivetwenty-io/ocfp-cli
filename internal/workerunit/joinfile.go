@@ -36,6 +36,9 @@ var (
 
 const maxBlocName = 40
 
+// JoinFileVersion is the only join file version this ocfp reads.
+const JoinFileVersion = 1
+
 // The nkeys forms. A public key is the base 32 of a prefix byte, the 32
 // bytes of the ed25519 key, and a CRC16. A seed is the base 32 of two
 // bytes that hold the seed prefix and the key's own prefix, the 32 seed
@@ -77,6 +80,11 @@ func DecodeJoinFile(body []byte) (JoinFile, error) {
 		return JoinFile{}, fmt.Errorf("%w: it is longer than %d bytes", ErrJoinFile, maxJoinFile)
 	}
 
+	err := checkVersion(body)
+	if err != nil {
+		return JoinFile{}, err
+	}
+
 	var wire joinFileWire
 
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -84,7 +92,7 @@ func DecodeJoinFile(body []byte) (JoinFile, error) {
 
 	// The decoder's own text can quote the file, so a refusal names only
 	// what is at fault.
-	err := dec.Decode(&wire)
+	err = dec.Decode(&wire)
 	if err != nil {
 		return JoinFile{}, fmt.Errorf("%w: it does not decode as the join contract's JSON", ErrJoinFile)
 	}
@@ -106,6 +114,40 @@ func DecodeJoinFile(body []byte) (JoinFile, error) {
 	return join, join.validate()
 }
 
+// checkVersion reads the file's version before the strict decode, because
+// a newer file may hold fields this ocfp does not know, and it should hear
+// that this ocfp is too old rather than that a field is unknown. A missing
+// or malformed version is left for the strict decode and validate to
+// refuse.
+func checkVersion(body []byte) error {
+	var head struct {
+		Version json.Number `json:"version"`
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+
+	v, ok := newerVersion(dec.Decode(&head), head.Version)
+	if !ok {
+		return nil
+	}
+
+	return fmt.Errorf("%w: the join file has version %d, and this ocfp reads only version %d, "+
+		"so this ocfp is too old; upgrade ocfp and run it again", ErrJoinFileTooNew, v, JoinFileVersion)
+}
+
+// newerVersion reports the version when the lenient decode read one that
+// is a whole number above JoinFileVersion.
+func newerVersion(decodeErr error, version json.Number) (int64, bool) {
+	if decodeErr != nil {
+		return 0, false
+	}
+
+	v, err := version.Int64()
+
+	return v, err == nil && v > JoinFileVersion
+}
+
 // validate holds the join file's fields, all but the join key, to the join
 // contract's form.
 func (j JoinFile) validate() error {
@@ -114,6 +156,8 @@ func (j JoinFile) validate() error {
 	}
 
 	switch {
+	case j.Version != JoinFileVersion:
+		return refuse("version", fmt.Sprintf("must be %d", JoinFileVersion))
 	case !validURL(j.URL):
 		return refuse("url", "must be a wss URL with a host and no user, query, or fragment")
 	case j.CAPEM != "" && !onlyCertificates(j.CAPEM):
