@@ -250,6 +250,12 @@ func extractEntries(tr *tar.Reader, bundle *Bundle) error {
 			target, limit = bundle.JoinPath, maxJoinFile
 		}
 
+		// The header's size is checked before a byte is read or written,
+		// and writeEntry still stops at the limit.
+		if hdr.Size > limit {
+			return fmt.Errorf("%w: %s is longer than %d bytes", ErrBundleLayout, name, limit)
+		}
+
 		sha, err := writeEntry(tr, target, limit)
 		if err != nil {
 			return err

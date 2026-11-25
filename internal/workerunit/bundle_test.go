@@ -66,6 +66,12 @@ type entry struct {
 	name     string
 	body     []byte
 	typeflag byte
+	// mode is the header's mode, 0644 when it is zero.
+	mode int64
+	// declared, when set, is a size the header claims with no body
+	// written after it, and it ends the archive there.
+	declared int64
+	linkname string
 }
 
 func writeArchive(t *testing.T, entries ...entry) string {
@@ -82,13 +88,26 @@ func writeArchive(t *testing.T, entries ...entry) string {
 			flag = tar.TypeReg
 		}
 
-		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: flag}
+		mode := e.mode
+		if mode == 0 {
+			mode = 0o644
+		}
+
+		hdr := &tar.Header{Name: e.name, Mode: mode, Size: int64(len(e.body)), Typeflag: flag, Linkname: e.linkname}
 		if flag != tar.TypeReg {
 			hdr.Size = 0
 		}
 
-		if flag == tar.TypeSymlink {
+		if flag == tar.TypeSymlink && hdr.Linkname == "" {
 			hdr.Linkname = "/etc/passwd"
+		}
+
+		if e.declared > 0 {
+			hdr.Size = e.declared
+			require.NoError(t, tw.WriteHeader(hdr))
+			require.NoError(t, gz.Close())
+
+			return writeBundleFile(t, buf.Bytes())
 		}
 
 		require.NoError(t, tw.WriteHeader(hdr))
@@ -102,8 +121,14 @@ func writeArchive(t *testing.T, entries ...entry) string {
 	require.NoError(t, tw.Close())
 	require.NoError(t, gz.Close())
 
+	return writeBundleFile(t, buf.Bytes())
+}
+
+func writeBundleFile(t *testing.T, body []byte) string {
+	t.Helper()
+
 	path := filepath.Join(t.TempDir(), "bloc-worker-bundle.tar.gz")
-	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o600))
+	require.NoError(t, os.WriteFile(path, body, 0o600))
 
 	return path
 }
@@ -235,6 +260,59 @@ func TestExtractBundle_Refusals(t *testing.T) {
 			},
 			want: workerunit.ErrBundleLayout,
 		},
+		"an absolute path": {
+			entries: []entry{
+				{name: "/" + workerunit.BundleJoinFile, body: encode(t, joinDoc())},
+				{name: workerunit.BundleBinary, body: testBinary},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a hard link": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, body: encode(t, joinDoc())},
+				{name: workerunit.BundleBinary, typeflag: tar.TypeLink, linkname: workerunit.BundleJoinFile},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a character device": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, body: encode(t, joinDoc())},
+				{name: workerunit.BundleBinary, typeflag: tar.TypeChar},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a block device": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, body: encode(t, joinDoc())},
+				{name: workerunit.BundleBinary, typeflag: tar.TypeBlock},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a FIFO": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, typeflag: tar.TypeFifo},
+				{name: workerunit.BundleBinary, body: testBinary},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a join file over 64 KiB": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, body: bytes.Repeat([]byte(" "), 64<<10+1)},
+				{name: workerunit.BundleBinary, body: testBinary},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
+		"a join file whose header claims over 64 KiB": {
+			entries: []entry{{name: workerunit.BundleJoinFile, declared: 64<<10 + 1}},
+			want:    workerunit.ErrBundleLayout,
+		},
+		"a binary whose header claims over 512 MiB": {
+			entries: []entry{
+				{name: workerunit.BundleJoinFile, body: encode(t, joinDoc())},
+				{name: workerunit.BundleBinary, declared: 512<<20 + 1},
+			},
+			want: workerunit.ErrBundleLayout,
+		},
 		"a repeated entry": {
 			entries: append(withJoin(func(map[string]any) {}), entry{name: workerunit.BundleBinary, body: testBinary}),
 			want:    workerunit.ErrBundleLayout,
@@ -350,6 +428,49 @@ func TestPlatform(t *testing.T) {
 
 	_, err := workerunit.Platform("riscv64")
 	require.ErrorIs(t, err, workerunit.ErrBundlePlatform)
+}
+
+// A size cap is refused from the header alone, before a byte of the
+// member is read or written.
+func TestExtractBundle_RefusesAnOversizedMemberFromItsHeader(t *testing.T) {
+	t.Parallel()
+
+	for name, e := range map[string]entry{
+		"join file": {name: workerunit.BundleJoinFile, declared: 64<<10 + 1},
+		"binary":    {name: workerunit.BundleBinary, declared: 512<<20 + 1},
+	} {
+		dir := t.TempDir()
+
+		_, err := workerunit.ExtractBundle(writeArchive(t, e), dir, "")
+		require.ErrorIs(t, err, workerunit.ErrBundleLayout, name)
+		assert.Contains(t, err.Error(), "longer than", name)
+
+		left, readErr := os.ReadDir(dir)
+		require.NoError(t, readErr)
+		assert.Empty(t, left, "%s: nothing is written for an oversized member", name)
+	}
+}
+
+// The archive's modes are never trusted. Whatever a header says, the
+// extracted files are private to the operator, and the install scripts set
+// the modes on the bastion themselves.
+func TestExtractBundle_IgnoresTheArchivesModes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeArchive(t,
+		entry{name: workerunit.BundleJoinFile, body: encode(t, joinDoc()), mode: 0o6777},
+		entry{name: workerunit.BundleBinary, body: testBinary, mode: 0o4755},
+	)
+
+	b, err := workerunit.ExtractBundle(path, dir, "")
+	require.NoError(t, err)
+
+	for _, p := range []string{b.JoinPath, b.BinaryPath} {
+		info, err := os.Stat(p)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky), p)
+	}
 }
 
 // Given the bastion's architecture, the reader refuses a binary that is
