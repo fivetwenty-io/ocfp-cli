@@ -1,0 +1,59 @@
+[
+  {
+    "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINdamAGCsQq31Uv+08lkBzoO4XLz2qYjJa8CGmj3B1Ea",
+    "digest": "6db5e9b8a1bace1cdd9a7c6adb9e9396acc5073465d9fe8e3a0ef6d9c60d6d4f",
+    "fingerprint": "SHA256:bbXpuKG6zhzdmnxq256TlqzFBzRl2f6OOg722cYNbU8",
+    "code": "AIOW-ADSS-GVKI",
+    "matches": [
+      "AIOW-ADSS-GVKI",
+      "AIOWADSSGVKI",
+      "a10wadssgvk1",
+      "AIOW ADSS GVKI"
+    ],
+    "refuses": [
+      "AIOWADSSGVK",
+      "AIOWADSSGVKIA",
+      "",
+      "AIOWADSSGVK8",
+      "bbXpuKG6zhzd"
+    ]
+  },
+  {
+    "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID1AF8PoQ4lakrcKp00bfrycmCzPLsSWjMDNVfEq9GYM",
+    "digest": "177e278a7eed71a607e964792d25927e3eb078504f7c1a6ec945283c53fd6230",
+    "fingerprint": "SHA256:F34nin7tcaYH6WR5LSWSfj6weFBPfBpuyUUoPFP9YjA",
+    "code": "5ML2-2ILH-DNS5",
+    "matches": [
+      "5ML2-2ILH-DNS5",
+      "5ML22ILHDNS5",
+      "5ml221lhdns5",
+      "5ML2 2ILH DNS5"
+    ],
+    "refuses": [
+      "5ML22ILHDNS",
+      "5ML22ILHDNS5A",
+      "",
+      "5ML22ILHDNS8",
+      "F34nin7tcaYH"
+    ]
+  },
+  {
+    "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPxRzY5iGKGjjaR+0AIw8FgIFu0TujMDrF3rkRVIkIAl",
+    "digest": "b3767603e9a575e7e51e8e5330c11403b32590c83deb1beda87f4318b1c76661",
+    "fingerprint": "SHA256:s3Z2A+mldeflHo5TMMEUA7MlkMg96xvtqH9DGLHHZmE",
+    "code": "LUEL-H2VT-RFQN",
+    "matches": [
+      "LUEL-H2VT-RFQN",
+      "LUELH2VTRFQN",
+      "luelh2vtrfqn",
+      "LUEL H2VT RFQN"
+    ],
+    "refuses": [
+      "LUELH2VTRFQ",
+      "LUELH2VTRFQNA",
+      "",
+      "LUELH2VTRFQ8",
+      "s3Z2A+mldefl"
+    ]
+  }
+]
