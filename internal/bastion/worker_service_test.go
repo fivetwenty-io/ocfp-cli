@@ -427,21 +427,38 @@ func TestInstallWorker_AChangeInAnyStepRestarts(t *testing.T) {
 	}
 }
 
-// The bundle holds an amd64 binary, so an arm64 bastion is refused before
-// anything is uploaded or changed.
+// The join file lists only an amd64 binary, so an arm64 bastion is
+// refused when the bundle is read, and only the read-only probe reaches
+// the bastion.
 func TestInstallWorker_RefusesABinaryForAnotherPlatform(t *testing.T) {
+	t.Parallel()
+
+	join := workerJoinDoc()
+	join["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"amd64": workerSum(workerBinary)}}
+	bundle, _ := writeWorkerBundle(t, join, workerBinary)
+	h := newWorkerHarness(t, workerProbe("aarch64", "", ""), false)
+
+	err := h.m.installWorkerFrom(context.Background(), bundleEnv(bundle))
+	require.ErrorIs(t, err, workerunit.ErrBundlePlatform)
+	assert.Equal(t, []string{"probe"}, h.mock.steps, "nothing is uploaded or changed")
+	assertNoSeed(t, h, err)
+}
+
+// The join file lists both architectures, and the bundle's binary is the
+// amd64 one, so an arm64 bastion is refused when the bundle is read.
+func TestInstallWorker_RefusesTheOtherArchitecturesBinary(t *testing.T) {
 	t.Parallel()
 
 	bundle, _ := writeWorkerBundle(t, workerJoinDoc(), workerBinary)
 	h := newWorkerHarness(t, workerProbe("aarch64", "", ""), false)
 
 	err := h.m.installWorkerFrom(context.Background(), bundleEnv(bundle))
-	require.ErrorIs(t, err, errWorkerBinaryPlatform)
+	require.ErrorIs(t, err, workerunit.ErrBundleArch)
 	assert.Equal(t, []string{"probe"}, h.mock.steps, "nothing is uploaded or changed")
 	assertNoSeed(t, h, err)
 }
 
-func TestInstallWorker_RefusesAMismatchBeforeReachingTheBastion(t *testing.T) {
+func TestInstallWorker_RefusesAMismatchBeforeChangingTheBastion(t *testing.T) {
 	t.Parallel()
 
 	join := workerJoinDoc()
@@ -451,7 +468,7 @@ func TestInstallWorker_RefusesAMismatchBeforeReachingTheBastion(t *testing.T) {
 
 	err := h.m.installWorkerFrom(context.Background(), bundleEnv(bundle))
 	require.ErrorIs(t, err, workerunit.ErrBundleSum)
-	assert.Empty(t, h.mock.steps, "a binary the join file does not list never leaves the workstation")
+	assert.Equal(t, []string{"probe"}, h.mock.steps, "a binary the join file does not list never leaves the workstation")
 	assertNoSeed(t, h, err)
 }
 
@@ -466,7 +483,7 @@ func TestInstallWorker_RefusesAnotherBlocsBundle(t *testing.T) {
 	err := h.m.installWorkerFrom(context.Background(), bundleEnv(bundle))
 	require.ErrorIs(t, err, errWorkerBundleBloc)
 	assert.Contains(t, err.Error(), "ocfp-lab-other")
-	assert.Empty(t, h.mock.steps)
+	assert.Equal(t, []string{"probe"}, h.mock.steps, "only the read-only probe reaches the bastion")
 }
 
 func TestInstallWorker_RefusesABastionWithNoEd25519HostKey(t *testing.T) {

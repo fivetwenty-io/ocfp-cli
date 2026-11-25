@@ -71,6 +71,10 @@ var (
 	// ErrBundlePlatform reports a platform the join file lists no sum for,
 	// or a machine name with no known platform.
 	ErrBundlePlatform = errors.New("the join file lists no worker binary for this platform")
+
+	// ErrBundleArch reports a worker binary the join file lists, but for an
+	// architecture other than the bastion's.
+	ErrBundleArch = errors.New("the worker binary is not the one the join file lists for the bastion's architecture")
 )
 
 // JoinFile holds the join file's fields as the join contract defines them,
@@ -138,11 +142,15 @@ func Platform(machine string) (string, error) {
 }
 
 // ExtractBundle reads the bundle at archive, writes its join file and
-// worker binary into dir with mode 0600, and checks the join file's fields
-// and that the binary's SHA256 is one the join file lists. dir should be
+// worker binary into dir with mode 0600 whatever the archive's modes say,
+// and checks the join file's fields and that the binary's SHA256 is one
+// the join file lists. When arch, a key that Platform returns, names the
+// bastion's architecture, the binary's SHA256 must be the one the join
+// file lists for it. An empty arch, for a dry run that never asks the
+// bastion, accepts a binary listed under any architecture. dir should be
 // private to the caller, because the join file holds the join key. No
 // error it returns repeats anything the join file holds.
-func ExtractBundle(archive, dir string) (Bundle, error) {
+func ExtractBundle(archive, dir, arch string) (Bundle, error) {
 	f, err := os.Open(archive) // #nosec G304 -- the operator names the bundle
 	if err != nil {
 		return Bundle{}, fmt.Errorf("opening the worker bundle: %w", err)
@@ -172,11 +180,40 @@ func ExtractBundle(archive, dir string) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	if !bundle.Join.listsSum(bundle.BinarySHA256) {
-		return Bundle{}, ErrBundleSum
+	err = bundle.checkBinary(arch)
+	if err != nil {
+		return Bundle{}, err
 	}
 
 	return bundle, nil
+}
+
+// checkBinary refuses a binary the join file does not list, and, when arch
+// is set, one it does not list for arch.
+func (b *Bundle) checkBinary(arch string) error {
+	if !b.Join.listsSum(b.BinarySHA256) {
+		return ErrBundleSum
+	}
+
+	if arch == "" {
+		return nil
+	}
+
+	if arch != ArchAMD64 && arch != ArchARM64 {
+		return fmt.Errorf("%w: %q is not an architecture key", ErrBundlePlatform, arch)
+	}
+
+	want, err := b.Join.SumFor(arch)
+	if err != nil {
+		return err
+	}
+
+	if want != b.BinarySHA256 {
+		return fmt.Errorf("%w: the bastion is %s, and the bundle's binary has SHA256 %s",
+			ErrBundleArch, arch, b.BinarySHA256)
+	}
+
+	return nil
 }
 
 // extractEntries writes the archive's two files and records their sums.

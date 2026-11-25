@@ -131,7 +131,7 @@ func TestExtractBundle_ReadsTheJoinFileAndBinary(t *testing.T) {
 
 	dir := t.TempDir()
 
-	b, err := workerunit.ExtractBundle(goodArchive(t), dir)
+	b, err := workerunit.ExtractBundle(goodArchive(t), dir, "")
 	require.NoError(t, err)
 
 	assert.Equal(t, "ocfp-lab-drgao", b.Join.Bloc)
@@ -167,14 +167,14 @@ func TestExtractBundle_AcceptsDotSlashNames(t *testing.T) {
 		entry{name: "./" + workerunit.BundleJoinFile, body: encode(t, joinDoc())},
 	)
 
-	_, err := workerunit.ExtractBundle(path, t.TempDir())
+	_, err := workerunit.ExtractBundle(path, t.TempDir(), "")
 	require.NoError(t, err)
 }
 
 func TestExtractBundle_SumFor(t *testing.T) {
 	t.Parallel()
 
-	b, err := workerunit.ExtractBundle(goodArchive(t), t.TempDir())
+	b, err := workerunit.ExtractBundle(goodArchive(t), t.TempDir(), "")
 	require.NoError(t, err)
 
 	got, err := b.Join.SumFor("amd64")
@@ -312,7 +312,7 @@ func TestExtractBundle_Refusals(t *testing.T) {
 
 			dir := t.TempDir()
 
-			_, err := workerunit.ExtractBundle(writeArchive(t, tc.entries...), dir)
+			_, err := workerunit.ExtractBundle(writeArchive(t, tc.entries...), dir, "")
 			require.ErrorIs(t, err, tc.want)
 			assert.NotContains(t, err.Error(), testSeed, "a refusal never repeats the join key")
 			assert.NotContains(t, err.Error(), testSeed[:12], "a refusal never repeats part of the join key")
@@ -326,11 +326,11 @@ func TestExtractBundle_RefusesWhatIsNotAnArchive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	require.NoError(t, os.WriteFile(path, []byte(testSeed), 0o600))
 
-	_, err := workerunit.ExtractBundle(path, t.TempDir())
+	_, err := workerunit.ExtractBundle(path, t.TempDir(), "")
 	require.ErrorIs(t, err, workerunit.ErrBundleLayout)
 	assert.NotContains(t, err.Error(), testSeed)
 
-	_, err = workerunit.ExtractBundle(filepath.Join(t.TempDir(), "missing.tar.gz"), t.TempDir())
+	_, err = workerunit.ExtractBundle(filepath.Join(t.TempDir(), "missing.tar.gz"), t.TempDir(), "")
 	require.Error(t, err)
 }
 
@@ -350,4 +350,56 @@ func TestPlatform(t *testing.T) {
 
 	_, err := workerunit.Platform("riscv64")
 	require.ErrorIs(t, err, workerunit.ErrBundlePlatform)
+}
+
+// Given the bastion's architecture, the reader refuses a binary that is
+// not the one the join file lists for it, before anything reaches the
+// bastion. With no architecture, as in a dry run that never asks the
+// bastion, the binary need only be listed under some architecture.
+func TestExtractBundle_ChecksTheBastionsArchitecture(t *testing.T) {
+	t.Parallel()
+
+	amd64Only := func(d map[string]any) {
+		d["binary"] = map[string]any{"version": "1.2.3", "sha256": map[string]string{"amd64": sum(testBinary)}}
+	}
+
+	archive := func(change func(map[string]any)) string {
+		doc := joinDoc()
+		if change != nil {
+			change(doc)
+		}
+
+		return writeArchive(t,
+			entry{name: workerunit.BundleJoinFile, body: encode(t, doc)},
+			entry{name: workerunit.BundleBinary, body: testBinary},
+		)
+	}
+
+	cases := map[string]struct {
+		path string
+		arch string
+		want error
+	}{
+		"the listed architecture":                  {path: archive(nil), arch: workerunit.ArchAMD64},
+		"any architecture in a dry run":            {path: archive(nil), arch: ""},
+		"an architecture the join file omits":      {path: archive(amd64Only), arch: workerunit.ArchARM64, want: workerunit.ErrBundlePlatform},
+		"a binary listed for another architecture": {path: archive(nil), arch: workerunit.ArchARM64, want: workerunit.ErrBundleArch},
+		"an architecture that is not a key":        {path: archive(nil), arch: "x86_64", want: workerunit.ErrBundlePlatform},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := workerunit.ExtractBundle(tc.path, t.TempDir(), tc.arch)
+			if tc.want == nil {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.ErrorIs(t, err, tc.want)
+			assert.NotContains(t, err.Error(), testSeed)
+		})
+	}
 }

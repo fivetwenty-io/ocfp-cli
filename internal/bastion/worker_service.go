@@ -15,10 +15,6 @@ var (
 	// errWorkerBundleBloc reports a worker bundle issued for another bloc.
 	errWorkerBundleBloc = errors.New("the worker bundle was issued for another bloc")
 
-	// errWorkerBinaryPlatform reports a worker binary that is not the one
-	// the join file lists for the bastion's platform.
-	errWorkerBinaryPlatform = errors.New("the worker bundle's binary is not the one the join file lists for the bastion's platform")
-
 	// ErrWorkerModeNoBundle reports --worker with no worker bundle named.
 	ErrWorkerModeNoBundle = errors.New("--worker installs the bloc worker from the worker bundle, and none is named")
 )
@@ -58,10 +54,12 @@ func (m *Manager) runWorkerOnlyMode(ctx context.Context) error {
 }
 
 // installWorkerFrom is installWorkerService with the environment lookup
-// passed in. It checks the bundle on this machine before it reaches the
-// bastion, checks the binary's sum against the one the join file lists for
-// the bastion's platform before it uploads anything, and restarts the
-// worker only when a step changed something.
+// passed in. It probes the bastion first, with a read-only script, so the
+// bundle is read knowing the bastion's architecture, and a binary that is
+// not the one the join file lists for it is refused before anything is
+// uploaded or changed. A dry run never probes, so it checks only that the
+// binary is listed under some architecture. It restarts the worker only
+// when a step changed something.
 func (m *Manager) installWorkerFrom(ctx context.Context, getenv func(string) string) error {
 	bloc := m.config.Name
 
@@ -77,6 +75,30 @@ func (m *Manager) installWorkerFrom(ctx context.Context, getenv func(string) str
 		return nil
 	}
 
+	_, err = os.Stat(bundlePath)
+	if err != nil {
+		return fmt.Errorf("reading the worker bundle %s: %w", bundlePath, err)
+	}
+
+	dryRun := m.options != nil && m.options.DryRun
+
+	var (
+		probe workerunit.Probe
+		arch  string
+	)
+
+	if !dryRun {
+		probe, err = m.probeWorkerHost(ctx, bloc)
+		if err != nil {
+			return err
+		}
+
+		arch, err = workerunit.Platform(probe.Arch)
+		if err != nil {
+			return fmt.Errorf("installing the bloc worker: %w", err)
+		}
+	}
+
 	staging, err := os.MkdirTemp("", "ocfp-worker-bundle-")
 	if err != nil {
 		return fmt.Errorf("making a private directory for the worker bundle: %w", err)
@@ -84,7 +106,7 @@ func (m *Manager) installWorkerFrom(ctx context.Context, getenv func(string) str
 
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	bundle, err := workerunit.ExtractBundle(bundlePath, staging)
+	bundle, err := workerunit.ExtractBundle(bundlePath, staging, arch)
 	if err != nil {
 		return fmt.Errorf("reading the worker bundle %s: %w", bundlePath, err)
 	}
@@ -94,7 +116,7 @@ func (m *Manager) installWorkerFrom(ctx context.Context, getenv func(string) str
 			errWorkerBundleBloc, bundlePath, bundle.Join.Bloc, bloc)
 	}
 
-	if m.options != nil && m.options.DryRun {
+	if dryRun {
 		m.log.Infow("DRY RUN: Would install and start the bloc worker",
 			"bloc", bloc, "bundle", bundlePath, "binary_sha256", bundle.BinarySHA256,
 			"version", bundle.Join.Binary.Version, "path", workerunit.BinaryPath)
@@ -102,27 +124,14 @@ func (m *Manager) installWorkerFrom(ctx context.Context, getenv func(string) str
 		return nil
 	}
 
-	return m.installWorkerBundle(ctx, bloc, bundle)
+	return m.installWorkerBundle(ctx, bloc, bundle, probe)
 }
 
-// installWorkerBundle installs a checked bundle on the bastion.
-func (m *Manager) installWorkerBundle(ctx context.Context, bloc string, bundle workerunit.Bundle) error {
-	probe, err := m.probeWorkerHost(ctx, bloc)
-	if err != nil {
-		return err
-	}
-
-	platform, err := workerunit.Platform(probe.Arch)
-	if err != nil {
-		return fmt.Errorf("installing the bloc worker: %w", err)
-	}
-
-	want, err := bundle.Join.SumFor(platform)
-	if err != nil || want != bundle.BinarySHA256 {
-		return fmt.Errorf("%w: the bastion is %s, and the bundle's binary has SHA256 %s",
-			errWorkerBinaryPlatform, platform, bundle.BinarySHA256)
-	}
-
+// installWorkerBundle installs a bundle that was read and checked for the
+// bastion that probe describes.
+func (m *Manager) installWorkerBundle(
+	ctx context.Context, bloc string, bundle workerunit.Bundle, probe workerunit.Probe,
+) error {
 	changed, err := m.installWorkerFiles(ctx, bloc, bundle, probe)
 	if err != nil {
 		return err
