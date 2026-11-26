@@ -363,6 +363,14 @@ func (pm *PolicyManager) createAdminPolicy() *PolicyTemplate {
 				Description:  "Full access to inception vault",
 			},
 			{
+				// The operator tree holds the bloc's first-run code, which
+				// claims the first sign-in of a managing system deployed into
+				// the bloc. No other policy reaches it.
+				Path:         fmt.Sprintf("secret/%s%s/*", pm.blocName, operatorTreeSuffix),
+				Capabilities: []string{"create", "read", "update", "delete", "list"},
+				Description:  "Full access to the bloc's operator secrets",
+			},
+			{
 				Path:         "sys/mounts",
 				Capabilities: []string{"read", "list"},
 				Description:  "Read mount information for engine detection",
