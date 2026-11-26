@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+
+	"golang.org/x/term"
 
 	"github.com/fivetwenty-io/ocfp-cli/internal/logger"
 	"github.com/fivetwenty-io/ocfp-cli/internal/vault"
@@ -22,6 +25,15 @@ func openBlocFirstRunVault(bloc string) (vault.FirstRunVault, func(), error) {
 	}
 
 	return vault.NewSafe(client), func() { _ = client.Close() }, nil
+}
+
+// showFirstRunCode is the bloc build's last word: it shows the bloc's
+// first-run code once, when the bastion's populate step made it without a
+// terminal to show it on.
+func (m *Manager) showFirstRunCode() {
+	showFirstRunCodeAtClose(os.Stdout, m.log, m.config.Name, m.isDryRun(),
+		term.IsTerminal(int(os.Stdout.Fd())), // #nosec G115 -- a file descriptor fits in int
+		openBlocFirstRunVault)
 }
 
 // showFirstRunCodeAtClose reads the bloc's code leaf after a real run and,

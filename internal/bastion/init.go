@@ -1194,6 +1194,10 @@ func (m *Manager) finalizeInitialization(ctx context.Context, phases []struct {
 		}
 	}
 
+	// The populate step on the bastion has no terminal to show a new
+	// first-run code on, so the closing summary shows it once instead.
+	m.showFirstRunCode()
+
 	m.logFinished("Bastion initialization completed successfully",
 		"duration", duration.String(),
 		"total_phases", len(phases),
