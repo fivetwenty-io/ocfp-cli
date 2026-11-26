@@ -1,0 +1,23 @@
+{
+  "domain": "ocfp-first-run-key-v1",
+  "vectors": [
+    {
+      "code": "AAAQ-EAYE-AUDA-OCAJ-BIFQ-YDIO",
+      "normalized": "AAAQEAYEAUDAOCAJBIFQYDIO",
+      "seed": "19564ac9b84c8389323d171050b619f1284a577c95c7c296e03ecac38d9d03b3",
+      "public": "cnsi1P1Ys5tWdhuQX5G8sBfbOi3+MbxNsLmQT2Rqf/E="
+    },
+    {
+      "code": "7777-7777-7777-7777-7777-7777",
+      "normalized": "777777777777777777777777",
+      "seed": "2cf381e28b858ccc6d25825c2bd0efacfe71070f9610b87231167eb41bed638b",
+      "public": "W/vCNsqhcafAxYqF8QlS6SuTWJ+qLlP+GO/MRBE35Dc="
+    },
+    {
+      "code": "aaaq eaye auda ocaj bifq yd1o",
+      "normalized": "AAAQEAYEAUDAOCAJBIFQYDIO",
+      "seed": "19564ac9b84c8389323d171050b619f1284a577c95c7c296e03ecac38d9d03b3",
+      "public": "cnsi1P1Ys5tWdhuQX5G8sBfbOi3+MbxNsLmQT2Rqf/E="
+    }
+  ]
+}
