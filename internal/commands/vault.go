@@ -358,6 +358,15 @@ func runVaultPopulate(
 		return fmt.Errorf("failed to populate vault: %w", err)
 	}
 
+	// The full populate also gives the bloc its first-run key, which a
+	// phase run leaves alone.
+	if subcommand == "" {
+		err = runPopulateFirstRun(cmd.OutOrStdout(), manager.GetSafe(), vaultBlocName(), dryRun)
+		if err != nil {
+			return err
+		}
+	}
+
 	log.Info("Vault populated successfully")
 
 	return nil
@@ -2137,13 +2146,7 @@ func newVaultImportCmd() *cobra.Command {
 // loadConfigAndManager loads configuration and creates vault manager.
 func loadConfigAndManager() (*vault.Manager, error) {
 	configFile := viper.GetString("config")
-	blocName := viper.GetString("bloc")
-
-	// Fallback to environment variable if viper doesn't have it
-	// This handles cases where config file might override env var binding
-	if blocName == "" {
-		blocName = os.Getenv("OCFP_BLOC")
-	}
+	blocName := vaultBlocName()
 
 	// Validate bloc name is provided
 	if blocName == "" {
@@ -2161,6 +2164,17 @@ func loadConfigAndManager() (*vault.Manager, error) {
 	}
 
 	return manager, nil
+}
+
+// vaultBlocName returns the bloc the vault commands act on: the --bloc
+// flag as viper holds it, or else OCFP_BLOC, which covers a config file
+// that overrides the environment binding.
+func vaultBlocName() string {
+	if blocName := viper.GetString("bloc"); blocName != "" {
+		return blocName
+	}
+
+	return os.Getenv("OCFP_BLOC")
 }
 
 // marshalSecrets marshals secrets to the specified format.
