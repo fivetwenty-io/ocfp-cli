@@ -24,6 +24,7 @@ var ownedOutside = []string{
 	"../internal/vault/policy_firstrun_test.go",
 	"../internal/commands/firstrun.go",
 	"../internal/commands/firstrun_test.go",
+	"../internal/commands/firstrun_cmd_test.go",
 	"../internal/commands/vault.go",
 	"../internal/bastion/firstrun_summary.go",
 	"../internal/bastion/firstrun_summary_test.go",

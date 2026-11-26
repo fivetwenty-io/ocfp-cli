@@ -25,6 +25,7 @@ func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(commands.NewInitCmd())
 	root.AddCommand(commands.NewTestCmd())
 	root.AddCommand(commands.NewVaultCmd())
+	root.AddCommand(commands.NewFirstRunCmd())
 	root.AddCommand(commands.NewLBCmd())
 	root.AddCommand(commands.NewScaleCmd())
 	root.AddCommand(commands.NewBackupCmd())

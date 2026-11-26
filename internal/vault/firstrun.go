@@ -381,3 +381,15 @@ func ShowFirstRunCodeOnce(w io.Writer, store FirstRunVault, bloc string, termina
 
 	return true, MarkFirstRunCodeShown(store, bloc)
 }
+
+// OpenBlocFirstRunVault opens the bloc's own vault target, the one
+// 'ocfp vault populate --bloc' writes to, and returns the function that
+// closes it.
+func OpenBlocFirstRunVault(bloc string) (FirstRunVault, func(), error) {
+	client, err := NewClientForBloc(bloc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening the bloc's vault: %w", err)
+	}
+
+	return NewSafe(client), func() { _ = client.Close() }, nil
+}

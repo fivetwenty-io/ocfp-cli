@@ -16,24 +16,13 @@ import (
 // returns the function that closes it.
 type firstRunVaultOpener func(bloc string) (vault.FirstRunVault, func(), error)
 
-// openBlocFirstRunVault opens the bloc's own vault over the workstation's
-// path to it, the same target 'ocfp vault populate --bloc' writes to.
-func openBlocFirstRunVault(bloc string) (vault.FirstRunVault, func(), error) {
-	client, err := vault.NewClientForBloc(bloc)
-	if err != nil {
-		return nil, nil, fmt.Errorf("opening the bloc's vault: %w", err)
-	}
-
-	return vault.NewSafe(client), func() { _ = client.Close() }, nil
-}
-
 // showFirstRunCode is the bloc build's last word: it shows the bloc's
 // first-run code once, when the bastion's populate step made it without a
 // terminal to show it on.
 func (m *Manager) showFirstRunCode() {
 	showFirstRunCodeAtClose(os.Stdout, m.log, m.config.Name, m.isDryRun(),
 		term.IsTerminal(int(os.Stdout.Fd())), // #nosec G115 -- a file descriptor fits in int
-		openBlocFirstRunVault)
+		vault.OpenBlocFirstRunVault)
 }
 
 // showFirstRunCodeAtClose reads the bloc's code leaf after a real run and,
