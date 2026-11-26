@@ -17,7 +17,10 @@ func closedName() string {
 // ownedOutside lists the files outside this package that carry the
 // first-run key's code, relative to this package's directory. Each one
 // must exist, so the list can't drift from the tree.
-var ownedOutside = []string{}
+var ownedOutside = []string{
+	"../internal/vault/firstrun.go",
+	"../internal/vault/firstrun_test.go",
+}
 
 // TestFilesNeverNameTheManagingSystem searches every file of this
 // package, its test data included, and every file in ownedOutside, for
