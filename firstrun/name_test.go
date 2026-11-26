@@ -25,6 +25,8 @@ var ownedOutside = []string{
 	"../internal/commands/firstrun.go",
 	"../internal/commands/firstrun_test.go",
 	"../internal/commands/vault.go",
+	"../internal/bastion/firstrun_summary.go",
+	"../internal/bastion/firstrun_summary_test.go",
 }
 
 // TestFilesNeverNameTheManagingSystem searches every file of this
