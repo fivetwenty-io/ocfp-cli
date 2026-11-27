@@ -22,7 +22,7 @@ require (
 	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/fivetwenty-io/proxmox-apiclient-go/v3 v3.11.0
 	github.com/goccy/go-yaml v1.19.2
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hashicorp/vault/api/auth/approle v0.12.0
 	github.com/hashicorp/vault/api/auth/userpass v0.12.0
