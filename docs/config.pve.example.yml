@@ -73,6 +73,19 @@ blocs:
     # you always run from inside the bloc network or export PVE_BASTION_IP.
     bastion_ip: "ocfp-lab-wayne-bastion.<tailnet>.ts.net"
 
+    # The CIDRs that this bloc's traffic leaves from, as the public internet
+    # sees them. The DNS challenge token that ocfp creates for the managing
+    # system is pinned to these ranges, so Cloudflare accepts the token only
+    # from them. When this list is present, ocfp uses it and makes no network
+    # call, which is how an air-gapped site sets it. When it is absent, the
+    # populate step on the bastion reads the bastion's own egress address
+    # from Cloudflare's trace endpoint, prints it, and pins the token to that
+    # one address. If the list is absent and the trace call fails, ocfp
+    # refuses with DNS_CHALLENGE_EGRESS_UNKNOWN and creates no token. Every
+    # entry must be a CIDR, and 0.0.0.0/0 and ::/0 are refused.
+    # egress_ranges:
+    #   - "203.0.113.7/32"
+
     # PVE API endpoint.  Host only (the CLI splits host / port / scheme).
     # Accepted forms:
     #   "sm-0.lab.fivetwenty.io"           → port 8006, https (default)

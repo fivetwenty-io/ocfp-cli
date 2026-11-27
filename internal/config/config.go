@@ -50,6 +50,54 @@ var ErrAvailableBandRemoved = errors.New(
 		"new keys to preserve previous behavior",
 )
 
+// ErrEgressRangeInvalid is returned when an egress_ranges entry isn't a CIDR
+// that narrows the filter, so a token could never be pinned to it.
+var ErrEgressRangeInvalid = errors.New("egress_ranges entry is not a usable CIDR")
+
+// ParseEgressRanges reads the egress_ranges setting. An empty list means
+// the setting is absent and returns no ranges and no error. Each entry must
+// be a CIDR, and the two ranges that match every address are refused,
+// because a filter that matches everything filters nothing. The refusal
+// names the setting and the entry's position, and it never echoes a
+// value that isn't part of the setting.
+func ParseEgressRanges(ranges []string) ([]netip.Prefix, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+
+	out := make([]netip.Prefix, 0, len(ranges))
+
+	for i, raw := range ranges {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, fmt.Errorf("%w: egress_ranges[%d] %q must be a CIDR such as 203.0.113.7/32",
+				ErrEgressRangeInvalid, i, raw)
+		}
+
+		if prefix.Bits() == 0 {
+			return nil, fmt.Errorf("%w: egress_ranges[%d] %q matches every address, so it would not filter",
+				ErrEgressRangeInvalid, i, raw)
+		}
+
+		out = append(out, prefix.Masked())
+	}
+
+	return out, nil
+}
+
+// validateCloudflareAndEgress validates the settings that the DNS challenge
+// token reads: the merged Cloudflare config and the egress ranges.
+func validateCloudflareAndEgress(cfg *Config) error {
+	err := cfg.Cloudflare.Validate()
+	if err != nil {
+		return err
+	}
+
+	_, err = ParseEgressRanges(cfg.EgressRanges)
+
+	return err
+}
+
 // OcfpHome returns the OCFP home directory path.
 // It checks OCFP_HOME env var first, then falls back to $HOME/.ocfp.
 //
@@ -374,6 +422,16 @@ type Config struct {
 	// (Network.CIDR) to avoid the Tailscale LAN route hazard. PVE-specific.
 	// When empty, network pairing validation is skipped.
 	CFCloudConfigCIDR string `json:"cf_cloud_config_cidr,omitempty" mapstructure:"cf_cloud_config_cidr" yaml:"cf_cloud_config_cidr,omitempty"`
+
+	// EgressRanges lists the CIDRs that the bloc's traffic leaves from, as
+	// the public internet sees them. The DNS challenge token's client IP
+	// filter is pinned to these ranges. When the list is present, ocfp uses
+	// it and makes no network call, which is how an air-gapped site sets
+	// it. When it is absent, the populate step on the bastion reads its own
+	// egress address from Cloudflare's trace endpoint and pins the filter to
+	// that one address. Every entry must be a CIDR such as 203.0.113.7/32,
+	// and a range that matches every address is refused.
+	EgressRanges []string `json:"egress_ranges,omitempty" mapstructure:"egress_ranges" yaml:"egress_ranges,omitempty"`
 
 	// VmidRangeStart is the lower bound (inclusive) of the PVE VMID range the
 	// BOSH CPI may allocate. PVE-specific. When zero (unset), configureCPI uses
@@ -2422,7 +2480,7 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	err = cfg.Cloudflare.Validate()
+	err = validateCloudflareAndEgress(cfg)
 	if err != nil {
 		return err
 	}
