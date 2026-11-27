@@ -310,7 +310,7 @@ func runVaultPopulate(
 	}
 
 	// Load configuration and create manager
-	manager, err := loadConfigAndManager()
+	cfg, manager, err := loadConfigAndManagerWithConfig()
 	if err != nil {
 		return err
 	}
@@ -362,6 +362,12 @@ func runVaultPopulate(
 	// phase run leaves alone.
 	if subcommand == "" {
 		err = runPopulateFirstRun(cmd.OutOrStdout(), manager.GetSafe(), vaultBlocName(), dryRun)
+		if err != nil {
+			return err
+		}
+
+		err = runPopulateDNSChallenge(cmd.Context(), cmd.OutOrStdout(), manager.GetSafe(), cfg,
+			vaultBlocName(), dryRun, dnsChallengeDeps{doer: nil})
 		if err != nil {
 			return err
 		}
@@ -2145,25 +2151,33 @@ func newVaultImportCmd() *cobra.Command {
 
 // loadConfigAndManager loads configuration and creates vault manager.
 func loadConfigAndManager() (*vault.Manager, error) {
+	_, manager, err := loadConfigAndManagerWithConfig()
+
+	return manager, err
+}
+
+// loadConfigAndManagerWithConfig is loadConfigAndManager for a caller that
+// also needs the bloc's loaded configuration.
+func loadConfigAndManagerWithConfig() (*config.Config, *vault.Manager, error) {
 	configFile := viper.GetString("config")
 	blocName := vaultBlocName()
 
 	// Validate bloc name is provided
 	if blocName == "" {
-		return nil, ErrBlocFlagOrEnvVarRequired
+		return nil, nil, ErrBlocFlagOrEnvVarRequired
 	}
 
 	cfg, err := config.LoadWithParams(configFile, blocName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	manager, err := vault.NewManagerFromEnv(cfg, blocName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create vault manager: %w", err)
+		return nil, nil, fmt.Errorf("failed to create vault manager: %w", err)
 	}
 
-	return manager, nil
+	return cfg, manager, nil
 }
 
 // vaultBlocName returns the bloc the vault commands act on: the --bloc
