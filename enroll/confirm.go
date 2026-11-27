@@ -94,21 +94,27 @@ func confirmRaw(d [sha256.Size]byte) string {
 }
 
 // NormalizeCode returns a typed confirmation code in its bare form of 12
-// characters. It drops spaces and hyphens, upper-cases letters, and
-// reads 0 as O and 1 as I. It refuses what is then not exactly 12
+// characters. It drops ASCII spaces and hyphens, upper-cases ASCII
+// letters, and reads 0 as O and 1 as I. It reads the input byte by byte,
+// so a tab, a non-ASCII space, or a letter that Unicode folds into the
+// alphabet is refused. It also refuses what is then not exactly 12
 // characters of the base32 alphabet.
 func NormalizeCode(typed string) (string, error) {
 	var b strings.Builder
 
-	for _, r := range strings.ToUpper(typed) {
+	for i := range len(typed) {
+		c := typed[i]
+
 		switch {
-		case r == ' ' || r == '-' || r == '\t':
-		case r == '0':
-			b.WriteRune('O')
-		case r == '1':
-			b.WriteRune('I')
-		case (r >= 'A' && r <= 'Z') || (r >= '2' && r <= '7'):
-			b.WriteRune(r)
+		case c == ' ' || c == '-':
+		case c == '0':
+			b.WriteByte('O')
+		case c == '1':
+			b.WriteByte('I')
+		case c >= 'a' && c <= 'z':
+			b.WriteByte(c - ('a' - 'A'))
+		case (c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7'):
+			b.WriteByte(c)
 		default:
 			return "", errors.New("enroll: the confirmation code holds a character outside its alphabet")
 		}

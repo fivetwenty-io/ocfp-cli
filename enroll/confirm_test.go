@@ -158,6 +158,24 @@ func TestNormalizeCode(t *testing.T) {
 	}
 }
 
+func TestNormalizeCodeRefusesNonASCII(t *testing.T) {
+	t.Parallel()
+
+	for name, bad := range map[string]string{
+		"tab":                "AIOW\tADSS\tGVKI",
+		"long s":             "AIOWADSSGV\u017f2",
+		"dotless i":          "AIOWADSSGV\u0131A",
+		"fullwidth digit":    "AIOWADSSGV\uff12A",
+		"non-breaking space": "AIOW\u00a0ADSSGVKI",
+		"newline":            "AIOWADSSGVKI\n",
+		"carriage return":    "AIOWADSSGVKI\r",
+	} {
+		if got, err := NormalizeCode(bad); err == nil {
+			t.Errorf("%s: NormalizeCode(%q) = %q, want a refusal", name, bad, got)
+		}
+	}
+}
+
 func TestHostKeyDigestRefuses(t *testing.T) {
 	t.Parallel()
 
