@@ -270,6 +270,26 @@ func TestNormalizeRefusesMalformedCodes(t *testing.T) {
 			if _, err := firstrun.Format(typed); firstrun.CodeOf(err) != firstrun.CodeMalformed {
 				t.Fatalf("Format gave %v", err)
 			}
+
+			if _, err := firstrun.NormalizeBytes([]byte(typed)); firstrun.CodeOf(err) != firstrun.CodeMalformed {
+				t.Fatalf("NormalizeBytes gave %v", err)
+			}
+
+			if _, err := firstrun.FormatBytes([]byte(typed)); firstrun.CodeOf(err) != firstrun.CodeMalformed {
+				t.Fatalf("FormatBytes gave %v", err)
+			}
+
+			if _, err := firstrun.SeedBytes([]byte(typed)); firstrun.CodeOf(err) != firstrun.CodeMalformed {
+				t.Fatalf("SeedBytes gave %v", err)
+			}
+
+			if _, _, err := firstrun.KeyPairBytes([]byte(typed)); firstrun.CodeOf(err) != firstrun.CodeMalformed {
+				t.Fatalf("KeyPairBytes gave %v", err)
+			}
+
+			if _, err := firstrun.PublicForBytes([]byte(typed)); firstrun.CodeOf(err) != firstrun.CodeMalformed {
+				t.Fatalf("PublicForBytes gave %v", err)
+			}
 		})
 	}
 }

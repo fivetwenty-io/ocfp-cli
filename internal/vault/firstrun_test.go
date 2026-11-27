@@ -586,3 +586,30 @@ func TestRotateFirstRunKeyOverwritesBothLeaves(t *testing.T) {
 		})
 	}
 }
+
+// TestNewFirstRunCodeIsFormattedAndFresh checks that the code a new key
+// starts from is formatted in groups, normalizes, and differs each time.
+func TestNewFirstRunCodeIsFormattedAndFresh(t *testing.T) {
+	t.Parallel()
+
+	first, err := newFirstRunCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := newFirstRunCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first == second {
+		t.Fatal("two new codes are the same")
+	}
+
+	for _, code := range []string{first, second} {
+		formatted, err := firstrun.Format(code)
+		if err != nil || formatted != code {
+			t.Fatalf("the new code is not in its formatted form: %v", err)
+		}
+	}
+}

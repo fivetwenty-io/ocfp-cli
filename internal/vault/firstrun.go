@@ -219,6 +219,27 @@ func ReadFirstRunState(store FirstRunVault, bloc string) (FirstRunState, error) 
 	return state, nil
 }
 
+// newFirstRunCode makes a new code and returns it formatted in groups. It
+// keeps the code in byte buffers and wipes them, so the one string it
+// returns, which the vault write needs, is the only copy it leaves.
+func newFirstRunCode() (string, error) {
+	raw, err := firstrun.GenerateBytes()
+	if err != nil {
+		return "", err
+	}
+
+	defer firstrun.Wipe(raw)
+
+	formatted, err := firstrun.FormatBytes(raw)
+	if err != nil {
+		return "", err
+	}
+
+	defer firstrun.Wipe(formatted)
+
+	return string(formatted), nil
+}
+
 // EnsureFirstRunKey gives the bloc a first-run key when it lacks one. It
 // writes only what is missing and never overwrites either leaf.
 //
@@ -244,12 +265,7 @@ func EnsureFirstRunKey(store FirstRunVault, bloc string) (FirstRunOutcome, error
 
 		return out, nil
 	case state.Code == "":
-		raw, err := firstrun.Generate()
-		if err != nil {
-			return out, err
-		}
-
-		code, err := firstrun.Format(raw)
+		code, err := newFirstRunCode()
 		if err != nil {
 			return out, err
 		}
@@ -299,12 +315,7 @@ func RotateFirstRunKey(store FirstRunVault, bloc string, shown bool) (string, er
 		return "", err
 	}
 
-	raw, err := firstrun.Generate()
-	if err != nil {
-		return "", err
-	}
-
-	code, err := firstrun.Format(raw)
+	code, err := newFirstRunCode()
 	if err != nil {
 		return "", err
 	}
