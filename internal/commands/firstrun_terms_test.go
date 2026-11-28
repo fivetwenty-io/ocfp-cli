@@ -114,7 +114,6 @@ func TestTermsStatementRefusesWhatTheCoreWouldNotTake(t *testing.T) {
 		"terms with a space":    {challenge, "https://acme.example/a b", good, errTermsURL},
 		"terms with a control":  {challenge, "https://acme.example/\n", good, errTermsURL},
 		"terms over http":       {challenge, "http://acme.example/t.pdf", good, errTermsURL},
-		"terms with a query":    {challenge, "https://acme.example/t.pdf?x=1", good, errTermsURL},
 		"terms with a fragment": {challenge, "https://acme.example/t.pdf#x", good, errTermsURL},
 		"terms with a user":     {challenge, "https://u:p@acme.example/t.pdf", good, errTermsURL},
 		"terms with no host":    {challenge, "https:///t.pdf", good, errTermsURL},
@@ -877,7 +876,6 @@ func TestAcceptTermsWaitsOnlyForTermsTheCoreNames(t *testing.T) {
 		"a script":              "javascript:alert(1)",
 		"a link with a space":   "https://acme.example/a b",
 		"a link with an escape": "https://acme.example/\\u001b[2J",
-		"a link with a query":   "https://acme.example/t.pdf?x=1",
 		"no link":               "",
 	} {
 		core := startFakeTermsCore(t)
@@ -1162,5 +1160,36 @@ func TestAcceptTermsFilesNeverNameTheManagingSystem(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(text)), name) {
 			t.Errorf("%s holds the name", path)
 		}
+	}
+}
+
+func TestTermsStatementTakesTermsWithAQuery(t *testing.T) {
+	t.Parallel()
+
+	challenge := mustHex(t, termsVectorChallenge)
+	good := termsBinding{Audience: "https://core.example", ServerKey: bytes.Repeat([]byte{1}, serverKeySize)}
+
+	for _, terms := range []string{"https://acme.example/t.pdf?x=1", "https://acme.example/t.pdf?"} {
+		if _, err := termsStatement(challenge, terms, good); err != nil {
+			t.Errorf("%s: %v", terms, err)
+		}
+	}
+}
+
+func TestAcceptTermsTakesALinkWithAQuery(t *testing.T) {
+	t.Parallel()
+
+	core := startFakeTermsCore(t)
+	core.statusBody = `{"tlsReason":"TLS_TERMS_NOT_ACCEPTED","tlsTerms":"https://acme.example/t.pdf?x=1"}`
+	core.claimBody = `{"code":"TLS_TERMS_ACCEPTED","terms":"https://acme.example/t.pdf?x=1"}`
+	d := newFirstRunTestDeps(false, "y\n")
+
+	err := runFirstRunAcceptTerms(context.Background(), termsDepsOf(d), core.options())
+	if err != nil {
+		t.Fatalf("the acceptance failed: %v", err)
+	}
+
+	if len(core.seen()) != 3 {
+		t.Fatalf("the core saw %v", core.seen())
 	}
 }

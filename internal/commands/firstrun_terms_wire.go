@@ -83,7 +83,8 @@ type termsBinding struct {
 // checkTermsURL refuses a terms URL that the core wouldn't take, which is
 // also one this client shouldn't show an operator. It must be an https
 // address of printable ASCII, at most maxTermsURL bytes, with a host and
-// no credentials, query, or fragment.
+// no credentials, opaque part, or fragment. A query is allowed, even an
+// empty one.
 func checkTermsURL(raw string) error {
 	if raw == "" || len(raw) > maxTermsURL {
 		return errTermsURL
@@ -97,7 +98,7 @@ func checkTermsURL(raw string) error {
 
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
-		parsed.Opaque != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+		parsed.Opaque != "" || parsed.Fragment != "" ||
 		strings.Contains(raw, "#") {
 		return errTermsURL
 	}
