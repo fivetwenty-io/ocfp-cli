@@ -153,14 +153,15 @@ func NewFirstRunCmd() *cobra.Command {
 
 The first-run code claims the first sign-in of a managing system deployed
 into the bloc. ocfp keeps it in the bloc's vault, readable only under the
-admin policy, and shows it once when it makes it.`,
+admin policy, and shows it once when it makes it. The same code signs the
+acceptance of the ACME directory's terms that the managing system waits for.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
 
-	cmd.AddCommand(newFirstRunShowCmd(), newFirstRunOpenCmd(), newFirstRunRotateCmd())
+	cmd.AddCommand(newFirstRunShowCmd(), newFirstRunOpenCmd(), newFirstRunRotateCmd(), newFirstRunAcceptTermsCmd())
 
 	return cmd
 }
